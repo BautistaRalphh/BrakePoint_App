@@ -1,0 +1,25 @@
+{% extends 'BrakePoint/base.html' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block container_class %}full-screen{% endblock %}
+
+{% block heading %}BrakePoint{% endblock %}
+
+{% block content %}
+    <div class="fs-header">
+        <div class="header-title">What area do you want to monitor?</div>
+        <div class="search-container">
+            <div class="controls">
+                <input type="text" id="search-input" placeholder="Search for a place...">
+            </div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+{% endblock %}
+
+{% load static %}
+{% block scripts %}
+<script src="{% static 'BrakePoint/js/examine.js' %}"></script>
+{% endblock %}

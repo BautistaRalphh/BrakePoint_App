@@ -17,8 +17,7 @@ class LoginView(View):
         user = authenticate(request, username=username, password=password)
         if user is not None:
             login(request, user)
-            messages.success(request, f'Welcome back, {username}')
-            return redirect('dashboard')
+            return redirect('examine') #Examine page for now after login but will be updated to dashboard later
         else:
             messages.error(request, 'Invalid username or password.')
             return render(request, 'BrakePoint/login.html')
@@ -53,11 +52,13 @@ class SignupView(View):
         return redirect('login')
 
 # Dashboard View
-class DashboardView(View):
+
+# Examine View
+class ExamineView(View):
     def get(self, request):
         if not request.user.is_authenticated:
             return redirect('login')
-        return render(request, 'BrakePoint/dashboard.html')
+        return render(request, 'BrakePoint/examine.html')
 
 # Logout View
 def logout_view(request):
