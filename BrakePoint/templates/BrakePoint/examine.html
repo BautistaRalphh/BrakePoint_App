@@ -1,4 +1,5 @@
 {% extends 'BrakePoint/base.html' %}
+{% load static %}
 
 {% block title %}Dashboard{% endblock %}
 
@@ -11,7 +12,19 @@
         <div class="header-title">What area do you want to monitor?</div>
         <div class="search-container">
             <div class="controls">
-                <input type="text" id="search-input" placeholder="Search for a place...">
+                <button id="back-btn" class="back-button" style="display: none;">←</button>
+                
+                <!-- Select mode toolbar (visible in normal and select mode) -->
+                <div id="select-toolbar" class="toolbar">
+                    <input type="text" id="search-input" placeholder="Search for a place...">
+                    <button id="edit-mode-btn" class="edit-mode-button" style="display: none;">Edit</button>
+                </div>
+                
+                <!-- Edit mode toolbar (hidden by default) -->
+                <div id="edit-toolbar" class="toolbar" style="display: none;">
+                    <button id="add-camera-btn" class="edit-btn-inline">+</button>
+                    <button id="remove-camera-btn" class="edit-btn-inline">-</button>
+                </div>
             </div>
         </div>
     </div>
@@ -19,7 +32,480 @@
     <div id="map"></div>
 {% endblock %}
 
-{% load static %}
 {% block scripts %}
-<script src="{% static 'BrakePoint/js/examine.js' %}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    /* =========================
+       MAP INITIALIZATION
+       ========================= */
+    const map = L.map('map', {
+        center: [14.5995, 120.9842],
+        zoom: 10,
+        zoomControl: false
+    });
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoicmFscGJhdSIsImEiOiJjbWgwZ2h5NDYwZmJ4MDhxcDI5cGY4c3VpIn0.v2a_qgtb5ur54yvAQPglUw', {
+        maxZoom: 22,
+        tileSize: 512,
+        zoomOffset: -1,
+        attribution: '© <a href="https://www.mapbox.com/about/maps/">Mapbox</a> © <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    /* =========================
+       STATE
+       ========================= */
+    let isSelectMode = false;
+    let isEditMode = false;
+    let isAddingCamera = false;
+    let isRemovingCamera = false;
+    let isSelecting = false;
+
+    let mapCameras = [];
+    let cameraIdCounter = 0;
+
+    /* =========================
+       UI ELEMENTS
+       ========================= */
+    const searchInput = document.getElementById('search-input');
+    const backBtn = document.getElementById('back-btn');
+    const selectToolbar = document.getElementById('select-toolbar');
+    const editToolbar = document.getElementById('edit-toolbar');
+    const editModeBtn = document.getElementById('edit-mode-btn');
+    const addCameraBtn = document.getElementById('add-camera-btn');
+    const removeCameraBtn = document.getElementById('remove-camera-btn');
+
+    const suggestionsContainer = document.createElement('div');
+    suggestionsContainer.className = 'search-suggestions';
+    suggestionsContainer.id = 'search-suggestions';
+
+    if (searchInput) {
+        const wrap = document.createElement('div');
+        wrap.style.position = 'relative';
+        wrap.style.width = '100%';
+        const parent = searchInput.parentNode;
+        parent.insertBefore(wrap, searchInput);
+        wrap.appendChild(searchInput);
+        wrap.appendChild(suggestionsContainer);
+    }
+
+    let debounceTimer = null;
+    let currentSuggestions = [];
+
+    /* =========================
+       MODE MANAGEMENT
+       ========================= */
+    function enterSelectMode() {
+        if (isSelectMode) return;
+        isSelectMode = true;
+        document.querySelector('.fs-header')?.classList.add('select-mode');
+
+        if (backBtn) backBtn.style.display = 'inline-block';
+        if (editModeBtn) editModeBtn.style.display = 'inline-block';
+        if (selectToolbar) selectToolbar.style.display = 'flex';
+        if (editToolbar) editToolbar.style.display = 'none';
+
+        const mapEl = document.getElementById('map');
+        if (mapEl) {
+            mapEl.style.top = '0';
+            mapEl.style.height = '100vh';
+            setTimeout(() => map.invalidateSize(), 100);
+        }
+    }
+
+    function exitSelectMode() {
+        if (!isSelectMode) return;
+        // exit edit mode first if necessary
+        if (isEditMode) exitEditMode();
+
+        isSelectMode = false;
+        document.querySelector('.fs-header')?.classList.remove('select-mode');
+
+        if (backBtn) backBtn.style.display = 'none';
+        if (editModeBtn) editModeBtn.style.display = 'none';
+        if (selectToolbar) selectToolbar.style.display = 'flex';
+        if (editToolbar) editToolbar.style.display = 'none';
+
+        const mapEl = document.getElementById('map');
+        if (mapEl) {
+            mapEl.style.top = 'var(--header-h)';
+            mapEl.style.height = 'calc(100vh - var(--header-h))';
+            setTimeout(() => map.invalidateSize(), 100);
+        }
+
+        if (searchInput) searchInput.value = '';
+    }
+
+    function enterEditMode() {
+        if (!isSelectMode || isEditMode) return;
+        isEditMode = true;
+        if (selectToolbar) selectToolbar.style.display = 'none';
+        if (editToolbar) editToolbar.style.display = 'flex';
+    }
+
+    function exitEditMode() {
+        if (!isEditMode) return;
+        isEditMode = false;
+        stopAddingCamera();
+        stopRemovingCamera();
+        if (selectToolbar) selectToolbar.style.display = 'flex';
+        if (editToolbar) editToolbar.style.display = 'none';
+        map.off('click', onMapClickAddCamera);
+        map.off('click', onMapClickRemoveCamera);
+        map.getContainer().style.cursor = '';
+    }
+
+    /* =========================
+       CAMERA MANAGEMENT
+       ========================= */
+    function addCamera(lat, lng) {
+        const id = cameraIdCounter++;
+        const marker = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: '#2196F3',
+            color: '#000',
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.8
+        }).addTo(map);
+
+        marker.on('click', function (e) {
+            L.DomEvent.stopPropagation(e);
+            if (isRemovingCamera) removeCamera(id);
+            else console.log(`Camera ${id} clicked - no functionality yet`);
+        });
+
+        mapCameras.push({ id, camera: marker, lat, lng });
+        saveCamerasToStorage();
+    }
+
+    function addCameraFromData(lat, lng, id) {
+        const marker = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: '#2196F3',
+            color: '#000',
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.8
+        }).addTo(map);
+
+        marker.on('click', function (e) {
+            L.DomEvent.stopPropagation(e);
+            if (isRemovingCamera) removeCamera(id);
+            else console.log(`Camera ${id} clicked - no functionality yet`);
+        });
+
+        mapCameras.push({ id, camera: marker, lat, lng });
+    }
+
+    function removeCamera(cameraId) {
+        const idx = mapCameras.findIndex(c => c.id === cameraId);
+        if (idx === -1) return;
+        map.removeLayer(mapCameras[idx].camera);
+        mapCameras.splice(idx, 1);
+        saveCamerasToStorage();
+    }
+
+    function saveCamerasToStorage() {
+        const data = mapCameras.map(c => ({ id: c.id, lat: c.lat, lng: c.lng }));
+        localStorage.setItem('mapCameras', JSON.stringify(data));
+    }
+
+    function loadCamerasFromStorage() {
+        const saved = localStorage.getItem('mapCameras');
+        if (!saved) return;
+        try {
+            const data = JSON.parse(saved);
+            data.forEach(d => addCameraFromData(d.lat, d.lng, d.id));
+            if (data.length) cameraIdCounter = Math.max(...data.map(c => c.id)) + 1;
+        } catch (err) {
+            console.error('Failed to load cameras from storage', err);
+        }
+    }
+
+    /* =========================
+       CAMERA ADD/REMOVE MODE HELPERS
+       ========================= */
+    function startAddingCamera() {
+        isAddingCamera = true;
+        isRemovingCamera = false;
+        updateButtonStates();
+        map.getContainer().style.cursor = 'crosshair';
+        map.off('click', onMapClickRemoveCamera);
+        map.on('click', onMapClickAddCamera);
+    }
+    function stopAddingCamera() {
+        isAddingCamera = false;
+        updateButtonStates();
+        map.getContainer().style.cursor = '';
+        map.off('click', onMapClickAddCamera);
+    }
+    function startRemovingCamera() {
+        isRemovingCamera = true;
+        isAddingCamera = false;
+        updateButtonStates();
+        map.getContainer().style.cursor = 'pointer';
+        map.off('click', onMapClickAddCamera);
+        map.on('click', onMapClickRemoveCamera);
+    }
+    function stopRemovingCamera() {
+        isRemovingCamera = false;
+        updateButtonStates();
+        map.getContainer().style.cursor = '';
+        map.off('click', onMapClickRemoveCamera);
+    }
+
+    function updateButtonStates() {
+        if (!addCameraBtn || !removeCameraBtn) return;
+        addCameraBtn.style.backgroundColor = isAddingCamera ? '#4CAF50' : '';
+        removeCameraBtn.style.backgroundColor = isRemovingCamera ? '#f44336' : '';
+    }
+
+    function onMapClickAddCamera(e) {
+        if (!isAddingCamera) return;
+        addCamera(e.latlng.lat, e.latlng.lng);
+        stopAddingCamera();
+    }
+
+    function onMapClickRemoveCamera(e) {
+        if (!isRemovingCamera) return;
+        let cameraClicked = false;
+        mapCameras.forEach(cd => {
+            const dist = map.distance(e.latlng, [cd.lat, cd.lng]);
+            if (dist < 50) {
+                removeCamera(cd.id);
+                cameraClicked = true;
+            }
+        });
+        if (!cameraClicked) console.log('No camera found at clicked location');
+    }
+
+    /* =========================
+       SEARCH & SUGGESTIONS
+       ========================= */
+    function fetchSuggestions(query) {
+        if (!query || query.length < 3) {
+            hideSuggestions();
+            return;
+        }
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
+        fetch(url)
+            .then(r => r.json())
+            .then(data => {
+                currentSuggestions = data;
+                showSuggestions(data);
+            })
+            .catch(err => console.error('Error fetching suggestions:', err));
+    }
+
+    function showSuggestions(suggestions) {
+        suggestionsContainer.innerHTML = '';
+        if (!suggestions || !suggestions.length) {
+            hideSuggestions();
+            return;
+        }
+        suggestions.forEach(s => {
+            const item = document.createElement('div');
+            item.className = 'suggestion-item';
+            const parts = s.display_name.split(',');
+            item.innerHTML = `<div class="suggestion-main">${parts[0]}</div><div class="suggestion-details">${parts.slice(1,3).join(',')}</div>`;
+            item.addEventListener('click', () => selectSuggestion(s));
+            suggestionsContainer.appendChild(item);
+        });
+        suggestionsContainer.style.display = 'block';
+    }
+
+    function hideSuggestions() {
+        suggestionsContainer.style.display = 'none';
+    }
+
+    function selectSuggestion(s) {
+        if (searchInput) searchInput.value = s.display_name.split(',')[0];
+        hideSuggestions();
+        const lat = parseFloat(s.lat), lon = parseFloat(s.lon);
+        map.setView([lat, lon], 24);
+        enterSelectMode();
+    }
+
+    function searchLocation() {
+        const q = searchInput ? searchInput.value.trim() : '';
+        if (!q) return;
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data && data.length) {
+                    const res = data[0];
+                    map.setView([parseFloat(res.lat), parseFloat(res.lon)], 17);
+                    enterSelectMode();
+                }
+            })
+            .catch(err => console.error('Error searching:', err));
+    }
+
+    /* =========================
+       SELECTION BOX
+       ========================= */
+    let selectionBox = null;
+    let startPoint = null;
+
+    function startSelectionMode() {
+        if (!isSelectMode || isEditMode) return;
+        isSelecting = true;
+        map.getContainer().style.cursor = 'crosshair';
+
+        const instruction = document.createElement('div');
+        instruction.id = 'selection-instruction';
+        instruction.innerText = 'Click and drag to select area to zoom into';
+        instruction.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:#fff;padding:10px 15px;border-radius:5px;z-index:10000;font-size:14px;';
+        document.body.appendChild(instruction);
+        setTimeout(() => document.getElementById('selection-instruction')?.remove(), 3000);
+
+        const mc = map.getContainer();
+        mc.addEventListener('mousedown', onMouseDown);
+        mc.addEventListener('mousemove', onMouseMove);
+        mc.addEventListener('mouseup', onMouseUp);
+        map.dragging.disable();
+    }
+
+    function onMouseDown(e) {
+        if (e.button !== 0) return;
+        startPoint = { x: e.clientX, y: e.clientY };
+        selectionBox = document.createElement('div');
+        selectionBox.style.cssText = 'position:fixed;border:2px solid #00ff00;background:rgba(0,255,0,0.1);z-index:9998;pointer-events:none;';
+        document.body.appendChild(selectionBox);
+        e.preventDefault();
+    }
+
+    function onMouseMove(e) {
+        if (!selectionBox || !startPoint) return;
+        const cur = { x: e.clientX, y: e.clientY };
+        const left = Math.min(startPoint.x, cur.x), top = Math.min(startPoint.y, cur.y);
+        const width = Math.abs(cur.x - startPoint.x), height = Math.abs(cur.y - startPoint.y);
+        selectionBox.style.left = left + 'px';
+        selectionBox.style.top = top + 'px';
+        selectionBox.style.width = width + 'px';
+        selectionBox.style.height = height + 'px';
+    }
+
+    function onMouseUp(e) {
+        if (!selectionBox || !startPoint) return;
+        const cur = { x: e.clientX, y: e.clientY };
+        const left = Math.min(startPoint.x, cur.x), top = Math.min(startPoint.y, cur.y);
+        const right = Math.max(startPoint.x, cur.x), bottom = Math.max(startPoint.y, cur.y);
+        const mc = map.getContainer();
+        const rect = mc.getBoundingClientRect();
+        const topLeft = map.containerPointToLatLng([left - rect.left, top - rect.top]);
+        const bottomRight = map.containerPointToLatLng([right - rect.left, bottom - rect.top]);
+
+        if (Math.abs(right - left) > 20 && Math.abs(bottom - top) > 20) {
+            map.fitBounds([
+                [bottomRight.lat, topLeft.lng],
+                [topLeft.lat, bottomRight.lng]
+            ]);
+        }
+        endSelectionMode();
+    }
+
+    function endSelectionMode() {
+        isSelecting = false;
+        selectionBox?.remove();
+        selectionBox = null;
+        document.getElementById('selection-instruction')?.remove();
+        map.getContainer().style.cursor = '';
+        const mc = map.getContainer();
+        mc.removeEventListener('mousedown', onMouseDown);
+        mc.removeEventListener('mousemove', onMouseMove);
+        mc.removeEventListener('mouseup', onMouseUp);
+        map.dragging.enable();
+        startPoint = null;
+    }
+
+    /* =========================
+       EVENT LISTENERS
+       ========================= */
+    // Search input handlers
+    if (searchInput) {
+        searchInput.addEventListener('input', function (e) {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => fetchSuggestions(e.target.value), 300);
+        });
+
+        searchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                hideSuggestions();
+                searchLocation();
+            } else if (e.key === 'Escape') {
+                hideSuggestions();
+                if (isSelectMode) exitSelectMode();
+            }
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!searchInput.contains(e.target) && !suggestionsContainer.contains(e.target)) hideSuggestions();
+        });
+    }
+
+    // Back button
+    if (backBtn) {
+        backBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (isEditMode) {
+                exitEditMode(); // Return to select mode
+            } else if (isSelectMode) {
+                exitSelectMode(); // Return to normal view
+            }
+        });
+    }
+
+    // Edit mode button
+    if (editModeBtn) {
+        editModeBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (isSelectMode && !isEditMode) enterEditMode();
+        });
+    }
+
+    // Add/Remove camera buttons (toggle)
+    if (addCameraBtn) {
+        addCameraBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!isEditMode) return;
+            if (isAddingCamera) stopAddingCamera();
+            else {
+                if (isRemovingCamera) stopRemovingCamera();
+                startAddingCamera();
+            }
+        });
+    }
+    if (removeCameraBtn) {
+        removeCameraBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!isEditMode) return;
+            if (isRemovingCamera) stopRemovingCamera();
+            else {
+                if (isAddingCamera) stopAddingCamera();
+                startRemovingCamera();
+            }
+        });
+    }
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function (e) {
+        if (searchInput?.contains(document.activeElement)) return;
+        if (e.key.toLowerCase() === 's' && isSelectMode && !isSelecting && !isEditMode) {
+            e.preventDefault(); startSelectionMode();
+        }
+        if (e.key.toLowerCase() === 'e' && isSelectMode && !isSelecting) {
+            e.preventDefault(); isEditMode ? exitEditMode() : enterEditMode();
+        }
+        if (e.key === 'Escape' && isSelecting) endSelectionMode();
+    });
+
+    /* =========================
+       INIT
+       ========================= */
+    loadCamerasFromStorage();
+
+});
+</script>
 {% endblock %}
