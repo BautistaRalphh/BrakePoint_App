@@ -38,18 +38,55 @@ document.addEventListener('DOMContentLoaded', function () {
     /* =========================
        MAP INITIALIZATION
        ========================= */
-    const map = L.map('map', {
-        center: [14.5995, 120.9842],
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://tiles.openfreemap.org/styles/liberty',
+        center: [120.9842, 14.5995], 
         zoom: 10,
-        zoomControl: false
+        pitch: 45, 
+        bearing: 0, 
+        antialias: true 
     });
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-    L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoicmFscGJhdSIsImEiOiJjbWgwZ2h5NDYwZmJ4MDhxcDI5cGY4c3VpIn0.v2a_qgtb5ur54yvAQPglUw', {
-        maxZoom: 22,
-        tileSize: 512,
-        zoomOffset: -1,
-        attribution: '© <a href="https://www.mapbox.com/about/maps/">Mapbox</a> © <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map);
+
+    map.addControl(new maplibregl.NavigationControl({
+        visualizePitch: true 
+    }), 'bottom-right');
+
+    map.on('load', function() {
+        const layers = map.getStyle().layers;
+        let firstSymbolId;
+        for (const layer of layers) {
+            if (layer.type === 'symbol') {
+                firstSymbolId = layer.id;
+                break;
+            }
+        }
+
+        map.addLayer({
+            'id': '3d-buildings',
+            'source': 'openmaptiles',
+            'source-layer': 'building',
+            'filter': ['==', 'extrude', 'true'],
+            'type': 'fill-extrusion',
+            'minzoom': 15,
+            'paint': {
+                'fill-extrusion-color': '#aaa',
+                'fill-extrusion-height': [
+                    'interpolate', ['linear'], ['zoom'],
+                    15, 0,
+                    15.05, ['get', 'render_height']
+                ],
+                'fill-extrusion-base': [
+                    'interpolate', ['linear'], ['zoom'],
+                    15, 0,
+                    15.05, ['get', 'render_min_height']
+                ],
+                'fill-extrusion-opacity': 0.6
+            }
+        }, firstSymbolId);
+
+        loadCamerasFromStorage();
+    });
 
     /* =========================
        STATE
@@ -108,13 +145,12 @@ document.addEventListener('DOMContentLoaded', function () {
         if (mapEl) {
             mapEl.style.top = '0';
             mapEl.style.height = '100vh';
-            setTimeout(() => map.invalidateSize(), 100);
+            setTimeout(() => map.resize(), 100);
         }
     }
 
     function exitSelectMode() {
         if (!isSelectMode) return;
-        // exit edit mode first if necessary
         if (isEditMode) exitEditMode();
 
         isSelectMode = false;
@@ -129,7 +165,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (mapEl) {
             mapEl.style.top = 'var(--header-h)';
             mapEl.style.height = 'calc(100vh - var(--header-h))';
-            setTimeout(() => map.invalidateSize(), 100);
+            setTimeout(() => map.resize(), 100);
         }
 
         if (searchInput) searchInput.value = '';
@@ -151,7 +187,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (editToolbar) editToolbar.style.display = 'none';
         map.off('click', onMapClickAddCamera);
         map.off('click', onMapClickRemoveCamera);
-        map.getContainer().style.cursor = '';
+        map.getCanvas().style.cursor = '';
     }
 
     /* =========================
@@ -159,48 +195,58 @@ document.addEventListener('DOMContentLoaded', function () {
        ========================= */
     function addCamera(lat, lng) {
         const id = cameraIdCounter++;
-        const marker = L.circleMarker([lat, lng], {
-            radius: 8,
-            fillColor: '#2196F3',
-            color: '#000',
-            weight: 1,
-            opacity: 1,
-            fillOpacity: 0.8
-        }).addTo(map);
+        
+        const el = document.createElement('div');
+        el.className = 'camera-marker';
+        el.style.width = '16px';
+        el.style.height = '16px';
+        el.style.borderRadius = '50%';
+        el.style.backgroundColor = '#2196F3';
+        el.style.border = '1px solid #000';
+        el.style.cursor = 'pointer';
 
-        marker.on('click', function (e) {
-            L.DomEvent.stopPropagation(e);
+        const marker = new maplibregl.Marker({ element: el })
+            .setLngLat([lng, lat])
+            .addTo(map);
+
+        el.addEventListener('click', function (e) {
+            e.stopPropagation();
             if (isRemovingCamera) removeCamera(id);
             else console.log(`Camera ${id} clicked - no functionality yet`);
         });
 
-        mapCameras.push({ id, camera: marker, lat, lng });
+        mapCameras.push({ id, marker, lat, lng });
         saveCamerasToStorage();
     }
 
     function addCameraFromData(lat, lng, id) {
-        const marker = L.circleMarker([lat, lng], {
-            radius: 8,
-            fillColor: '#2196F3',
-            color: '#000',
-            weight: 1,
-            opacity: 1,
-            fillOpacity: 0.8
-        }).addTo(map);
 
-        marker.on('click', function (e) {
-            L.DomEvent.stopPropagation(e);
+        const el = document.createElement('div');
+        el.className = 'camera-marker';
+        el.style.width = '16px';
+        el.style.height = '16px';
+        el.style.borderRadius = '50%';
+        el.style.backgroundColor = '#2196F3';
+        el.style.border = '1px solid #000';
+        el.style.cursor = 'pointer';
+
+        const marker = new maplibregl.Marker({ element: el })
+            .setLngLat([lng, lat])
+            .addTo(map);
+
+        el.addEventListener('click', function (e) {
+            e.stopPropagation();
             if (isRemovingCamera) removeCamera(id);
             else console.log(`Camera ${id} clicked - no functionality yet`);
         });
 
-        mapCameras.push({ id, camera: marker, lat, lng });
+        mapCameras.push({ id, marker, lat, lng });
     }
 
     function removeCamera(cameraId) {
         const idx = mapCameras.findIndex(c => c.id === cameraId);
         if (idx === -1) return;
-        map.removeLayer(mapCameras[idx].camera);
+        mapCameras[idx].marker.remove();
         mapCameras.splice(idx, 1);
         saveCamerasToStorage();
     }
@@ -229,28 +275,28 @@ document.addEventListener('DOMContentLoaded', function () {
         isAddingCamera = true;
         isRemovingCamera = false;
         updateButtonStates();
-        map.getContainer().style.cursor = 'crosshair';
+        map.getCanvas().style.cursor = 'crosshair';
         map.off('click', onMapClickRemoveCamera);
         map.on('click', onMapClickAddCamera);
     }
     function stopAddingCamera() {
         isAddingCamera = false;
         updateButtonStates();
-        map.getContainer().style.cursor = '';
+        map.getCanvas().style.cursor = '';
         map.off('click', onMapClickAddCamera);
     }
     function startRemovingCamera() {
         isRemovingCamera = true;
         isAddingCamera = false;
         updateButtonStates();
-        map.getContainer().style.cursor = 'pointer';
+        map.getCanvas().style.cursor = 'pointer';
         map.off('click', onMapClickAddCamera);
         map.on('click', onMapClickRemoveCamera);
     }
     function stopRemovingCamera() {
         isRemovingCamera = false;
         updateButtonStates();
-        map.getContainer().style.cursor = '';
+        map.getCanvas().style.cursor = '';
         map.off('click', onMapClickRemoveCamera);
     }
 
@@ -262,21 +308,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function onMapClickAddCamera(e) {
         if (!isAddingCamera) return;
-        addCamera(e.latlng.lat, e.latlng.lng);
+        addCamera(e.lngLat.lat, e.lngLat.lng);
         stopAddingCamera();
     }
 
     function onMapClickRemoveCamera(e) {
         if (!isRemovingCamera) return;
-        let cameraClicked = false;
-        mapCameras.forEach(cd => {
-            const dist = map.distance(e.latlng, [cd.lat, cd.lng]);
-            if (dist < 50) {
-                removeCamera(cd.id);
-                cameraClicked = true;
-            }
-        });
-        if (!cameraClicked) console.log('No camera found at clicked location');
     }
 
     /* =========================
@@ -322,7 +359,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (searchInput) searchInput.value = s.display_name.split(',')[0];
         hideSuggestions();
         const lat = parseFloat(s.lat), lon = parseFloat(s.lon);
-        map.setView([lat, lon], 24);
+        map.flyTo({ center: [lon, lat], zoom: 18 }); 
         enterSelectMode();
     }
 
@@ -334,7 +371,7 @@ document.addEventListener('DOMContentLoaded', function () {
             .then(data => {
                 if (data && data.length) {
                     const res = data[0];
-                    map.setView([parseFloat(res.lat), parseFloat(res.lon)], 17);
+                    map.flyTo({ center: [parseFloat(res.lon), parseFloat(res.lat)], zoom: 17 }); 
                     enterSelectMode();
                 }
             })
@@ -350,7 +387,7 @@ document.addEventListener('DOMContentLoaded', function () {
     function startSelectionMode() {
         if (!isSelectMode || isEditMode) return;
         isSelecting = true;
-        map.getContainer().style.cursor = 'crosshair';
+        map.getCanvas().style.cursor = 'crosshair';
 
         const instruction = document.createElement('div');
         instruction.id = 'selection-instruction';
@@ -359,11 +396,11 @@ document.addEventListener('DOMContentLoaded', function () {
         document.body.appendChild(instruction);
         setTimeout(() => document.getElementById('selection-instruction')?.remove(), 3000);
 
-        const mc = map.getContainer();
+        const mc = map.getCanvas();
         mc.addEventListener('mousedown', onMouseDown);
         mc.addEventListener('mousemove', onMouseMove);
         mc.addEventListener('mouseup', onMouseUp);
-        map.dragging.disable();
+        map.dragPan.disable();
     }
 
     function onMouseDown(e) {
@@ -391,15 +428,18 @@ document.addEventListener('DOMContentLoaded', function () {
         const cur = { x: e.clientX, y: e.clientY };
         const left = Math.min(startPoint.x, cur.x), top = Math.min(startPoint.y, cur.y);
         const right = Math.max(startPoint.x, cur.x), bottom = Math.max(startPoint.y, cur.y);
-        const mc = map.getContainer();
+        const mc = map.getCanvas();
         const rect = mc.getBoundingClientRect();
-        const topLeft = map.containerPointToLatLng([left - rect.left, top - rect.top]);
-        const bottomRight = map.containerPointToLatLng([right - rect.left, bottom - rect.top]);
+        
+        const topLeftPoint = { x: left - rect.left, y: top - rect.top };
+        const bottomRightPoint = { x: right - rect.left, y: bottom - rect.top };
+        const topLeft = map.unproject([topLeftPoint.x, topLeftPoint.y]);
+        const bottomRight = map.unproject([bottomRightPoint.x, bottomRightPoint.y]);
 
         if (Math.abs(right - left) > 20 && Math.abs(bottom - top) > 20) {
             map.fitBounds([
-                [bottomRight.lat, topLeft.lng],
-                [topLeft.lat, bottomRight.lng]
+                [topLeft.lng, bottomRight.lat],      
+                [bottomRight.lng, topLeft.lat]      
             ]);
         }
         endSelectionMode();
@@ -410,19 +450,18 @@ document.addEventListener('DOMContentLoaded', function () {
         selectionBox?.remove();
         selectionBox = null;
         document.getElementById('selection-instruction')?.remove();
-        map.getContainer().style.cursor = '';
-        const mc = map.getContainer();
+        map.getCanvas().style.cursor = '';
+        const mc = map.getCanvas();
         mc.removeEventListener('mousedown', onMouseDown);
         mc.removeEventListener('mousemove', onMouseMove);
         mc.removeEventListener('mouseup', onMouseUp);
-        map.dragging.enable();
+        map.dragPan.enable();
         startPoint = null;
     }
 
     /* =========================
        EVENT LISTENERS
        ========================= */
-    // Search input handlers
     if (searchInput) {
         searchInput.addEventListener('input', function (e) {
             clearTimeout(debounceTimer);
@@ -450,9 +489,9 @@ document.addEventListener('DOMContentLoaded', function () {
         backBtn.addEventListener('click', function (e) {
             e.preventDefault();
             if (isEditMode) {
-                exitEditMode(); // Return to select mode
+                exitEditMode(); 
             } else if (isSelectMode) {
-                exitSelectMode(); // Return to normal view
+                exitSelectMode();
             }
         });
     }
@@ -504,7 +543,6 @@ document.addEventListener('DOMContentLoaded', function () {
     /* =========================
        INIT
        ========================= */
-    loadCamerasFromStorage();
 
 });
 </script>
