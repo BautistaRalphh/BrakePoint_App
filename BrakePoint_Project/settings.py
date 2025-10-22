@@ -76,17 +76,25 @@ WSGI_APPLICATION = "BrakePoint_Project.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": "bp_db",
-        "USER" : "brakepoint",
-        "PASSWORD" : "brakepoint_db827",
-        "HOST" : "127.0.0.1",
-        "PORT" : "3306",
-        "OPTIONS": {
-            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"
-        }
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
     }
 }
+
+# MySQL configuration (commented out for development)
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.mysql",
+#         "NAME": "bp_db",
+#         "USER" : "brakepoint",
+#         "PASSWORD" : "brakepoint_db827",
+#         "HOST" : "127.0.0.1",
+#         "PORT" : "3306",
+#         "OPTIONS": {
+#             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"
+#         }
+#     }
+# }
 
 
 # Password validation
