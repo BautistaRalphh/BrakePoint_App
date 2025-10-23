@@ -24,8 +24,10 @@
                 
                 <!-- Edit mode toolbar (hidden by default) -->
                 <div id="edit-toolbar" class="toolbar" style="display: none;">
-                    <button id="add-camera-btn" class="edit-btn-inline">+</button>
-                    <button id="remove-camera-btn" class="edit-btn-inline">-</button>
+                    <button id="add-camera-btn" class="edit-btn-inline">+ Camera</button>
+                    <button id="remove-camera-btn" class="edit-btn-inline">- Camera</button>
+                    <button id="add-point-btn" class="edit-btn-inline">+ Point</button>
+                    <button id="remove-point-btn" class="edit-btn-inline">- Point</button>
                 </div>
             </div>
         </div>
@@ -37,9 +39,11 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    /* =========================
-       MAP INITIALIZATION
-       ========================= */
+    
+    /* ========================================
+       CONFIGURATION & MAP INITIALIZATION
+       ======================================== */
+    
     const map = new maplibregl.Map({
         container: 'map',
         style: 'https://tiles.openfreemap.org/styles/liberty',
@@ -54,79 +58,43 @@ document.addEventListener('DOMContentLoaded', function () {
         visualizePitch: true 
     }), 'bottom-right');
 
-    map.on('load', function() {
-        const layers = map.getStyle().layers;
-        let firstSymbolId;
-        for (const layer of layers) {
-            if (layer.type === 'symbol') {
-                firstSymbolId = layer.id;
-                break;
-            }
-        }
-
-        map.addLayer({
-            'id': '3d-buildings',
-            'source': 'openmaptiles',
-            'source-layer': 'building',
-            'filter': ['==', 'extrude', 'true'],
-            'type': 'fill-extrusion',
-            'minzoom': 15,
-            'paint': {
-                'fill-extrusion-color': '#aaa',
-                'fill-extrusion-height': [
-                    'interpolate', ['linear'], ['zoom'],
-                    15, 0,
-                    15.05, ['get', 'render_height']
-                ],
-                'fill-extrusion-base': [
-                    'interpolate', ['linear'], ['zoom'],
-                    15, 0,
-                    15.05, ['get', 'render_min_height']
-                ],
-                'fill-extrusion-opacity': 0.6
-            }
-        }, firstSymbolId);
-
-        loadCamerasFromStorage();
-
-        // If another page requested a focus location, fly there once
-        try {
-            const focusRaw = localStorage.getItem('focusLocation');
-            const relocateId = localStorage.getItem('relocateLocationId');
-            if (focusRaw) {
-                const f = JSON.parse(focusRaw);
-                if (f && typeof f.lat === 'number' && typeof f.lng === 'number') {
-                    const opts = { center: [f.lng, f.lat] };
-                    if (typeof f.zoom === 'number') opts.zoom = f.zoom;
-                    if (typeof f.bearing === 'number') opts.bearing = f.bearing;
-                    if (typeof f.pitch === 'number') opts.pitch = f.pitch;
-                    map.flyTo(opts);
-                    if (relocateId) {
-                        try { enterSelectMode(); } catch (e) { console.error('enterSelectMode immediate error', e); }
-                    } else {
-                        try { enterEditMode(); } catch (e) { console.error('enterEditMode immediate error', e); }
-                    }
-                }
-                localStorage.removeItem('focusLocation');
-            }
-        } catch (err) { console.error('focusLocation parse error', err); }
-    });
-
-    /* =========================
-       STATE
-       ========================= */
+    
+    /* ========================================
+       STATE VARIABLES
+       ======================================== */
+    
+    // Mode states
     let isSelectMode = false;
     let isEditMode = false;
     let isAddingCamera = false;
     let isRemovingCamera = false;
     let isSelecting = false;
+    let isAddingPoint = false;
+    let isRemovingPoint = false;
 
+    // Camera data
     let mapCameras = [];
     let cameraIdCounter = 0;
+    
+    // Polygon/point data
+    let polygonPoints = [];
+    let pointMarkers = [];
+    let completedPolygons = [];  
+    let currentLine = null;
 
-    /* =========================
-       UI ELEMENTS
-       ========================= */
+    // Search data
+    let debounceTimer = null;
+    let currentSuggestions = [];
+    
+    // Selection box data
+    let selectionBox = null;
+    let startPoint = null;
+
+    
+    /* ========================================
+       UI ELEMENT REFERENCES
+       ======================================== */
+    
     const searchInput = document.getElementById('search-input');
     const backBtn = document.getElementById('back-btn');
     const selectToolbar = document.getElementById('select-toolbar');
@@ -135,7 +103,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const editModeBtn = document.getElementById('edit-mode-btn');
     const addCameraBtn = document.getElementById('add-camera-btn');
     const removeCameraBtn = document.getElementById('remove-camera-btn');
+    const addPointBtn = document.getElementById('add-point-btn');
+    const removePointBtn = document.getElementById('remove-point-btn');
 
+    // Create search suggestions container
     const suggestionsContainer = document.createElement('div');
     suggestionsContainer.className = 'search-suggestions';
     suggestionsContainer.id = 'search-suggestions';
@@ -150,20 +121,19 @@ document.addEventListener('DOMContentLoaded', function () {
         wrap.appendChild(suggestionsContainer);
     }
 
-    let debounceTimer = null;
-    let currentSuggestions = [];
-
-    /* =========================
-       MODE MANAGEMENT
-       ========================= */
+    
+    /* ========================================
+       MODE MANAGEMENT FUNCTIONS
+       ======================================== */
+    
     function enterSelectMode() {
         if (isSelectMode) return;
         isSelectMode = true;
         document.querySelector('.fs-header')?.classList.add('select-mode');
 
         if (backBtn) backBtn.style.display = 'inline-block';
-    if (editModeBtn) editModeBtn.style.display = 'inline-block';
-    if (saveLocationBtn) saveLocationBtn.style.display = 'inline-block';
+        if (editModeBtn) editModeBtn.style.display = 'inline-block';
+        if (saveLocationBtn) saveLocationBtn.style.display = 'inline-block';
         if (selectToolbar) selectToolbar.style.display = 'flex';
         if (editToolbar) editToolbar.style.display = 'none';
 
@@ -184,7 +154,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (backBtn) backBtn.style.display = 'none';
         if (editModeBtn) editModeBtn.style.display = 'none';
-    if (saveLocationBtn) saveLocationBtn.style.display = 'none';
+        if (saveLocationBtn) saveLocationBtn.style.display = 'none';
         if (selectToolbar) selectToolbar.style.display = 'flex';
         if (editToolbar) editToolbar.style.display = 'none';
 
@@ -196,13 +166,48 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (searchInput) searchInput.value = '';
-        
         localStorage.removeItem('relocateLocationId');
     }
 
-    /* =========================
-       SAVED LOCATIONS
-       ========================= */
+    function enterEditMode() {
+        if (isEditMode) return;
+        if (!isSelectMode) {
+            isSelectMode = true;
+            document.querySelector('.fs-header')?.classList.add('select-mode');
+            if (backBtn) backBtn.style.display = 'inline-block';
+            if (editModeBtn) editModeBtn.style.display = 'inline-block';
+            if (saveLocationBtn) saveLocationBtn.style.display = 'inline-block';
+            const mapEl = document.getElementById('map');
+            if (mapEl) {
+                mapEl.style.top = '0';
+                mapEl.style.height = '100vh';
+                setTimeout(() => map.resize(), 100);
+            }
+        }
+        isEditMode = true;
+        if (selectToolbar) selectToolbar.style.display = 'none';
+        if (editToolbar) editToolbar.style.display = 'flex';
+    }
+
+    function exitEditMode() {
+        if (!isEditMode) return;
+        isEditMode = false;
+        stopAddingCamera();
+        stopRemovingCamera();
+        stopAddingPoint();
+        stopRemovingPoint();
+        if (selectToolbar) selectToolbar.style.display = 'flex';
+        if (editToolbar) editToolbar.style.display = 'none';
+        map.off('click', onMapClickAddCamera);
+        map.off('click', onMapClickRemoveCamera);
+        map.getCanvas().style.cursor = '';
+    }
+
+    
+    /* ========================================
+       SAVED LOCATION FUNCTIONS
+       ======================================== */
+    
     function saveCurrentLocation() {
         if (!map) return;
         const center = map.getCenter();
@@ -212,11 +217,11 @@ document.addEventListener('DOMContentLoaded', function () {
         const bearing = Number(map.getBearing && map.getBearing() ? Number(map.getBearing().toFixed(2)) : 0);
         const pitch = Number(map.getPitch && map.getPitch() ? Number(map.getPitch().toFixed(2)) : 0);
         
-        // Check if user is relocating an existing location
         const relocateId = localStorage.getItem('relocateLocationId');
         const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
         
         if (relocateId) {
+            // Update existing location
             if (!confirm('Update this location to the current map view?')) return;
             
             fetch(`/brakepoint/api/saved-locations/${relocateId}/`, {
@@ -269,41 +274,11 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    function enterEditMode() {
-        if (isEditMode) return;
-        if (!isSelectMode) {
-            isSelectMode = true;
-            document.querySelector('.fs-header')?.classList.add('select-mode');
-            if (backBtn) backBtn.style.display = 'inline-block';
-            if (editModeBtn) editModeBtn.style.display = 'inline-block';
-            if (saveLocationBtn) saveLocationBtn.style.display = 'inline-block';
-            const mapEl = document.getElementById('map');
-            if (mapEl) {
-                mapEl.style.top = '0';
-                mapEl.style.height = '100vh';
-                setTimeout(() => map.resize(), 100);
-            }
-        }
-        isEditMode = true;
-        if (selectToolbar) selectToolbar.style.display = 'none';
-        if (editToolbar) editToolbar.style.display = 'flex';
-    }
-
-    function exitEditMode() {
-        if (!isEditMode) return;
-        isEditMode = false;
-        stopAddingCamera();
-        stopRemovingCamera();
-        if (selectToolbar) selectToolbar.style.display = 'flex';
-        if (editToolbar) editToolbar.style.display = 'none';
-        map.off('click', onMapClickAddCamera);
-        map.off('click', onMapClickRemoveCamera);
-        map.getCanvas().style.cursor = '';
-    }
-
-    /* =========================
-       CAMERA MANAGEMENT
-       ========================= */
+    
+    /* ========================================
+       CAMERA MANAGEMENT FUNCTIONS
+       ======================================== */
+    
     function addCamera(lat, lng) {
         const id = cameraIdCounter++;
         
@@ -316,7 +291,7 @@ document.addEventListener('DOMContentLoaded', function () {
         el.style.border = '1px solid #000';
         el.style.cursor = 'pointer';
 
-        const marker = new maplibregl.Marker({ element: el })
+        const marker = new maplibregl.Marker({ element: el, draggable: false })
             .setLngLat([lng, lat])
             .addTo(map);
 
@@ -331,7 +306,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function addCameraFromData(lat, lng, id) {
-
         const el = document.createElement('div');
         el.className = 'camera-marker';
         el.style.width = '16px';
@@ -341,7 +315,7 @@ document.addEventListener('DOMContentLoaded', function () {
         el.style.border = '1px solid #000';
         el.style.cursor = 'pointer';
 
-        const marker = new maplibregl.Marker({ element: el })
+        const marker = new maplibregl.Marker({ element: el, draggable: false })
             .setLngLat([lng, lat])
             .addTo(map);
 
@@ -379,9 +353,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    /* =========================
-       CAMERA ADD/REMOVE MODE HELPERS
-       ========================= */
     function startAddingCamera() {
         isAddingCamera = true;
         isRemovingCamera = false;
@@ -390,12 +361,14 @@ document.addEventListener('DOMContentLoaded', function () {
         map.off('click', onMapClickRemoveCamera);
         map.on('click', onMapClickAddCamera);
     }
+
     function stopAddingCamera() {
         isAddingCamera = false;
         updateButtonStates();
         map.getCanvas().style.cursor = '';
         map.off('click', onMapClickAddCamera);
     }
+
     function startRemovingCamera() {
         isRemovingCamera = true;
         isAddingCamera = false;
@@ -404,17 +377,12 @@ document.addEventListener('DOMContentLoaded', function () {
         map.off('click', onMapClickAddCamera);
         map.on('click', onMapClickRemoveCamera);
     }
+
     function stopRemovingCamera() {
         isRemovingCamera = false;
         updateButtonStates();
         map.getCanvas().style.cursor = '';
         map.off('click', onMapClickRemoveCamera);
-    }
-
-    function updateButtonStates() {
-        if (!addCameraBtn || !removeCameraBtn) return;
-        addCameraBtn.style.backgroundColor = isAddingCamera ? '#4CAF50' : '';
-        removeCameraBtn.style.backgroundColor = isRemovingCamera ? '#f44336' : '';
     }
 
     function onMapClickAddCamera(e) {
@@ -427,9 +395,287 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!isRemovingCamera) return;
     }
 
-    /* =========================
-       SEARCH & SUGGESTIONS
-       ========================= */
+    function updateButtonStates() {
+        if (addCameraBtn && removeCameraBtn) {
+            addCameraBtn.style.backgroundColor = isAddingCamera ? '#4CAF50' : '';
+            removeCameraBtn.style.backgroundColor = isRemovingCamera ? '#f44336' : '';
+        }
+        if (addPointBtn && removePointBtn) {
+            addPointBtn.style.backgroundColor = isAddingPoint ? '#4CAF50' : '';
+            removePointBtn.style.backgroundColor = isRemovingPoint ? '#f44336' : '';
+        }
+    }
+
+    
+    /* ========================================
+       POLYGON/POINT MANAGEMENT FUNCTIONS
+       ======================================== */
+    
+    function startAddingPoint() {
+        isAddingPoint = true;
+        isRemovingPoint = false;
+        updateButtonStates();
+        map.getCanvas().style.cursor = 'crosshair';
+        map.off('click', onMapClickRemovePoint);
+        map.on('click', onMapClickAddPoint);
+    }
+
+    function stopAddingPoint() {
+        isAddingPoint = false;
+        updateButtonStates();
+        map.getCanvas().style.cursor = '';
+        map.off('click', onMapClickAddPoint);
+        map.off('mousemove', updateGuideLine);
+        map.off('click', 'polygon-points', onPointClick);
+        if (map.getLayer('polygon-guide')) map.removeLayer('polygon-guide');
+        if (map.getSource('polygon-guide')) map.removeSource('polygon-guide');
+        updatePolygonLayer();
+    }
+
+    function startRemovingPoint() {
+        isRemovingPoint = true;
+        isAddingPoint = false;
+        updateButtonStates();
+        map.getCanvas().style.cursor = 'pointer';
+        map.off('click', onMapClickAddPoint);
+        map.on('click', onMapClickRemovePoint);
+    }
+
+    function stopRemovingPoint() {
+        isRemovingPoint = false;
+        updateButtonStates();
+        map.getCanvas().style.cursor = '';
+        map.off('click', onMapClickRemovePoint);
+    }
+
+    function onMapClickAddPoint(e) {
+        if (!isAddingPoint) return;
+        
+        // Check if clicking on first point to close polygon
+        const features = map.queryRenderedFeatures(e.point, {
+            layers: ['polygon-points']
+        });
+        
+        if (features.length > 0) {
+            const clickedIndex = features[0].properties.index;
+            if (clickedIndex === 0 && polygonPoints.length >= 3) {
+                completedPolygons.push([...polygonPoints]);
+                polygonPoints = [];
+                updatePolygonLayer();
+                return;
+            }
+        }
+        
+        // Add new point
+        const coords = [e.lngLat.lng, e.lngLat.lat];
+        polygonPoints.push(coords);
+        updatePolygonLayer();
+    }
+
+    function onMapClickRemovePoint(e) {
+        if (!isRemovingPoint) return;
+        
+        const clickCoords = [e.lngLat.lng, e.lngLat.lat];
+        const threshold = 0.0002;
+        
+        let closestIndex = -1;
+        let minDistance = threshold;
+        
+        polygonPoints.forEach((point, index) => {
+            const distance = Math.sqrt(
+                Math.pow(clickCoords[0] - point[0], 2) + 
+                Math.pow(clickCoords[1] - point[1], 2)
+            );
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestIndex = index;
+            }
+        });
+        
+        if (closestIndex !== -1) {
+            removePointByIndex(closestIndex);
+        }
+    }
+
+    function removePointByIndex(index) {
+        if (index < 0 || index >= polygonPoints.length) return;
+        polygonPoints.splice(index, 1);
+        updatePolygonLayer();
+    }
+
+    function updatePolygonLayer() {
+        if (map.getLayer('polygon-fill')) map.removeLayer('polygon-fill');
+        if (map.getLayer('polygon-line')) map.removeLayer('polygon-line');
+        if (map.getLayer('polygon-points')) map.removeLayer('polygon-points');
+        if (map.getSource('polygon')) map.removeSource('polygon');
+        if (map.getSource('polygon-points')) map.removeSource('polygon-points');
+
+        const polygonFeatures = [];
+        const lineFeatures = [];
+        const pointFeatures = [];
+
+        if (completedPolygons.length > 0) {
+            completedPolygons.forEach(polygon => {
+                polygonFeatures.push({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [[...polygon, polygon[0]]]
+                    }
+                });
+                
+                polygon.forEach((coord, i) => {
+                    pointFeatures.push({
+                        type: 'Feature',
+                        properties: { index: -1 }, 
+                        geometry: { type: 'Point', coordinates: coord }
+                    });
+                });
+            });
+        }
+
+        if (polygonPoints.length >= 2) {
+            lineFeatures.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'LineString',
+                    coordinates: polygonPoints
+                }
+            });
+        }
+
+        if (polygonPoints.length >= 1) {
+            polygonPoints.forEach((coord, i) => {
+                pointFeatures.push({
+                    type: 'Feature',
+                    properties: { index: i },
+                    geometry: { type: 'Point', coordinates: coord }
+                });
+            });
+        }
+
+        if (polygonFeatures.length > 0) {
+            map.addSource('polygon', {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: polygonFeatures }
+            });
+
+            map.addLayer({
+                id: 'polygon-fill',
+                type: 'fill',
+                source: 'polygon',
+                paint: {
+                    'fill-color': '#2196F3',
+                    'fill-opacity': 0.5
+                }
+            });
+
+            map.addLayer({
+                id: 'polygon-line',
+                type: 'line',
+                source: 'polygon',
+                paint: {
+                    'line-color': '#1976D2',
+                    'line-width': 3
+                }
+            });
+        } else if (lineFeatures.length > 0) {
+            map.addSource('polygon', {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: lineFeatures }
+            });
+
+            map.addLayer({
+                id: 'polygon-line',
+                type: 'line',
+                source: 'polygon',
+                paint: {
+                    'line-color': '#2196F3',
+                    'line-width': 2
+                }
+            });
+        }
+
+        if (pointFeatures.length > 0) {
+            map.addSource('polygon-points', {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: pointFeatures }
+            });
+
+            map.addLayer({
+                id: 'polygon-points',
+                type: 'circle',
+                source: 'polygon-points',
+                paint: {
+                    'circle-radius': [
+                        'case',
+                        ['all', ['==', ['get', 'index'], 0], ['>=', ['literal', polygonPoints.length], 3]],
+                        10,  
+                        6    
+                    ],
+                    'circle-color': '#2196F3',
+                    'circle-stroke-color': '#fff',
+                    'circle-stroke-width': [
+                        'case',
+                        ['all', ['==', ['get', 'index'], 0], ['>=', ['literal', polygonPoints.length], 3]],
+                        3,  
+                        2  
+                    ]
+                }
+            });
+        }
+
+        // Activate guide line if adding points
+        if (isAddingPoint && polygonPoints.length >= 1) {
+            map.off('mousemove', updateGuideLine);
+            map.on('mousemove', updateGuideLine);
+        }
+    }
+
+    function updateGuideLine(e) {
+        if (!isAddingPoint || polygonPoints.length === 0) return;
+
+        const guideCoords = [polygonPoints[polygonPoints.length - 1], [e.lngLat.lng, e.lngLat.lat]];
+        const guideGeojson = {
+            type: 'Feature',
+            geometry: {
+                type: 'LineString',
+                coordinates: guideCoords
+            }
+        };
+
+        if (map.getSource('polygon-guide')) {
+            map.getSource('polygon-guide').setData(guideGeojson);
+        } else {
+            map.addSource('polygon-guide', {
+                type: 'geojson',
+                data: guideGeojson
+            });
+            map.addLayer({
+                id: 'polygon-guide',
+                type: 'line',
+                source: 'polygon-guide',
+                paint: {
+                    'line-color': '#2196F3',
+                    'line-width': 2,
+                    'line-dasharray': [2, 2],
+                    'line-opacity': 0.6
+                }
+            });
+        }
+    }
+
+    function clearPolygon() {
+        polygonPoints = [];
+        completedPolygons = [];
+        updatePolygonLayer();
+    }
+
+    
+    /* ========================================
+       SEARCH & SUGGESTIONS FUNCTIONS
+       ======================================== */
+    
     function fetchSuggestions(query) {
         if (!query || query.length < 3) {
             hideSuggestions();
@@ -489,12 +735,11 @@ document.addEventListener('DOMContentLoaded', function () {
             .catch(err => console.error('Error searching:', err));
     }
 
-    /* =========================
-       SELECTION BOX
-       ========================= */
-    let selectionBox = null;
-    let startPoint = null;
-
+    
+    /* ========================================
+       SELECTION BOX FUNCTIONS
+       ======================================== */
+    
     function startSelectionMode() {
         if (!isSelectMode || isEditMode) return;
         isSelecting = true;
@@ -570,9 +815,12 @@ document.addEventListener('DOMContentLoaded', function () {
         startPoint = null;
     }
 
-    /* =========================
+    
+    /* ========================================
        EVENT LISTENERS
-       ========================= */
+       ======================================== */
+    
+    // Search input listeners
     if (searchInput) {
         searchInput.addEventListener('input', function (e) {
             clearTimeout(debounceTimer);
@@ -591,7 +839,9 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         document.addEventListener('click', function (e) {
-            if (!searchInput.contains(e.target) && !suggestionsContainer.contains(e.target)) hideSuggestions();
+            if (!searchInput.contains(e.target) && !suggestionsContainer.contains(e.target)) {
+                hideSuggestions();
+            }
         });
     }
 
@@ -615,7 +865,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    // Add/Remove camera buttons (toggle)
+    // Camera control buttons
     if (addCameraBtn) {
         addCameraBtn.addEventListener('click', function (e) {
             e.preventDefault();
@@ -627,6 +877,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     }
+
     if (removeCameraBtn) {
         removeCameraBtn.addEventListener('click', function (e) {
             e.preventDefault();
@@ -639,7 +890,32 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    // Save current location button
+    // Point control buttons
+    if (addPointBtn) {
+        addPointBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!isEditMode) return;
+            if (isAddingPoint) stopAddingPoint();
+            else {
+                if (isRemovingPoint) stopRemovingPoint();
+                startAddingPoint();
+            }
+        });
+    }
+
+    if (removePointBtn) {
+        removePointBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!isEditMode) return;
+            if (isRemovingPoint) stopRemovingPoint();
+            else {
+                if (isAddingPoint) stopAddingPoint();
+                startRemovingPoint();
+            }
+        });
+    }
+
+    // Save location button
     if (saveLocationBtn) {
         saveLocationBtn.addEventListener('click', function (e) {
             e.preventDefault();
@@ -652,17 +928,84 @@ document.addEventListener('DOMContentLoaded', function () {
     document.addEventListener('keydown', function (e) {
         if (searchInput?.contains(document.activeElement)) return;
         if (e.key.toLowerCase() === 's' && isSelectMode && !isSelecting && !isEditMode) {
-            e.preventDefault(); startSelectionMode();
+            e.preventDefault();
+            startSelectionMode();
         }
         if (e.key.toLowerCase() === 'e' && isSelectMode && !isSelecting) {
-            e.preventDefault(); isEditMode ? exitEditMode() : enterEditMode();
+            e.preventDefault();
+            isEditMode ? exitEditMode() : enterEditMode();
         }
-        if (e.key === 'Escape' && isSelecting) endSelectionMode();
+        if (e.key === 'Escape' && isSelecting) {
+            endSelectionMode();
+        }
     });
 
-    /* =========================
-       INIT
-       ========================= */
+    
+    /* ========================================
+       MAP INITIALIZATION & LOADING
+       ======================================== */
+    
+    map.on('load', function() {
+        // Add 3D buildings layer
+        const layers = map.getStyle().layers;
+        let firstSymbolId;
+        for (const layer of layers) {
+            if (layer.type === 'symbol') {
+                firstSymbolId = layer.id;
+                break;
+            }
+        }
+
+        map.addLayer({
+            'id': '3d-buildings',
+            'source': 'openmaptiles',
+            'source-layer': 'building',
+            'filter': ['==', 'extrude', 'true'],
+            'type': 'fill-extrusion',
+            'minzoom': 15,
+            'paint': {
+                'fill-extrusion-color': '#aaa',
+                'fill-extrusion-height': [
+                    'interpolate', ['linear'], ['zoom'],
+                    15, 0,
+                    15.05, ['get', 'render_height']
+                ],
+                'fill-extrusion-base': [
+                    'interpolate', ['linear'], ['zoom'],
+                    15, 0,
+                    15.05, ['get', 'render_min_height']
+                ],
+                'fill-extrusion-opacity': 0.6
+            }
+        }, firstSymbolId);
+
+        // Load saved cameras
+        loadCamerasFromStorage();
+
+        // Handle focus location from localStorage
+        try {
+            const focusRaw = localStorage.getItem('focusLocation');
+            const relocateId = localStorage.getItem('relocateLocationId');
+            if (focusRaw) {
+                const f = JSON.parse(focusRaw);
+                if (f && typeof f.lat === 'number' && typeof f.lng === 'number') {
+                    const opts = { center: [f.lng, f.lat] };
+                    if (typeof f.zoom === 'number') opts.zoom = f.zoom;
+                    if (typeof f.bearing === 'number') opts.bearing = f.bearing;
+                    if (typeof f.pitch === 'number') opts.pitch = f.pitch;
+                    map.flyTo(opts);
+                    if (relocateId) {
+                        try { enterSelectMode(); } catch (e) { console.error('enterSelectMode error', e); }
+                    } else {
+                        try { enterEditMode(); } catch (e) { console.error('enterEditMode error', e); }
+                    }
+                }
+                localStorage.removeItem('focusLocation');
+            }
+        } catch (err) {
+            console.error('focusLocation parse error', err);
+        }
+    });
 
 });
 </script>
