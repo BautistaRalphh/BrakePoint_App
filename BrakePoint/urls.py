@@ -9,7 +9,7 @@ urlpatterns = [
     path('examine/', views.ExamineView.as_view(), name='examine'),
     path('logout/', views.logout_view, name='logout'),
     
-    # API endpoints for saved locations
+    # API endpoints
     path('api/saved-locations/', views.saved_locations_api, name='saved_locations_api'),
-    path('api/saved-locations/<int:location_id>/', views.delete_saved_location_api, name='delete_saved_location_api'),
+    path('api/saved-locations/<int:location_id>/', views.saved_location_detail_api, name='saved_location_detail_api'),
 ]
