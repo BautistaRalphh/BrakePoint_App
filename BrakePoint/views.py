@@ -135,14 +135,68 @@ def saved_locations_api(request):
 
 
 @login_required
-@require_http_methods(["DELETE"])
-def delete_saved_location_api(request, location_id):
+@require_http_methods(["GET", "PUT", "DELETE"])
+def saved_location_detail_api(request, location_id):
     """
-    DELETE: Delete a saved location
+    GET: return one saved location for the user
+    PUT: update fields (rename or remap) - accepts JSON with any of: name, lat, lng, zoom, bearing, pitch
+    DELETE: delete the saved location
     """
     try:
-        location = SavedLocation.objects.get(id=location_id, user=request.user)
-        location.delete()
-        return JsonResponse({'success': True})
+        loc = SavedLocation.objects.get(id=location_id, user=request.user)
     except SavedLocation.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Location not found or access denied'}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            'id': loc.id,
+            'name': loc.name,
+            'lat': loc.lat,
+            'lng': loc.lng,
+            'zoom': loc.zoom,
+            'bearing': loc.bearing,
+            'pitch': loc.pitch,
+            'created_at': loc.created_at.isoformat()
+        })
+
+    if request.method == "PUT":
+        try:
+            body = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+
+        changed = False
+        if 'name' in body:
+            loc.name = str(body['name'])[:255]
+            changed = True
+        if 'lat' in body:
+            loc.lat = float(body['lat']); changed = True
+        if 'lng' in body:
+            loc.lng = float(body['lng']); changed = True
+        if 'zoom' in body:
+            loc.zoom = float(body['zoom']); changed = True
+        if 'bearing' in body:
+            loc.bearing = float(body['bearing']); changed = True
+        if 'pitch' in body:
+            loc.pitch = float(body['pitch']); changed = True
+
+        if changed:
+            loc.save()
+
+        return JsonResponse({
+            'success': True,
+            'location': {
+                'id': loc.id,
+                'name': loc.name,
+                'lat': loc.lat,
+                'lng': loc.lng,
+                'zoom': loc.zoom,
+                'bearing': loc.bearing,
+                'pitch': loc.pitch,
+                'created_at': loc.created_at.isoformat()
+            }
+        })
+
+    if request.method == "DELETE":
+        loc.delete()
+        return JsonResponse({'success': True})

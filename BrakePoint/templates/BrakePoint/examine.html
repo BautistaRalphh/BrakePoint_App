@@ -92,6 +92,7 @@ document.addEventListener('DOMContentLoaded', function () {
         // If another page requested a focus location, fly there once
         try {
             const focusRaw = localStorage.getItem('focusLocation');
+            const relocateId = localStorage.getItem('relocateLocationId');
             if (focusRaw) {
                 const f = JSON.parse(focusRaw);
                 if (f && typeof f.lat === 'number' && typeof f.lng === 'number') {
@@ -100,7 +101,11 @@ document.addEventListener('DOMContentLoaded', function () {
                     if (typeof f.bearing === 'number') opts.bearing = f.bearing;
                     if (typeof f.pitch === 'number') opts.pitch = f.pitch;
                     map.flyTo(opts);
-                    try { enterEditMode(); } catch (e) { console.error('enterEditMode immediate error', e); }
+                    if (relocateId) {
+                        try { enterSelectMode(); } catch (e) { console.error('enterSelectMode immediate error', e); }
+                    } else {
+                        try { enterEditMode(); } catch (e) { console.error('enterEditMode immediate error', e); }
+                    }
                 }
                 localStorage.removeItem('focusLocation');
             }
@@ -191,6 +196,8 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (searchInput) searchInput.value = '';
+        
+        localStorage.removeItem('relocateLocationId');
     }
 
     /* =========================
@@ -204,31 +211,62 @@ document.addEventListener('DOMContentLoaded', function () {
         const zoom = Number(map.getZoom && map.getZoom() ? Number(map.getZoom().toFixed(2)) : 17);
         const bearing = Number(map.getBearing && map.getBearing() ? Number(map.getBearing().toFixed(2)) : 0);
         const pitch = Number(map.getPitch && map.getPitch() ? Number(map.getPitch().toFixed(2)) : 0);
-        const name = (searchInput && searchInput.value.trim()) || `Location ${savedLocationIdCounter+1}`;
-        if (!confirm(`Save current location '${name}'?`)) return;
         
-        // Save to server via API
+        // Check if user is relocating an existing location
+        const relocateId = localStorage.getItem('relocateLocationId');
         const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
-        fetch('/brakepoint/api/saved-locations/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': csrfToken
-            },
-            body: JSON.stringify({ name, lat, lng, zoom, bearing, pitch })
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                alert('Location saved. It will appear on your dashboard.');
-            } else {
-                alert('Failed to save location: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(err => {
-            console.error('Save location error:', err);
-            alert('Failed to save location. Please try again.');
-        });
+        
+        if (relocateId) {
+            if (!confirm('Update this location to the current map view?')) return;
+            
+            fetch(`/brakepoint/api/saved-locations/${relocateId}/`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({ lat, lng, zoom, bearing, pitch })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    localStorage.removeItem('relocateLocationId');
+                    alert('Location updated successfully!');
+                    window.location.href = '/brakepoint/dashboard/';
+                } else {
+                    alert('Failed to update location: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                console.error('Update location error:', err);
+                alert('Failed to update location. Please try again.');
+            });
+        } else {
+            // Create new location
+            const name = (searchInput && searchInput.value.trim()) || `Location ${Date.now()}`;
+            if (!confirm(`Save current location '${name}'?`)) return;
+            
+            fetch('/brakepoint/api/saved-locations/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({ name, lat, lng, zoom, bearing, pitch })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Location saved. It will appear on your dashboard.');
+                } else {
+                    alert('Failed to save location: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                console.error('Save location error:', err);
+                alert('Failed to save location. Please try again.');
+            });
+        }
     }
 
     function enterEditMode() {
