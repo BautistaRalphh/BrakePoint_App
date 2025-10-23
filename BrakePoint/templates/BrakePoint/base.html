@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BrakePoint - {% block title %}{% endblock %}</title>
     
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- MapLibre GL CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
     
     <!-- Leaflet Search Plugin CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet-geosearch@3.8.0/dist/geosearch.css" />
@@ -154,6 +153,13 @@
             bottom: 0;
             top: var(--header-h);
             z-index: 0;
+            transition: all 0.3s ease;
+        }
+
+        /* Map adjustment for select mode */
+        .container.full-screen .fs-header.select-mode ~ #map {
+            top: 0;
+            height: 100vh;
         }
 
         /* Dashboard header and controls */
@@ -163,7 +169,7 @@
             left: 50%;
             transform: translateX(-50%);
             height: auto;
-            overflow: hidden;
+            overflow: visible;
             width: min(920px, 95%);
             z-index: 2000;
             display: flex;
@@ -174,6 +180,136 @@
             background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(255,255,255,0.9));
             padding: 0.75rem 1rem;
             box-sizing: border-box;
+            transition: all 0.3s ease;
+        }
+
+        /* Select mode styles */
+        .container.full-screen .fs-header.select-mode {
+            top: 8px;
+            left: 8px;
+            transform: none;
+            width: 280px;
+            padding: 0.4rem 0.6rem;
+            background: rgba(255,255,255,0.85);
+            border-radius: 4px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+            backdrop-filter: blur(4px);
+        }
+
+        .container.full-screen .fs-header.select-mode .header-title {
+            display: none;
+        }
+
+        .container.full-screen .fs-header.select-mode .search-container {
+            width: 100%;
+        }
+
+        .container.full-screen .fs-header.select-mode .controls {
+            width: 100%;
+        }
+
+        .container.full-screen .fs-header.select-mode .controls #search-input {
+            padding: 0.4rem;
+            font-size: 0.9rem;
+        }
+
+        /* Back button styles */
+        .back-button {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 0.4rem 0.6rem;
+            border-radius: 3px;
+            color: #666;
+            transition: background-color 0.2s;
+            margin-right: 0.5rem;
+        }
+
+        .back-button:hover {
+            background-color: rgba(0,0,0,0.1);
+            color: #333;
+        }
+
+        .container.full-screen .fs-header.select-mode .back-button {
+            display: inline-block;
+        }
+
+        /* Edit mode button styles */
+        .edit-btn {
+            display: block;
+            width: 100%;
+            margin-bottom: 6px;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            color: #495057;
+            transition: all 0.2s;
+        }
+
+        .edit-btn:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+        }
+
+        /* Toolbar styles */
+        .toolbar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            width: 100%;
+        }
+
+        .toolbar #search-input {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .edit-mode-button {
+            background: #ffffff;
+            color: rgb(0, 0, 0);
+            border: none;
+            border-radius: 4px;
+            padding: 0.5rem 0.75rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background-color 0.2s;
+            white-space: nowrap;
+        }
+
+        .edit-mode-button:hover {
+            background: #ffffff;
+        }
+
+        /* Inline edit button styles */
+        .edit-btn-inline {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            color: #495057;
+            transition: all 0.2s;
+            padding: 0.4rem 0.8rem;
+            margin: 0 2px;
+            min-width: 36px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .edit-btn-inline:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+        }
+
+        #edit-controls {
+            display: flex;
+            gap: 4px;
+            align-items: center;
         }
 
         .container.full-screen .fs-header .header-title {
@@ -207,11 +343,57 @@
         }
 
         .container.full-screen .fs-header .controls .btn,
-        .container.full-screen .fs-header {
+        .container.full-screen .fs-header .controls #search-btn {
             margin-top: 0;
             padding: 0.5rem 0.75rem;
             height: auto;
             box-sizing: border-box;
+        }
+
+        /* Search suggestions dropdown */
+        .search-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border-top: none;
+            border-radius: 0 0 5px 5px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 9999;
+            display: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .suggestion-item {
+            padding: 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            font-size: 14px;
+            line-height: 1.4;
+            background: white;
+            min-height: 40px;
+        }
+
+        .suggestion-item:hover {
+            background-color: #f0f0f0;
+        }
+
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .suggestion-main {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 2px;
+        }
+
+        .suggestion-details {
+            color: #666;
+            font-size: 12px;
         }
         
         
@@ -242,9 +424,8 @@
         {% endblock %}
     </div>
     
-    <!-- Leaflet JavaScript -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- MapLibre GL JavaScript -->
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     
     <!-- Leaflet Search Plugin JavaScript -->
     <script src="https://unpkg.com/leaflet-geosearch@3.8.0/dist/geosearch.umd.js"></script>

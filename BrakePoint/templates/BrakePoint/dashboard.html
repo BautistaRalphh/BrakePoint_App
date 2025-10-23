@@ -1,0 +1,71 @@
+{% extends 'BrakePoint/base.html' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="container full-width" style="padding:2rem;">
+    <div style="display:flex;gap:1rem;align-items:center;">
+        <input id="dashboard-search" type="text" placeholder="Search locations..." style="flex:1;padding:0.6rem;border-radius:6px;border:1px solid #ccc;" />
+        <a href="{% url 'examine' %}" class="btn" style="padding:0.6rem 1rem;background:#1976d2;color:#fff;border-radius:6px;text-decoration:none;">New</a>
+    </div>
+
+    <div id="dashboard-results" style="margin-top:1rem;color:#666;">No results yet.</div>
+</div>
+{% endblock %}
+
+    {% block scripts %}
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        function loadSavedLocations() {
+            // Fetch saved locations from server API
+            fetch('/brakepoint/api/saved-locations/')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.locations) {
+                        renderSavedLocations(data.locations);
+                    }
+                })
+                .catch(err => {
+                    console.error('Failed to load saved locations:', err);
+                    document.getElementById('dashboard-results').innerHTML = 'Failed to load saved locations.';
+                });
+        }
+
+        function renderSavedLocations(list) {
+            const container = document.getElementById('dashboard-results');
+            if (!list || !list.length) {
+                container.innerHTML = 'No saved locations.';
+                return;
+            }
+            const ul = document.createElement('ul');
+            ul.style.listStyle = 'none';
+            ul.style.padding = '0';
+            list.forEach(l => {
+                const li = document.createElement('li');
+                li.style.padding = '0.5rem 0';
+                const a = document.createElement('a');
+                a.href = '#';
+                a.innerText = l.name;
+                a.style.color = '#1976d2';
+                a.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    localStorage.setItem('focusLocation', JSON.stringify({
+                        lat: l.lat, 
+                        lng: l.lng, 
+                        zoom: l.zoom || 17, 
+                        bearing: l.bearing || 0, 
+                        pitch: l.pitch || 0
+                    }));
+                    window.location.href = '{% url "examine" %}';
+                });
+                li.appendChild(a);
+                ul.appendChild(li);
+            });
+            container.innerHTML = '';
+            container.appendChild(ul);
+        }
+
+        loadSavedLocations();
+    });
+    </script>
+    {% endblock %}
