@@ -8,6 +8,7 @@
 {% block heading %}BrakePoint{% endblock %}
 
 {% block content %}
+    {% csrf_token %}
     <div class="fs-header">
         <div class="header-title">What area do you want to monitor?</div>
         <div class="search-container">
@@ -17,6 +18,7 @@
                 <!-- Select mode toolbar (visible in normal and select mode) -->
                 <div id="select-toolbar" class="toolbar">
                     <input type="text" id="search-input" placeholder="Search for a place...">
+                    <button id="save-location-btn" class="edit-btn-inline" style="display: none;">Save</button>
                     <button id="edit-mode-btn" class="edit-mode-button" style="display: none;">Edit</button>
                 </div>
                 
@@ -86,6 +88,23 @@ document.addEventListener('DOMContentLoaded', function () {
         }, firstSymbolId);
 
         loadCamerasFromStorage();
+
+        // If another page requested a focus location, fly there once
+        try {
+            const focusRaw = localStorage.getItem('focusLocation');
+            if (focusRaw) {
+                const f = JSON.parse(focusRaw);
+                if (f && typeof f.lat === 'number' && typeof f.lng === 'number') {
+                    const opts = { center: [f.lng, f.lat] };
+                    if (typeof f.zoom === 'number') opts.zoom = f.zoom;
+                    if (typeof f.bearing === 'number') opts.bearing = f.bearing;
+                    if (typeof f.pitch === 'number') opts.pitch = f.pitch;
+                    map.flyTo(opts);
+                    try { enterEditMode(); } catch (e) { console.error('enterEditMode immediate error', e); }
+                }
+                localStorage.removeItem('focusLocation');
+            }
+        } catch (err) { console.error('focusLocation parse error', err); }
     });
 
     /* =========================
@@ -107,6 +126,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const backBtn = document.getElementById('back-btn');
     const selectToolbar = document.getElementById('select-toolbar');
     const editToolbar = document.getElementById('edit-toolbar');
+    const saveLocationBtn = document.getElementById('save-location-btn');
     const editModeBtn = document.getElementById('edit-mode-btn');
     const addCameraBtn = document.getElementById('add-camera-btn');
     const removeCameraBtn = document.getElementById('remove-camera-btn');
@@ -137,7 +157,8 @@ document.addEventListener('DOMContentLoaded', function () {
         document.querySelector('.fs-header')?.classList.add('select-mode');
 
         if (backBtn) backBtn.style.display = 'inline-block';
-        if (editModeBtn) editModeBtn.style.display = 'inline-block';
+    if (editModeBtn) editModeBtn.style.display = 'inline-block';
+    if (saveLocationBtn) saveLocationBtn.style.display = 'inline-block';
         if (selectToolbar) selectToolbar.style.display = 'flex';
         if (editToolbar) editToolbar.style.display = 'none';
 
@@ -158,6 +179,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (backBtn) backBtn.style.display = 'none';
         if (editModeBtn) editModeBtn.style.display = 'none';
+    if (saveLocationBtn) saveLocationBtn.style.display = 'none';
         if (selectToolbar) selectToolbar.style.display = 'flex';
         if (editToolbar) editToolbar.style.display = 'none';
 
@@ -171,8 +193,59 @@ document.addEventListener('DOMContentLoaded', function () {
         if (searchInput) searchInput.value = '';
     }
 
+    /* =========================
+       SAVED LOCATIONS
+       ========================= */
+    function saveCurrentLocation() {
+        if (!map) return;
+        const center = map.getCenter();
+        const lat = center.lat;
+        const lng = center.lng;
+        const zoom = Number(map.getZoom && map.getZoom() ? Number(map.getZoom().toFixed(2)) : 17);
+        const bearing = Number(map.getBearing && map.getBearing() ? Number(map.getBearing().toFixed(2)) : 0);
+        const pitch = Number(map.getPitch && map.getPitch() ? Number(map.getPitch().toFixed(2)) : 0);
+        const name = (searchInput && searchInput.value.trim()) || `Location ${savedLocationIdCounter+1}`;
+        if (!confirm(`Save current location '${name}'?`)) return;
+        
+        // Save to server via API
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+        fetch('/brakepoint/api/saved-locations/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({ name, lat, lng, zoom, bearing, pitch })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                alert('Location saved. It will appear on your dashboard.');
+            } else {
+                alert('Failed to save location: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => {
+            console.error('Save location error:', err);
+            alert('Failed to save location. Please try again.');
+        });
+    }
+
     function enterEditMode() {
-        if (!isSelectMode || isEditMode) return;
+        if (isEditMode) return;
+        if (!isSelectMode) {
+            isSelectMode = true;
+            document.querySelector('.fs-header')?.classList.add('select-mode');
+            if (backBtn) backBtn.style.display = 'inline-block';
+            if (editModeBtn) editModeBtn.style.display = 'inline-block';
+            if (saveLocationBtn) saveLocationBtn.style.display = 'inline-block';
+            const mapEl = document.getElementById('map');
+            if (mapEl) {
+                mapEl.style.top = '0';
+                mapEl.style.height = '100vh';
+                setTimeout(() => map.resize(), 100);
+            }
+        }
         isEditMode = true;
         if (selectToolbar) selectToolbar.style.display = 'none';
         if (editToolbar) editToolbar.style.display = 'flex';
@@ -525,6 +598,15 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (isAddingCamera) stopAddingCamera();
                 startRemovingCamera();
             }
+        });
+    }
+
+    // Save current location button
+    if (saveLocationBtn) {
+        saveLocationBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!isSelectMode) return;
+            saveCurrentLocation();
         });
     }
 
