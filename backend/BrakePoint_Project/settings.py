@@ -40,7 +40,6 @@ INSTALLED_APPS = [
     "BrakePoint",
     'rest_framework',
     'corsheaders',
-    'brakepoint_backend',
 ]
 
 MIDDLEWARE = [
