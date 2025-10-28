@@ -1,83 +1,153 @@
-import { useState } from "react";
+'use client';
 
-export default function LogIn() {
+import { useState } from "react";
+import { Box, Button, TextField, Typography, Paper } from '@mui/material';
+
+export default function LogInPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  // const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  //   e.preventDefault();
+
+  //   try {
+  //     const response = await fetch("http://127.0.0.1:8000/api/login/", {
+  //       method: "POST",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //       },
+  //       body: JSON.stringify({ username, password }),
+  //       credentials: "include", // if Django uses sessions/cookies
+  //     });
+
+  //     if (response.ok) {
+  //       const data = await response.json();
+  //       console.log("Login successful:", data);
+  //       // redirect or update app state here
+  //     } else {
+  //       const errData = await response.json();
+  //       setError(errData.detail || "Invalid username or password");
+  //     }
+  //   } catch (err) {
+  //     setError("Something went wrong. Please try again later.");
+  //   }
+  // };
+
+   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-
-    try {
-      const response = await fetch("http://127.0.0.1:8000/api/login/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ username, password }),
-        credentials: "include", // if Django uses sessions/cookies
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log("Login successful:", data);
-        // redirect or update app state here
-      } else {
-        const errData = await response.json();
-        setError(errData.detail || "Invalid username or password");
-      }
-    } catch (err) {
-      setError("Something went wrong. Please try again later.");
-    }
+    
+    console.log("Submitted:", { username, password });
   };
 
   return (
-    <div className="login-container" style={{ maxWidth: 400, margin: "auto", padding: 20 }}>
-      <h2 style={{ textAlign: "center" }}>Login</h2>
-      <form onSubmit={handleSubmit}>
-        <div className="form-group" style={{ marginBottom: 15 }}>
-          <label htmlFor="username">Username:</label>
-          <input
-            type="text"
-            id="username"
-            name="username"
+    // <div className="login-container" style={{ maxWidth: 400, margin: "auto", padding: 20 }}>
+    //   <h2 style={{ textAlign: "center" }}>Login</h2>
+    //   <form onSubmit={handleSubmit}>
+    //     <div className="form-group" style={{ marginBottom: 15 }}>
+    //       <label htmlFor="username">Username:</label>
+    //       <input
+    //         type="text"
+    //         id="username"
+    //         name="username"
+    //         value={username}
+    //         onChange={(e) => setUsername(e.target.value)}
+    //         required
+    //         style={{ width: "100%", padding: 8 }}
+    //       />
+    //     </div>
+
+    //     <div className="form-group" style={{ marginBottom: 15 }}>
+    //       <label htmlFor="password">Password:</label>
+    //       <input
+    //         type="password"
+    //         id="password"
+    //         name="password"
+    //         value={password}
+    //         onChange={(e) => setPassword(e.target.value)}
+    //         required
+    //         style={{ width: "100%", padding: 8 }}
+    //       />
+    //     </div>
+
+    //     {error && (
+    //       <div style={{ color: "red", marginBottom: 10, textAlign: "center" }}>
+    //         {error}
+    //       </div>
+    //     )}
+
+    //     <Button variant="contained" className="btn" style={{ width: "100%", padding: 10 }}>
+    //       Login
+    //     </Button>
+    //   </form>
+
+    //   <div className="text-center" style={{ marginTop: 20, textAlign: "center" }}>
+    //     <a href="/signup" className="link">
+    //       Don't have an account? Sign up here
+    //     </a>
+    //   </div>
+    // </div>
+
+    <Box
+      display="flex"
+      justifyContent="center"
+      alignItems="center"
+      minHeight="100vh"
+      sx={{ backgroundColor: "#f5f5f5" }}
+    >
+      <Paper
+        elevation={3}
+        sx={{
+          p: 4,
+          width: 400,
+          borderRadius: 3,
+        }}
+      >
+        <Typography variant="h5" align="center" sx={{ mb:2 }}>
+          <b>Login</b>
+        </Typography>
+
+        <Box component="form" onSubmit={handleSubmit} noValidate>
+          <TextField
+            fullWidth
+            label="Username"
+            variant="outlined"
+            margin="normal"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
-            style={{ width: "100%", padding: 8 }}
           />
-        </div>
 
-        <div className="form-group" style={{ marginBottom: 15 }}>
-          <label htmlFor="password">Password:</label>
-          <input
+          <TextField
+            fullWidth
+            label="Password"
             type="password"
-            id="password"
-            name="password"
+            variant="outlined"
+            margin="normal"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            style={{ width: "100%", padding: 8 }}
           />
-        </div>
 
-        {error && (
-          <div style={{ color: "red", marginBottom: 10, textAlign: "center" }}>
-            {error}
-          </div>
-        )}
+          <Button
+            type="submit"
+            fullWidth
+            variant="contained"
+            sx={{ mt: 2, mb: 1 }}
+          >
+            Login
+          </Button>
+        </Box>
 
-        <button type="submit" className="btn" style={{ width: "100%", padding: 10 }}>
-          Login
-        </button>
-      </form>
-
-      <div className="text-center" style={{ marginTop: 20, textAlign: "center" }}>
-        <a href="/signup" className="link">
-          Don't have an account? Sign up here
-        </a>
-      </div>
-    </div>
+        <Typography align="center" variant="body2" sx={{ mt: 2 }}>
+          Don't have an account?{" "}
+          <a href="/signUp" style={{ color: "#1976d2", textDecoration: "none" }}>
+            Sign up here
+          </a>
+        </Typography>
+      </Paper>
+    </Box>
   );
 }
 
