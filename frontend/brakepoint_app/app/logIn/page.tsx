@@ -143,7 +143,7 @@ export default function LogInPage() {
         <Typography align="center" variant="body2" sx={{ mt: 2 }}>
           Don't have an account?{" "}
           <a href="/signUp" style={{ color: "#1976d2", textDecoration: "none" }}>
-            Sign up here
+            Sign-up here
           </a>
         </Typography>
       </Paper>

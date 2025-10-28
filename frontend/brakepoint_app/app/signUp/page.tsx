@@ -80,7 +80,7 @@ export default function SignUpPage() {
 
         <Typography align="center" variant="body2" sx={{ mt: 2 }}>
           Already have an account?{" "}
-          <a href="/signUp" style={{ color: "#1976d2", textDecoration: "none" }}>
+          <a href="/logIn" style={{ color: "#1976d2", textDecoration: "none" }}>
             Login here
           </a>
         </Typography>
