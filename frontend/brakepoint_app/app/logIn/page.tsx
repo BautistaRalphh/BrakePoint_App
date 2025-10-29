@@ -114,6 +114,7 @@ export default function LogInPage() {
             label="Username"
             variant="outlined"
             margin="normal"
+            color="secondary" //  can change to diff color when focused
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
@@ -125,6 +126,7 @@ export default function LogInPage() {
             type="password"
             variant="outlined"
             margin="normal"
+            color="secondary" //  can change to diff color when focused
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -134,7 +136,7 @@ export default function LogInPage() {
             type="submit"
             fullWidth
             variant="contained"
-            sx={{ mt: 2, mb: 1 }}
+            sx={{ mt: 2, mb: 1, backgroundColor: "#161b4cff" }}
           >
             Login
           </Button>
@@ -142,7 +144,7 @@ export default function LogInPage() {
 
         <Typography align="center" variant="body2" sx={{ mt: 2 }}>
           Don't have an account?{" "}
-          <a href="/signUp" style={{ color: "#1976d2", textDecoration: "none" }}>
+          <a href="/signUp" style={{ color: "#161b4cff", textDecoration: "underline" }}>
             Sign-up here
           </a>
         </Typography>

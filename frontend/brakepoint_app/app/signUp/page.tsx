@@ -42,6 +42,7 @@ export default function SignUpPage() {
             label="Username"
             variant="outlined"
             margin="normal"
+            color="secondary" //  can change to diff color when focused
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
@@ -52,6 +53,7 @@ export default function SignUpPage() {
             label="Email"
             variant="outlined"
             margin="normal"
+            color="secondary" //  can change to diff color when focused
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -63,6 +65,7 @@ export default function SignUpPage() {
             type="password"
             variant="outlined"
             margin="normal"
+            color="secondary" //  can change to diff color when focused
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -72,7 +75,7 @@ export default function SignUpPage() {
             type="submit"
             fullWidth
             variant="contained"
-            sx={{ mt: 2, mb: 1 }}
+            sx={{ mt: 2, mb: 1, backgroundColor: "#161b4cff" }}
           >
             Sign Up
           </Button>
@@ -80,7 +83,7 @@ export default function SignUpPage() {
 
         <Typography align="center" variant="body2" sx={{ mt: 2 }}>
           Already have an account?{" "}
-          <a href="/logIn" style={{ color: "#1976d2", textDecoration: "none" }}>
+          <a href="/logIn" style={{ color: "#161b4cff", textDecoration: "underline" }}>
             Login here
           </a>
         </Typography>
