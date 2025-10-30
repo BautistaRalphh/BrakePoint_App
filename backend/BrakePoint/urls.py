@@ -2,8 +2,12 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('api/login/', views.api_login, name='api_login'),
-    path('api/signup/', views.api_signup, name='api_signup'),
+    path('', views.HomeView.as_view(), name='home'),
+    path('dashboard/', views.DashboardView.as_view(), name='dashboard'),
+    path('login/', views.LoginView.as_view(), name='login'),
+    path('signup/', views.SignupView.as_view(), name='signup'),
+    path('examine/', views.ExamineView.as_view(), name='examine'),
+    path('logout/', views.logout_view, name='logout'),
     
     # API endpoints
     path('api/saved-locations/', views.saved_locations_api, name='saved_locations_api'),
