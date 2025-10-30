@@ -35,7 +35,7 @@ export default function DashboardPage() {
       ) : (
         <List>
           {filtered.map(loc => (
-            <ListItem key={loc.id} button component={Link} href={`/map?focus=${encodeURIComponent(JSON.stringify(loc))}`}>
+            <ListItem key={loc.id} Button component={Link} href={`/map?focus=${encodeURIComponent(JSON.stringify(loc))}`}>
               <ListItemText primary={loc.name} secondary={`${loc.lat}, ${loc.lng}`} />
             </ListItem>
           ))}
