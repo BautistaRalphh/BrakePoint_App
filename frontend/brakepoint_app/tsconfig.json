@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    
     "target": "ES2017",
     "lib": [
       "dom",
@@ -35,7 +36,7 @@
     "**/*.mts",
     "**/*.ts",
     "**/*.tsx"
-, "components/map/map.js"  ],
+  ],
   "exclude": [
     "node_modules"
   ]
