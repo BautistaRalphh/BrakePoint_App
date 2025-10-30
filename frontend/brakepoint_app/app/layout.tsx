@@ -1,17 +1,11 @@
-import type { PropsWithChildren } from 'react'
-import { ThemeProvider } from '@mui/material/styles'
-import CssBaseline from '@mui/material/CssBaseline'
-import theme from '@/styles/mui-theme'
+import Theme from './component_tempo/theme';
 
-export default function RootLayout({ children }: PropsWithChildren) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <ThemeProvider theme={theme}>
-          <CssBaseline />
-          {children}
-        </ThemeProvider>
+        <Theme>{children}</Theme>
       </body>
     </html>
-  )
+  );
 }
