@@ -35,7 +35,7 @@
     "**/*.mts",
     "**/*.ts",
     "**/*.tsx"
-, "components/map/map.js"  ],
+, "components/map/map2.js"  ],
   "exclude": [
     "node_modules"
   ]

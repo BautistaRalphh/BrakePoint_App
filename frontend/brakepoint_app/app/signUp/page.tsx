@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Box, Button, TextField, Typography, Paper } from '@mui/material';
 
 export default function SignUpPage() {
@@ -8,12 +9,39 @@ export default function SignUpPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const router = useRouter();
   
 
-   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    
-    console.log("Submitted:", { username, password });
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/brakepoint/api/signup/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, email, password }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log("Signup successful:", data);
+        setSuccess("Account created successfully! Redirecting to login...");
+        setTimeout(() => {
+          router.push('/logIn');
+        }, 2000);
+      } else {
+        const errData = await response.json();
+        setError(errData.error || "Signup failed. Please try again.");
+      }
+    } catch (err) {
+      setError("Something went wrong. Please try again later.");
+      console.error("Signup error:", err);
+    }
   };
 
   return (
@@ -70,6 +98,18 @@ export default function SignUpPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+
+          {error && (
+            <Typography color="error" variant="body2" sx={{ mt: 1 }}>
+              {error}
+            </Typography>
+          )}
+
+          {success && (
+            <Typography color="success" variant="body2" sx={{ mt: 1, color: '#4CAF50' }}>
+              {success}
+            </Typography>
+          )}
 
           <Button
             type="submit"
