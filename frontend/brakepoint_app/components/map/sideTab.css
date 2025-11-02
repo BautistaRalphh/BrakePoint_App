@@ -3,13 +3,14 @@
   top: 0;
   bottom: 0;
   width: 18rem;
-  background-color: #f8fafc;
+  background-color: #ffffff;
   box-shadow: 2px 0 6px rgba(0, 0, 0, 0.2);
   transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 10000;
+  z-index: 20;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding: 32px;
 }
 
 .side-tab-left {
@@ -30,12 +31,10 @@
 
 .side-tab-content {
   flex: 1;
-  padding: 1rem;
   overflow-y: auto;
   position: relative;
 }
 
-/* --- Draggable edge --- */
 .side-tab-resizer {
   position: absolute;
   top: 0;
