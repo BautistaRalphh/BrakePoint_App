@@ -1,0 +1,11 @@
+{
+  "name": "brakepoint-project",
+  "scripts": {
+    "backend": "cd backend && conda activate stable && python manage.py runserver",
+    "frontend": "cd frontend/brakepoint_app && npm run dev",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    
     "target": "ES2017",
     "lib": [
       "dom",
@@ -24,9 +23,15 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"],
-      "@components/*": ["./components/*"],
-      "@styles/*": ["./styles/*"],
+      "@/*": [
+        "./*"
+      ],
+      "@components/*": [
+        "./components/*"
+      ],
+      "@styles/*": [
+        "./styles/*"
+      ]
     }
   },
   "include": [
@@ -35,7 +40,9 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts",
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    ".next\\dev/types/**/*.ts",
+    ".next\\dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

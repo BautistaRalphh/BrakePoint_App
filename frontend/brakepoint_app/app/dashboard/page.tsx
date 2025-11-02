@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Container, Typography, TextField, Button, List, ListItem, ListItemText } from '@mui/material'
+import { Container, Typography, TextField, Button, List, ListItem, ListItemButton, ListItemText } from '@mui/material'
 import Link from 'next/link'
 import { getSavedLocations } from '@/lib/api/api'
 
@@ -35,8 +35,10 @@ export default function DashboardPage() {
       ) : (
         <List>
           {filtered.map(loc => (
-            <ListItem key={loc.id} Button component={Link} href={`/map?focus=${encodeURIComponent(JSON.stringify(loc))}`}>
-              <ListItemText primary={loc.name} secondary={`${loc.lat}, ${loc.lng}`} />
+            <ListItem key={loc.id} disablePadding>
+              <ListItemButton component={Link} href={`/map?focus=${encodeURIComponent(JSON.stringify(loc))}`}>
+                <ListItemText primary={loc.name} secondary={`${loc.lat}, ${loc.lng}`} />
+              </ListItemButton>
             </ListItem>
           ))}
         </List>

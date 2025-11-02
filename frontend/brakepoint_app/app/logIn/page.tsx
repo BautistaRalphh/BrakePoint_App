@@ -1,45 +1,42 @@
 'use client';
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Box, Button, TextField, Typography, Paper } from '@mui/material';
 
 export default function LogInPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const router = useRouter();
   
 
-  // const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-  //   e.preventDefault();
+   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+     e.preventDefault();
 
-  //   try {
-  //     const response = await fetch("http://127.0.0.1:8000/api/login/", {
-  //       method: "POST",
-  //       headers: {
-  //         "Content-Type": "application/json",
-  //       },
-  //       body: JSON.stringify({ username, password }),
-  //       credentials: "include", // if Django uses sessions/cookies
-  //     });
+     try {
+       const response = await fetch("http://127.0.0.1:8000/brakepoint/api/login/", {
+         method: "POST",
+         headers: {
+           "Content-Type": "application/json",
+         },
+         body: JSON.stringify({ username, password }),
+         credentials: "include", 
+       });
 
-  //     if (response.ok) {
-  //       const data = await response.json();
-  //       console.log("Login successful:", data);
-  //       // redirect or update app state here
-  //     } else {
-  //       const errData = await response.json();
-  //       setError(errData.detail || "Invalid username or password");
-  //     }
-  //   } catch (err) {
-  //     setError("Something went wrong. Please try again later.");
-  //   }
-  // };
-
-   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    
-    console.log("Submitted:", { username, password });
-  };
+       if (response.ok) {
+         const data = await response.json();
+        console.log("Login successful:", data);
+        router.push('/dashboard');
+       } else {
+         const errData = await response.json();
+         setError(errData.error || "Invalid username or password");
+       }
+     } catch (err) {
+       setError("Something went wrong. Please try again later.");
+       console.error("Login error:", err);
+     }
+   };
 
   return (
     // <div className="login-container" style={{ maxWidth: 400, margin: "auto", padding: 20 }}>
@@ -131,6 +128,12 @@ export default function LogInPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+
+          {error && (
+            <Typography color="error" variant="body2" sx={{ mt: 1 }}>
+              {error}
+            </Typography>
+          )}
 
           <Button
             type="submit"
