@@ -12,7 +12,7 @@ type SideTabProps = {
 };
 
 export default function SideTab({ side, open, onToggle, children }: SideTabProps) {
-  const [width, setWidth] = useState(275);
+  const [width, setWidth] = useState(480);
   const isDragging = useRef(false);
 
   useEffect(() => {
@@ -20,11 +20,11 @@ export default function SideTab({ side, open, onToggle, children }: SideTabProps
       if (!isDragging.current) return;
 
       if (side==='left') {
-        setWidth(Math.min(Math.max(e.clientX, 240), 640));
+        setWidth(Math.min(Math.max(e.clientX, 480), 720));
       }
 
       if (side==='right') {
-        setWidth(Math.min(Math.max(window.innerWidth - e.clientX, 240), 640));
+        setWidth(Math.min(Math.max(window.innerWidth - e.clientX, 480), 720));
       }; 
     };
 
@@ -71,7 +71,7 @@ export default function SideTab({ side, open, onToggle, children }: SideTabProps
         />
       </div>
 
-      <ToggleDrawer side={side} open={open} onToggle={onToggle} />
+      <ToggleDrawer side={side} open={open} onToggle={onToggle} sideTabWidth={width}/>
     </>
   );
 }
