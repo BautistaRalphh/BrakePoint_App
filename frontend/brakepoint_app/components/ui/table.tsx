@@ -129,13 +129,13 @@ export default function Table({ onVideoFileSelect }: TableProps) {
     { id: 1, video_name: "10212025Malate.mp4", uploaded_time: "10:00:01 October 21, 2025"}
   ]);
 
-  const handleAdd = (data: any) => {
+  const handleAdd = (data: { video_name: string; file_name: File | null; }) => {
     setRows((prev) => [
       ...prev,
       {
         id: prev.length + 1,
-        video_name: data.videoName,
-        file_name: data.file?.name,
+        video_name: data.video_name,
+        uploaded_time: new Date().toLocaleTimeString() + ' ' + new Date().toLocaleDateString(),
       },
     ]);
   };
