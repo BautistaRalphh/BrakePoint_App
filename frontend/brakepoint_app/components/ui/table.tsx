@@ -15,6 +15,9 @@ interface ToolbarProps {
   onAdd: () => void;
 }
 
+interface TableProps {
+  onVideoFileSelect: (url: string) => void;
+}
 interface AddModalProps {
   open: boolean;
   onClose: () => void;
@@ -22,9 +25,10 @@ interface AddModalProps {
     video_name: string;
     file_name: File | null;
   }) => void;
+  onVideoFileSelect: (url: string) => void;
 }
 
-function AddModal({ open, onClose, onSubmit }: AddModalProps) {
+function AddModal({ open, onClose, onSubmit, onVideoFileSelect }: AddModalProps) {
   const [video_name, setVideoName] = React.useState('');
   const [file_name, setFile] = React.useState<File | null>(null);
 
@@ -33,6 +37,10 @@ function AddModal({ open, onClose, onSubmit }: AddModalProps) {
     if (selected) {
       setFile(selected);
 
+      if (selected.type.startsWith('video/')) {
+        const url = URL.createObjectURL(selected);
+        onVideoFileSelect(url); 
+      }      
       if (selected.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.readAsDataURL(selected);
@@ -108,7 +116,7 @@ function CustomToolbar({ title, onAdd } : ToolbarProps) {
   )
 }
 
-export default function Table() {
+export default function Table({ onVideoFileSelect }: TableProps) {
   const [handleOpenAddModal, setAddModalOpen] = useState(false);
 
   const columns = [
@@ -152,7 +160,12 @@ export default function Table() {
           checkboxSelection
         />
       </div>
-      <AddModal open={handleOpenAddModal} onClose={() => setAddModalOpen(false)} onSubmit={handleAdd} />
+      <AddModal 
+        open={handleOpenAddModal} 
+        onClose={() => setAddModalOpen(false)} 
+        onSubmit={handleAdd} 
+        onVideoFileSelect={onVideoFileSelect} 
+      />
     </Box>
   );
 }

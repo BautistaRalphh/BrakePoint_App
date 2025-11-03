@@ -36,7 +36,7 @@ class toggleEditButton {
     }
 }
 
-export default function Map() {
+export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -54,6 +54,30 @@ export default function Map() {
     const lng = 120.9842;
     const lat = 14.5995;
     const zoom = 10;
+    
+    const onCameraClickRef = useRef(onCameraClick);
+    const onCameraAddRef = useRef(onCameraAdd); 
+    
+    useEffect(() => {
+        onCameraClickRef.current = onCameraClick;
+        onCameraAddRef.current = onCameraAdd;
+    }, [onCameraClick, onCameraAdd]);
+
+    useEffect(() => {
+        if (!map.current) return; 
+
+        const addInitialCameras = () => {
+            cameras.forEach(c => c.marker.remove());
+            setCameras([]);
+            cameraLocations.forEach(data => addCameraFromData(data.lat, data.lng, data.id));
+        };
+        
+        if (map.current.loaded()) {
+            addInitialCameras();
+        } else if (map.current) {
+            map.current.once('load', addInitialCameras);
+        }
+    }, [mapContainer.current, cameraLocations]); 
 
     useEffect(() => {
         if (map.current) return;
@@ -76,8 +100,8 @@ export default function Map() {
         const editToggle = new toggleEditButton(setIsEditMode);
         map.current.addControl(editToggle, 'bottom-right');
         
-        loadCamerasFromStorage();
-        
+        loadCamerasFromStorage(); 
+
         map.current.on('load', () => {
             const layers = map.current.getStyle().layers;
             let firstSymbolId;
@@ -112,11 +136,21 @@ export default function Map() {
         el.style.border = '1px solid #000';
         el.style.cursor = 'pointer';
         const marker = new maplibregl.Marker({ element: el, draggable: false }).setLngLat([lng, lat]).addTo(map.current);
+        
         el.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (onCameraClickRef.current) {
+                onCameraClickRef.current(id);
+            }
             if (isRemovingCameraRef.current) { removeCamera(id); }
         });
+        
         const newCamera = { id, marker, lat, lng };
+        
+        if (onCameraAddRef.current) {
+             onCameraAddRef.current(id, lat, lng); 
+        }
+        
         setCameras(prev => {
             const updated = [...prev, newCamera];
             saveCamerasToStorage(updated);
@@ -134,10 +168,15 @@ export default function Map() {
         el.style.border = '1px solid #000';
         el.style.cursor = 'pointer';
         const marker = new maplibregl.Marker({ element: el, draggable: false }).setLngLat([lng, lat]).addTo(map.current);
+        
         el.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (onCameraClickRef.current) {
+                onCameraClickRef.current(id); 
+            }
             if (isRemovingCameraRef.current) { removeCamera(id); }
         });
+        
         setCameras(prev => [...prev, { id, marker, lat, lng }]);
     };
 
@@ -161,7 +200,6 @@ export default function Map() {
         if (!saved) return;
         try {
             const data = JSON.parse(saved);
-            // Wait for map to be ready before adding cameras
             const addCameras = () => {
                 data.forEach(d => addCameraFromData(d.lat, d.lng, d.id));
                 if (data.length) { cameraIdCounter.current = Math.max(...data.map(c => c.id)) + 1; }
@@ -173,7 +211,7 @@ export default function Map() {
             }
         } catch (err) { console.error('Failed to load cameras:', err); }
     };
-
+    
     const renderPolygonLayers = () => {
         if (!map.current || !map.current.loaded()) return;
         const layersToRemove = ['polygon-fill', 'polygon-line', 'polygon-points', 'polygon-points-clickable', 'polygon-guide'];
