@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SavedLocation
+from .models import SavedLocation, Camera
 from django.contrib.auth.models import User
 
 class SavedLocationSerializer(serializers.ModelSerializer):
@@ -19,3 +19,11 @@ class SignupSerializer(serializers.ModelSerializer):
             password=validated_data['password']
         )
         return user
+
+class CameraSerializer(serializers.ModelSerializer):
+    latest_upload = serializers.DateTimeField(required=False, allow_null=True)
+    
+    class Meta:
+        model = Camera
+        fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'created_at']
+        read_only_fields = ['id', 'created_at']
