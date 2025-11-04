@@ -16,3 +16,21 @@ class SavedLocation(models.Model):
     
     def __str__(self):
         return f"{self.name} ({self.user.username})"
+
+class Camera(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='cameras')
+    name = models.CharField(max_length=255, default='New Camera')
+    lat = models.FloatField()
+    lng = models.FloatField()
+    location = models.CharField(max_length=500, blank=True, default='')
+    latest_upload = models.DateTimeField(null=True, blank=True)
+    vehicles = models.IntegerField(default=0)
+    occurrences = models.IntegerField(default=0)
+    behaviors = models.JSONField(default=list, blank=True)  
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.name} ({self.user.username}) at ({self.lat}, {self.lng})"
