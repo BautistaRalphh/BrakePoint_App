@@ -14,4 +14,5 @@ urlpatterns = [
     # Camera endpoints
     path('api/cameras/', views.cameras_api, name='cameras_api'),
     path('api/cameras/<int:pk>/', views.camera_delete_api, name='camera_delete_api'),
+    path('api/upload_and_process/', views.upload_and_process_video, name='upload_and_process'),
 ]

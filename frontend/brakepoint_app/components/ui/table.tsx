@@ -49,12 +49,30 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect }: AddModalProps)
     }
   };
 
-  const handleSubmit = () => {
-    if (!video_name || !file_name) return; 
-    onSubmit({ video_name, file_name });
-    setVideoName('');
-    setFile(null);
-    onClose();
+  const handleSubmit = async () => {
+    if (!video_name || !file_name) return;
+  
+    const formData = new FormData();
+    formData.append('file', file_name);
+  
+    try {
+      const response = await fetch('http://127.0.0.1:8000/brakepoint/api/upload_and_process/', {
+  method: 'POST',
+  body: formData,
+});
+  
+      const data = await response.json();
+      console.log('YOLO detection results:', data);
+  
+      // You could show results in the table or alert
+      alert(`Detected ${data.total_unique} unique objects!`);
+  
+      onSubmit({ video_name, file_name });
+      onClose();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to process video');
+    }
   };
 
   return (
