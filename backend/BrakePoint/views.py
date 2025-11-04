@@ -10,10 +10,10 @@ from .models import SavedLocation, Camera
 from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer
 import requests
 import tempfile, os
-import sys, os
 
+import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from .yolo_processor import run_detection_on_video
+from yolo_processor import run_detection_on_video
 
 api_view(['GET'])
 @permission_classes([AllowAny])
