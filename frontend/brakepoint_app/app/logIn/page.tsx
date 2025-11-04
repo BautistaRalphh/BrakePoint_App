@@ -10,7 +10,6 @@ export default function LogInPage() {
   const [error, setError] = useState("");
   const router = useRouter();
   
-
    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
      e.preventDefault();
 
@@ -21,13 +20,18 @@ export default function LogInPage() {
            "Content-Type": "application/json",
          },
          body: JSON.stringify({ username, password }),
-         credentials: "include", 
        });
 
        if (response.ok) {
          const data = await response.json();
-        console.log("Login successful:", data);
-        router.push('/dashboard');
+         console.log("Login successful:", data);
+         
+         // Store JWT tokens in localStorage
+         localStorage.setItem('access_token', data.access);
+         localStorage.setItem('refresh_token', data.refresh);
+         localStorage.setItem('username', data.user.username);
+         
+         router.push('/dashboard');
        } else {
          const errData = await response.json();
          setError(errData.error || "Invalid username or password");

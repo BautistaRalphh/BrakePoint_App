@@ -36,7 +36,7 @@ class toggleEditButton {
     }
 }
 
-export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd }) { 
+export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, onVisibleCamerasChange }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -45,39 +45,32 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd }
     const [isAddingPoint, setIsAddingPoint] = useState(false);
     const [isRemovingPoint, setIsRemovingPoint] = useState(false);
     const [cameras, setCameras] = useState([]);
-    const cameraIdCounter = useRef(0);
     const [polygonPoints, setPolygonPoints] = useState([]);
     const [completedPolygons, setCompletedPolygons] = useState([]);
     const isRemovingCameraRef = useRef(false);
+    const camerasRef = useRef([]);
+    const isLoadingCameras = useRef(false);
     
     const style = 'https://tiles.openfreemap.org/styles/liberty';
     const lng = 120.9842;
     const lat = 14.5995;
     const zoom = 10;
-    
-    const onCameraClickRef = useRef(onCameraClick);
-    const onCameraAddRef = useRef(onCameraAdd); 
-    
-    useEffect(() => {
-        onCameraClickRef.current = onCameraClick;
-        onCameraAddRef.current = onCameraAdd;
-    }, [onCameraClick, onCameraAdd]);
 
-    useEffect(() => {
-        if (!map.current) return; 
-
-        const addInitialCameras = () => {
-            cameras.forEach(c => c.marker.remove());
-            setCameras([]);
-            cameraLocations.forEach(data => addCameraFromData(data.lat, data.lng, data.id));
-        };
-        
-        if (map.current.loaded()) {
-            addInitialCameras();
-        } else if (map.current) {
-            map.current.once('load', addInitialCameras);
+    const getAuthToken = () => {
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem('access_token');
         }
-    }, [mapContainer.current, cameraLocations]); 
+        return null;
+    };
+
+    useEffect(() => {
+        isRemovingCameraRef.current = isRemovingCamera;
+    }, [isRemovingCamera]);
+
+
+    useEffect(() => {
+        loadCamerasFromDatabase();
+    }, []);
 
     useEffect(() => {
         if (map.current) return;
@@ -99,8 +92,6 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd }
         map.current.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
         const editToggle = new toggleEditButton(setIsEditMode);
         map.current.addControl(editToggle, 'bottom-right');
-        
-        loadCamerasFromStorage(); 
 
         map.current.on('load', () => {
             const layers = map.current.getStyle().layers;
@@ -125,37 +116,136 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd }
         });
     }, []);
 
-    const addCamera = (lat, lng) => {
-        const id = cameraIdCounter.current++;
-        const el = document.createElement('div');
-        el.className = 'camera-marker';
-        el.style.width = '16px';
-        el.style.height = '16px';
-        el.style.borderRadius = '50%';
-        el.style.backgroundColor = '#2196F3';
-        el.style.border = '1px solid #000';
-        el.style.cursor = 'pointer';
-        const marker = new maplibregl.Marker({ element: el, draggable: false }).setLngLat([lng, lat]).addTo(map.current);
-        
-        el.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (onCameraClickRef.current) {
-                onCameraClickRef.current(id);
-            }
-            if (isRemovingCameraRef.current) { removeCamera(id); }
-        });
-        
-        const newCamera = { id, marker, lat, lng };
-        
-        if (onCameraAddRef.current) {
-             onCameraAddRef.current(id, lat, lng); 
+    const loadCamerasFromDatabase = async () => {
+        if (isLoadingCameras.current) {
+            return;
         }
         
-        setCameras(prev => {
-            const updated = [...prev, newCamera];
-            saveCamerasToStorage(updated);
-            return updated;
+        try {
+            isLoadingCameras.current = true;
+            
+            const token = getAuthToken();
+            if (!token) {
+                console.warn('No authentication token found');
+                isLoadingCameras.current = false;
+                return;
+            }
+            
+            const response = await fetch('http://127.0.0.1:8000/brakepoint/api/cameras/', {
+                method: 'GET',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.cameras) {
+                    camerasRef.current.forEach(c => c.marker?.remove());
+                    
+                    setCameras([]);
+                    camerasRef.current = [];
+                    
+                    const addCameras = () => {
+                        data.cameras.forEach(cam => {
+                            addCameraFromData(cam.lat, cam.lng, cam.id);
+                        });
+                    };
+                    
+                    if (map.current && map.current.loaded()) {
+                        addCameras();
+                    } else if (map.current) {
+                        map.current.once('load', addCameras);
+                    }
+                }
+            } else {
+                console.error('Failed to load cameras - Status:', response.status);
+            }
+        } catch (error) {
+            console.error('Failed to load cameras:', error);
+        } finally {
+            isLoadingCameras.current = false;
+        }
+    };
+
+    const updateVisibleCameras = () => {
+        if (!map.current || !onVisibleCamerasChange) return;
+        
+        const bounds = map.current.getBounds();
+        const visibleCameras = camerasRef.current.filter(camera => {
+            return bounds.contains([camera.lng, camera.lat]);
         });
+        
+        const visibleCameraIds = visibleCameras.map(c => c.id);
+        onVisibleCamerasChange(visibleCameraIds);
+    };
+
+    useEffect(() => {
+        if (!map.current) return;
+        
+        const handleMapUpdate = () => {
+            updateVisibleCameras();
+        };
+        
+        map.current.on('moveend', handleMapUpdate);
+        map.current.on('zoomend', handleMapUpdate);
+        
+        if (map.current.loaded()) {
+            updateVisibleCameras();
+        } else {
+            map.current.once('load', updateVisibleCameras);
+        }
+        
+        return () => {
+            if (map.current) {
+                map.current.off('moveend', handleMapUpdate);
+                map.current.off('zoomend', handleMapUpdate);
+            }
+        };
+    }, [cameras]);
+
+    const addCamera = async (lat, lng) => {
+        try {
+            const token = getAuthToken();
+            if (!token) {
+                console.error('No authentication token found');
+                return;
+            }
+            
+            console.log('Adding camera with auth token');
+            
+            const response = await fetch('http://127.0.0.1:8000/brakepoint/api/cameras/', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ 
+                    lat, 
+                    lng
+                })
+            });
+            
+            console.log('Add camera response status:', response.status);
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('Camera added:', data);
+                if (data.success && data.camera) {
+                    addCameraFromData(data.camera.lat, data.camera.lng, data.camera.id);
+                    
+                    if (onCameraAdd) {
+                        onCameraAdd(data.camera.id, data.camera.lat, data.camera.lng, data.camera);
+                    }
+                }
+            } else {
+                const errorText = await response.text();
+                console.error('Failed to add camera:', response.status, errorText);
+            }
+        } catch (error) {
+            console.error('Error adding camera:', error);
+        }
     };
 
     const addCameraFromData = (lat, lng, id) => {
@@ -169,47 +259,64 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd }
         el.style.cursor = 'pointer';
         const marker = new maplibregl.Marker({ element: el, draggable: false }).setLngLat([lng, lat]).addTo(map.current);
         
+        const cameraObj = { id, marker, lat, lng };
+        
         el.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (onCameraClickRef.current) {
-                onCameraClickRef.current(id); 
+            if (isRemovingCameraRef.current) { 
+                removeCamera(id); 
+            } else if (onCameraClick) {
+                onCameraClick(id);
             }
-            if (isRemovingCameraRef.current) { removeCamera(id); }
         });
         
-        setCameras(prev => [...prev, { id, marker, lat, lng }]);
+        // Update ref immediately (synchronous)
+        camerasRef.current = [...camerasRef.current, cameraObj];
+        
+        // Update state (asynchronous)
+        setCameras(prev => [...prev, cameraObj]);
     };
 
-    const removeCamera = (cameraId) => {
-        setCameras(prev => {
-            const camera = prev.find(c => c.id === cameraId);
-            if (camera) { camera.marker.remove(); }
-            const updated = prev.filter(c => c.id !== cameraId);
-            saveCamerasToStorage(updated);
-            return updated;
-        });
-    };
-
-    const saveCamerasToStorage = (cameraList) => {
-        const data = cameraList.map(c => ({ id: c.id, lat: c.lat, lng: c.lng }));
-        localStorage.setItem('mapCameras', JSON.stringify(data));
-    };
-
-    const loadCamerasFromStorage = () => {
-        const saved = localStorage.getItem('mapCameras');
-        if (!saved) return;
+    const removeCamera = async (cameraId) => {
         try {
-            const data = JSON.parse(saved);
-            const addCameras = () => {
-                data.forEach(d => addCameraFromData(d.lat, d.lng, d.id));
-                if (data.length) { cameraIdCounter.current = Math.max(...data.map(c => c.id)) + 1; }
-            };
-            if (map.current && map.current.loaded()) {
-                addCameras();
-            } else if (map.current) {
-                map.current.once('load', addCameras);
+            const token = getAuthToken();
+            if (!token) {
+                console.error('No authentication token found');
+                return;
             }
-        } catch (err) { console.error('Failed to load cameras:', err); }
+            
+            const response = await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/`, {
+                method: 'DELETE',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (response.ok) {
+                const camera = camerasRef.current.find(c => c.id == cameraId);
+                
+                if (camera && camera.marker) {
+                    const markerElement = camera.marker.getElement();
+                    const markerParent = markerElement?.parentNode;
+                    
+                    if (markerElement && markerParent) {
+                        markerParent.removeChild(markerElement);
+                    }
+                    
+                    camera.marker.remove();
+                }
+                
+                camerasRef.current = camerasRef.current.filter(c => c.id != cameraId);
+                
+                setCameras(prev => prev.filter(c => c.id != cameraId));
+            } else {
+                const errorText = await response.text();
+                console.error('Failed to remove camera:', response.status, errorText);
+            }
+        } catch (error) {
+            console.error('Error removing camera:', error);
+        }
     };
     
     const renderPolygonLayers = () => {
