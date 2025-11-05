@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react'; 
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'; 
 import dynamic from 'next/dynamic';
 import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
@@ -15,7 +15,42 @@ import './style.css';
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
 import CarCrashIcon from '@mui/icons-material/CarCrash';
 
-const Map = dynamic(() => import('@/components/map/map.js'), { ssr: false });
+const Map = dynamic(() => import('@/components/map/map.js'), { 
+  ssr: false,
+  loading: () => (
+    <div style={{ 
+      position: 'fixed', 
+      top: 0, 
+      left: 0, 
+      right: 0, 
+      bottom: 0, 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'center',
+      backgroundColor: '#e8eaf6',
+      zIndex: 9999
+    }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ 
+          width: 50, 
+          height: 50, 
+          border: '4px solid #f3f3f3', 
+          borderTop: '4px solid #161b4cff',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite',
+          margin: '0 auto 16px'
+        }}></div>
+        <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading map...</Typography>
+      </div>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  )
+});
 
 export default function MapPage() {
   const [open, setOpen] = useState(true);
@@ -30,95 +65,75 @@ export default function MapPage() {
   const [newFeedName, setNewFeedName] = useState('');
   
   const [visibleCameraIds, setVisibleCameraIds] = useState<number[]>([]);
+  const [camerasLoaded, setCamerasLoaded] = useState(false);
 
   useEffect(() => {
     selectedFeedIdRef.current = selectedFeedId;
-    console.log('selectedFeedId changed to:', selectedFeedId);
   }, [selectedFeedId]);
   
-  const selectedFeed = allFeeds.find(feed => feed.id === selectedFeedId);
+  const selectedFeed = useMemo(() => 
+    allFeeds.find(feed => feed.id === selectedFeedId),
+    [allFeeds, selectedFeedId]
+  );
 
-  const visibleFeeds = allFeeds.filter(feed => visibleCameraIds.includes(feed.id));
-  const aggregateData = visibleFeeds.length > 0 ? {
-    totalVehicles: visibleFeeds.reduce((sum, feed) => sum + feed.vehicles, 0),
-    totalOccurrences: visibleFeeds.reduce((sum, feed) => sum + feed.occurrences, 0),
-    allBehaviors: Array.from(new Set(visibleFeeds.flatMap(feed => feed.behaviors))).filter(b => b !== 'No Data'),
-    cameraCount: visibleFeeds.length
-  } : null;
+  const visibleFeeds = useMemo(() => 
+    allFeeds.filter(feed => visibleCameraIds.includes(feed.id)),
+    [allFeeds, visibleCameraIds]
+  );
 
-  useEffect(() => {
-    const loadCameras = async () => {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        console.warn('No authentication token found');
-        return;
-      }
-
-      try {
-        const response = await fetch('http://127.0.0.1:8000/brakepoint/api/cameras/', {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          }
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.cameras) {
-            const formattedCameras = data.cameras.map((cam: any) => ({
-              id: cam.id,
-              name: cam.name,
-              lat: cam.lat,
-              lng: cam.lng,
-              location: cam.location,
-              latestUpload: cam.latest_upload || 'No uploads yet',
-              vehicles: cam.vehicles,
-              occurrences: cam.occurrences,
-              behaviors: cam.behaviors.length > 0 ? cam.behaviors : ['No Data']
-            }));
-            
-            setAllFeeds(formattedCameras);
-            if (formattedCameras.length > 0) {
-              setSelectedFeedId(null);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load cameras:', error);
-      }
+  const aggregateData = useMemo(() => {
+    if (visibleFeeds.length === 0) return null;
+    
+    return {
+      totalVehicles: visibleFeeds.reduce((sum, feed) => sum + feed.vehicles, 0),
+      totalOccurrences: visibleFeeds.reduce((sum, feed) => sum + feed.occurrences, 0),
+      allBehaviors: Array.from(new Set(visibleFeeds.flatMap(feed => feed.behaviors))).filter(b => b !== 'No Data'),
+      cameraCount: visibleFeeds.length
     };
+  }, [visibleFeeds]);
 
-    loadCameras();
+  const handleCamerasLoaded = useCallback((cameras: any[]) => {
+    const formattedCameras = cameras.map((cam: any) => ({
+      id: cam.id,
+      name: cam.name,
+      lat: cam.lat,
+      lng: cam.lng,
+      location: cam.location,
+      latestUpload: cam.latest_upload || 'No uploads yet',
+      vehicles: cam.vehicles,
+      occurrences: cam.occurrences,
+      behaviors: cam.behaviors.length > 0 ? cam.behaviors : ['No Data']
+    }));
+    
+    setAllFeeds(formattedCameras);
+    setCamerasLoaded(true);
+    if (formattedCameras.length > 0) {
+      setSelectedFeedId(null);
+    }
   }, []);
 
-  const handleVideoFileSelect = (url: string) => {
+  const handleVideoFileSelect = useCallback((url: string) => {
     if (videoSrc) {
       URL.revokeObjectURL(videoSrc);
     }
     setVideoSrc(url);
-  };
+  }, [videoSrc]);
 
-  const handleCameraClick = (cameraId: number) => {
-    console.log('Camera clicked:', cameraId);
-    console.log('Currently selected (from ref):', selectedFeedIdRef.current);
-    
+  const handleCameraClick = useCallback((cameraId: number) => {
     if (selectedFeedIdRef.current === cameraId) {
-      console.log('Deselecting camera');
       setSelectedFeedId(null);
     } else {
-      console.log('Selecting camera');
       setSelectedFeedId(cameraId);
     }
     setVideoSrc(null); 
     setIsEditingName(false);
-  };
+  }, []);
 
-  const handleVisibleCamerasChange = (visibleIds: number[]) => {
+  const handleVisibleCamerasChange = useCallback((visibleIds: number[]) => {
     setVisibleCameraIds(visibleIds);
-  };
+  }, []);
   
-  const handleNewCameraAdded = (id: number, lat: number, lng: number, cameraData: any) => {
+  const handleNewCameraAdded = useCallback((id: number, lat: number, lng: number, cameraData: any) => {
     const newFeed = {
       id: id, 
       name: cameraData.name || `Dynamic Camera ${id}`, 
@@ -134,14 +149,14 @@ export default function MapPage() {
     setAllFeeds(prevFeeds => [...prevFeeds, newFeed]);
     setSelectedFeedId(id);
     setIsEditingName(false);
-  };
+  }, []);
   
-  const startEdit = () => {
+  const startEdit = useCallback(() => {
     setNewFeedName(selectedFeed.name);
     setIsEditingName(true);
-  };
+  }, [selectedFeed]);
 
-  const saveName = () => {
+  const saveName = useCallback(() => {
     if (newFeedName.trim() === selectedFeed.name || newFeedName.trim() === '') {
       setIsEditingName(false);
       return;
@@ -154,7 +169,7 @@ export default function MapPage() {
     );
 
     setIsEditingName(false);
-  };
+  }, [newFeedName, selectedFeed, selectedFeedId]);
 
 
   return (
@@ -163,6 +178,7 @@ export default function MapPage() {
         onCameraClick={handleCameraClick} 
         onCameraAdd={handleNewCameraAdded}
         onVisibleCamerasChange={handleVisibleCamerasChange}
+        onCamerasLoaded={handleCamerasLoaded}
         selectedCameraId={selectedFeedId}
       />
       <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>

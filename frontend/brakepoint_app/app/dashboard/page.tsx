@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Container, Typography, TextField, Button, List, ListItem, ListItemButton, ListItemText } from '@mui/material'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { getSavedLocations } from '@/lib/api/api'
 
 type Loc = { id:number; name:string; lat:number; lng:number; zoom?:number; bearing?:number; pitch?:number }
@@ -9,10 +10,14 @@ type Loc = { id:number; name:string; lat:number; lng:number; zoom?:number; beari
 export default function DashboardPage() {
   const [locations, setLocations] = useState<Loc[]>([])
   const [q, setQ] = useState('')
+  const router = useRouter()
 
   useEffect(() => {
     getSavedLocations().then(data => setLocations(data.locations || []))
       .catch(() => setLocations([]))
+    
+    // Prefetch the map page to speed up navigation
+    router.prefetch('/map')
   }, [])
 
   const filtered = locations.filter(l => l.name.toLowerCase().includes(q.toLowerCase()))

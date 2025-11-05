@@ -36,7 +36,7 @@ class toggleEditButton {
     }
 }
 
-export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange, selectedCameraId }) { 
+export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -122,9 +122,9 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
             style: style,
             center: [lng, lat],
             zoom: zoom,
-            pitch: 45,
+            pitch: 0,
             bearing: 0,
-            antialias: true,
+            antialias: false,
             maxPitch: 85,
             hash: false,
             trackResize: true,
@@ -137,25 +137,34 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
         map.current.addControl(editToggle, 'bottom-right');
 
         map.current.on('load', () => {
-            const layers = map.current.getStyle().layers;
-            let firstSymbolId;
-            for (const layer of layers) {
-                if (layer.type === 'symbol') { firstSymbolId = layer.id; break; }
-            }
-            map.current.addLayer({
-                'id': '3d-buildings',
-                'source': 'openmaptiles',
-                'source-layer': 'building',
-                'filter': ['==', 'extrude', 'true'],
-                'type': 'fill-extrusion',
-                'minzoom': 15,
-                'paint': {
-                    'fill-extrusion-color': '#aaa',
-                    'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'render_height']],
-                    'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'render_min_height']],
-                    'fill-extrusion-opacity': 0.6
+            setTimeout(() => {
+                if (!map.current) return;
+                
+                const layers = map.current.getStyle().layers;
+                let firstSymbolId;
+                for (const layer of layers) {
+                    if (layer.type === 'symbol') { firstSymbolId = layer.id; break; }
                 }
-            }, firstSymbolId);
+                
+                if (map.current.getPitch() === 0) {
+                    map.current.easeTo({ pitch: 45, duration: 800 });
+                }
+                
+                map.current.addLayer({
+                    'id': '3d-buildings',
+                    'source': 'openmaptiles',
+                    'source-layer': 'building',
+                    'filter': ['==', 'extrude', 'true'],
+                    'type': 'fill-extrusion',
+                    'minzoom': 15,
+                    'paint': {
+                        'fill-extrusion-color': '#aaa',
+                        'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'render_height']],
+                        'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'render_min_height']],
+                        'fill-extrusion-opacity': 0.6
+                    }
+                }, firstSymbolId);
+            }, 300);
         });
     }, []);
 
@@ -211,6 +220,10 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                     
                     if (map.current) {
                         addCameras();
+                        
+                        if (onCamerasLoaded) {
+                            onCamerasLoaded(data.cameras);
+                        }
                     }
                 }
             } else {
