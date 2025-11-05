@@ -247,3 +247,30 @@ def camera_delete_api(request, pk: int):
     camera.delete()
     return Response({"success": True})
 
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def camera_polygon_api(request, pk: int):
+    user = request.user
+    
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+    
+    polygon_data = request.data.get('polygon')
+    
+    # Allow null to clear the polygon
+    if polygon_data is None:
+        camera.polygon = []
+        camera.save()
+        return Response({"success": True, "message": "Polygon cleared"})
+    
+    # Validate that polygon is a list
+    if not isinstance(polygon_data, list):
+        return Response({"success": False, "error": "Polygon must be a list"}, status=400)
+    
+    camera.polygon = polygon_data
+    camera.save()
+    
+    return Response({"success": True, "polygon": camera.polygon})
+
