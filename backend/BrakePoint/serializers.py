@@ -22,8 +22,9 @@ class SignupSerializer(serializers.ModelSerializer):
 
 class CameraSerializer(serializers.ModelSerializer):
     latest_upload = serializers.DateTimeField(required=False, allow_null=True)
+    polygon = serializers.JSONField(required=False, allow_null=True)
     
     class Meta:
         model = Camera
-        fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'created_at']
+        fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'polygon', 'created_at']
         read_only_fields = ['id', 'created_at']

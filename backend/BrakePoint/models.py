@@ -26,7 +26,8 @@ class Camera(models.Model):
     latest_upload = models.DateTimeField(null=True, blank=True)
     vehicles = models.IntegerField(default=0)
     occurrences = models.IntegerField(default=0)
-    behaviors = models.JSONField(default=list, blank=True)  
+    behaviors = models.JSONField(default=list, blank=True)
+    polygon = models.JSONField(null=True, blank=True)  # Stores polygon coordinates as array of [lng, lat] pairs
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:

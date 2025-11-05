@@ -247,3 +247,25 @@ def camera_delete_api(request, pk: int):
     camera.delete()
     return Response({"success": True})
 
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def camera_polygon_api(request, pk: int):
+    """
+    Update a camera's polygon data
+    """
+    user = request.user
+    
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+    
+    polygon_data = request.data.get('polygon')
+    camera.polygon = polygon_data
+    camera.save()
+    
+    return Response({
+        "success": True, 
+        "camera": CameraSerializer(camera).data
+    })
+
