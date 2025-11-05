@@ -25,5 +25,5 @@ class CameraSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Camera
-        fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'created_at']
+        fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'created_at', 'polygon']
         read_only_fields = ['id', 'created_at']
