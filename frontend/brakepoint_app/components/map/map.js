@@ -36,7 +36,7 @@ class toggleEditButton {
     }
 }
 
-export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, onVisibleCamerasChange }) { 
+export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange, selectedCameraId }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -47,7 +47,14 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
     const [cameras, setCameras] = useState([]);
     const [polygonPoints, setPolygonPoints] = useState([]);
     const [completedPolygons, setCompletedPolygons] = useState([]);
+    const [selectedPolygonIndex, setSelectedPolygonIndex] = useState(null);
+    const [isAssigningCamera, setIsAssigningCamera] = useState(false);
+    const [showPolygonModal, setShowPolygonModal] = useState(false);
+    const [showSuccessNotification, setShowSuccessNotification] = useState(false);
     const isRemovingCameraRef = useRef(false);
+    const isAssigningCameraRef = useRef(false);
+    const selectedPolygonIndexRef = useRef(null);
+    const completedPolygonsRef = useRef([]);
     const camerasRef = useRef([]);
     const isLoadingCameras = useRef(false);
     
@@ -67,6 +74,42 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
         isRemovingCameraRef.current = isRemovingCamera;
     }, [isRemovingCamera]);
 
+    useEffect(() => {
+        isAssigningCameraRef.current = isAssigningCamera;
+        selectedPolygonIndexRef.current = selectedPolygonIndex;
+    }, [isAssigningCamera, selectedPolygonIndex]);
+
+    useEffect(() => {
+        completedPolygonsRef.current = completedPolygons;
+    }, [completedPolygons]);
+
+    useEffect(() => {
+        camerasRef.current.forEach(camera => {
+            if (camera.element) {
+                if (selectedCameraId === camera.id) {
+                    camera.element.style.color = '#2196F3';
+                } else {
+                    camera.element.style.color = '#999';
+                }
+            }
+        });
+    }, [cameras, selectedCameraId]);
+
+    useEffect(() => {
+        camerasRef.current.forEach(camera => {
+            if (camera.element) {
+                if (selectedCameraId === camera.id) {
+                    camera.element.style.color = '#2196F3';
+                } else {
+                    camera.element.style.color = '#999';
+                }
+            }
+        });
+        
+        if (map.current) {
+            renderPolygonLayers();
+        }
+    }, [selectedCameraId]);
 
     useEffect(() => {
         loadCamerasFromDatabase();
@@ -126,7 +169,6 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
             
             const token = getAuthToken();
             if (!token) {
-                console.warn('No authentication token found');
                 isLoadingCameras.current = false;
                 return;
             }
@@ -151,6 +193,20 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                         data.cameras.forEach(cam => {
                             addCameraFromData(cam.lat, cam.lng, cam.id);
                         });
+                        
+                        // Load polygons from cameras
+                        const polygons = data.cameras
+                            .filter(cam => cam.polygon && cam.polygon.length > 0)
+                            .map(cam => ({
+                                points: cam.polygon,
+                                cameraId: cam.id
+                            }));
+                        
+                        if (polygons.length > 0) {
+                            setTimeout(() => {
+                                setCompletedPolygons(polygons);
+                            }, 100);
+                        }
                     };
                     
                     if (map.current && map.current.loaded()) {
@@ -160,10 +216,9 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                     }
                 }
             } else {
-                console.error('Failed to load cameras - Status:', response.status);
+                const errorText = await response.text();
             }
         } catch (error) {
-            console.error('Failed to load cameras:', error);
         } finally {
             isLoadingCameras.current = false;
         }
@@ -209,11 +264,8 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
         try {
             const token = getAuthToken();
             if (!token) {
-                console.error('No authentication token found');
                 return;
             }
-            
-            console.log('Adding camera with auth token');
             
             const response = await fetch('http://127.0.0.1:8000/brakepoint/api/cameras/', {
                 method: 'POST',
@@ -227,11 +279,8 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                 })
             });
             
-            console.log('Add camera response status:', response.status);
-            
             if (response.ok) {
                 const data = await response.json();
-                console.log('Camera added:', data);
                 if (data.success && data.camera) {
                     addCameraFromData(data.camera.lat, data.camera.lng, data.camera.id);
                     
@@ -239,41 +288,57 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                         onCameraAdd(data.camera.id, data.camera.lat, data.camera.lng, data.camera);
                     }
                 }
-            } else {
-                const errorText = await response.text();
-                console.error('Failed to add camera:', response.status, errorText);
             }
         } catch (error) {
-            console.error('Error adding camera:', error);
         }
     };
 
     const addCameraFromData = (lat, lng, id) => {
         const el = document.createElement('div');
         el.className = 'camera-marker';
-        el.style.width = '16px';
-        el.style.height = '16px';
-        el.style.borderRadius = '50%';
-        el.style.backgroundColor = '#2196F3';
-        el.style.border = '1px solid #000';
         el.style.cursor = 'pointer';
-        const marker = new maplibregl.Marker({ element: el, draggable: false }).setLngLat([lng, lat]).addTo(map.current);
+        el.innerHTML = `
+            <svg width="32" height="32" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" 
+                      fill="currentColor" 
+                      stroke="#fff" 
+                      stroke-width="0.5"/>
+            </svg>
+        `;
+        el.style.color = '#2196F3';
+        el.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))';
         
-        const cameraObj = { id, marker, lat, lng };
+        const marker = new maplibregl.Marker({ element: el, draggable: false, anchor: 'center' }).setLngLat([lng, lat]).addTo(map.current);
+        
+        const cameraObj = { id, marker, lat, lng, element: el };
         
         el.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (isRemovingCameraRef.current) { 
+            if (isAssigningCameraRef.current && selectedPolygonIndexRef.current !== null) {
+                const polygonIndex = selectedPolygonIndexRef.current;
+                const polygon = completedPolygonsRef.current[polygonIndex];
+                
+                if (polygon) {
+                    setCompletedPolygons(prev => prev.map((poly, idx) => 
+                        idx === polygonIndex ? { ...poly, cameraId: id } : poly
+                    ));
+                    
+                    savePolygonToCamera(id, polygon.points);
+                    setIsAssigningCamera(false);
+                    setSelectedPolygonIndex(null);
+                    setShowPolygonModal(false);
+                    setShowSuccessNotification(true);
+                    setTimeout(() => setShowSuccessNotification(false), 3000);
+                }
+            } else if (isRemovingCameraRef.current) { 
                 removeCamera(id); 
             } else if (onCameraClick) {
                 onCameraClick(id);
             }
         });
         
-        // Update ref immediately (synchronous)
         camerasRef.current = [...camerasRef.current, cameraObj];
         
-        // Update state (asynchronous)
         setCameras(prev => [...prev, cameraObj]);
     };
 
@@ -281,7 +346,6 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
         try {
             const token = getAuthToken();
             if (!token) {
-                console.error('No authentication token found');
                 return;
             }
             
@@ -310,17 +374,16 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                 camerasRef.current = camerasRef.current.filter(c => c.id != cameraId);
                 
                 setCameras(prev => prev.filter(c => c.id != cameraId));
-            } else {
-                const errorText = await response.text();
-                console.error('Failed to remove camera:', response.status, errorText);
             }
         } catch (error) {
-            console.error('Error removing camera:', error);
         }
     };
     
     const renderPolygonLayers = () => {
-        if (!map.current || !map.current.loaded()) return;
+        if (!map.current) {
+            return;
+        }
+        
         const layersToRemove = ['polygon-fill', 'polygon-line', 'polygon-points', 'polygon-points-clickable', 'polygon-guide'];
         const sourcesToRemove = ['polygon', 'polygon-points', 'polygon-guide'];
         layersToRemove.forEach(layer => { if (map.current.getLayer(layer)) { try { map.current.removeLayer(layer); } catch (e) {} } });
@@ -328,12 +391,17 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
         const polygonFeatures = [];
         const lineFeatures = [];
         const pointFeatures = [];
-        completedPolygons.forEach((polygon) => {
+        completedPolygons.forEach((polygon, polygonIndex) => {
+            if (!polygon.points || !Array.isArray(polygon.points)) {
+                return;
+            }
+            
             polygonFeatures.push({
                 type: 'Feature',
-                geometry: { type: 'Polygon', coordinates: [[...polygon, polygon[0]]] }
+                properties: { polygonIndex: polygonIndex, cameraId: polygon.cameraId || null },
+                geometry: { type: 'Polygon', coordinates: [[...polygon.points, polygon.points[0]]] }
             });
-            polygon.forEach((coord, i) => {
+            polygon.points.forEach((coord, i) => {
                 pointFeatures.push({
                     type: 'Feature',
                     properties: { index: i, isCompleted: true },
@@ -356,8 +424,39 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
         });
         if (polygonFeatures.length > 0) {
             map.current.addSource('polygon', { type: 'geojson', data: { type: 'FeatureCollection', features: polygonFeatures } });
-            map.current.addLayer({ id: 'polygon-fill', type: 'fill', source: 'polygon', paint: { 'fill-color': '#2196F3', 'fill-opacity': 0.3 } });
-            map.current.addLayer({ id: 'polygon-line', type: 'line', source: 'polygon', paint: { 'line-color': '#1976D2', 'line-width': 3 } });
+            map.current.addLayer({ 
+                id: 'polygon-fill', 
+                type: 'fill', 
+                source: 'polygon', 
+                paint: { 
+                    'fill-color': '#2196F3', 
+                    'fill-opacity': [
+                        'case',
+                        ['==', ['get', 'cameraId'], null],
+                        selectedCameraId === null ? 0.05 : 0.05,
+                        ['==', ['get', 'cameraId'], selectedCameraId],
+                        0.3,
+                        0.05
+                    ]
+                } 
+            });
+            map.current.addLayer({ 
+                id: 'polygon-line', 
+                type: 'line', 
+                source: 'polygon', 
+                paint: { 
+                    'line-color': '#1976D2', 
+                    'line-width': 3,
+                    'line-opacity': [
+                        'case',
+                        ['==', ['get', 'cameraId'], null],
+                        selectedCameraId === null ? 0.2 : 0.2,
+                        ['==', ['get', 'cameraId'], selectedCameraId],
+                        1,
+                        0.2
+                    ]
+                } 
+            });
         } else if (lineFeatures.length > 0) {
             map.current.addSource('polygon', { type: 'geojson', data: { type: 'FeatureCollection', features: lineFeatures } });
             map.current.addLayer({ id: 'polygon-line', type: 'line', source: 'polygon', paint: { 'line-color': '#2196F3', 'line-width': 3 } });
@@ -390,7 +489,7 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                 map.current.addSource('polygon-guide', { type: 'geojson', data: guideData });
                 map.current.addLayer({ id: 'polygon-guide', type: 'line', source: 'polygon-guide', paint: { 'line-color': '#2196F3', 'line-width': 2, 'line-dasharray': [3, 3], 'line-opacity': 0.7 } });
             }
-        } catch (err) { console.error('Error rendering guideline:', err); }
+        } catch (err) { }
     };
 
     const clearGuideline = () => {
@@ -402,13 +501,23 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
     };
 
     const handleMapClick = (e) => {
+        if (!isEditMode && !isAddingCamera && !isAddingPoint && !isRemovingPoint && !isRemovingCamera && !isAssigningCamera) {
+            const features = map.current.queryRenderedFeatures(e.point, { layers: ['polygon-fill'] });
+            if (features.length > 0) {
+                const polygonIndex = features[0].properties.polygonIndex;
+                setSelectedPolygonIndex(polygonIndex);
+                setShowPolygonModal(true);
+                return;
+            }
+        }
+        
         if (isAddingCamera) {
             addCamera(e.lngLat.lat, e.lngLat.lng);
         } else if (isAddingPoint) {
             if (polygonPoints.length >= 3) {
                 const features = map.current.queryRenderedFeatures(e.point, { layers: ['polygon-points', 'polygon-points-clickable'] });
                 if (features.length > 0 && features[0].properties.index === 0 && !features[0].properties.isCompleted) {
-                    setCompletedPolygons(prev => [...prev, [...polygonPoints]]);
+                    setCompletedPolygons(prev => [...prev, { points: [...polygonPoints], cameraId: null }]);
                     setPolygonPoints([]);
                     return;
                 }
@@ -426,6 +535,50 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
 
     const handleMouseMove = (e) => {
         if (isAddingPoint) { renderGuideline(e); }
+    };
+
+    const savePolygonToCamera = async (cameraId, polygonPoints) => {
+        try {
+            const token = getAuthToken();
+            if (!token) {
+                return;
+            }
+            
+            await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/polygon/`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ polygon: polygonPoints })
+            });
+        } catch (error) {
+        }
+    };
+
+    const handleAssignCamera = () => {
+        setShowPolygonModal(false);
+        setIsAssigningCamera(true);
+    };
+
+    const handleDeletePolygon = () => {
+        if (selectedPolygonIndex !== null) {
+            const polygon = completedPolygons[selectedPolygonIndex];
+            
+            if (polygon.cameraId) {
+                savePolygonToCamera(polygon.cameraId, null);
+            }
+            
+            setCompletedPolygons(prev => prev.filter((_, idx) => idx !== selectedPolygonIndex));
+            setSelectedPolygonIndex(null);
+            setShowPolygonModal(false);
+        }
+    };
+
+    const handleCloseModal = () => {
+        setShowPolygonModal(false);
+        setSelectedPolygonIndex(null);
+        setIsAssigningCamera(false);
     };
 
     const startAddingCamera = () => { setIsAddingCamera(true); setIsRemovingCamera(false); setIsAddingPoint(false); setIsRemovingPoint(false); isRemovingCameraRef.current = false; };
@@ -451,8 +604,12 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
         else if (isRemovingCamera || isRemovingPoint) { 
             canvas.classList.add('map-remove');
         }
+        else if (isAssigningCamera) {
+            canvas.style.cursor = 'pointer';
+        }
         
-        if (isAddingCamera || isAddingPoint || isRemovingPoint) { map.current.on('click', handleMapClick); }
+        map.current.on('click', handleMapClick);
+        
         if (isAddingPoint) { map.current.on('mousemove', handleMouseMove); }
         else { clearGuideline(); }
         return () => {
@@ -461,9 +618,13 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                 map.current.off('mousemove', handleMouseMove);
             }
         };
-    }, [isAddingCamera, isRemovingCamera, isAddingPoint, isRemovingPoint, polygonPoints, completedPolygons]);
+    }, [isAddingCamera, isRemovingCamera, isAddingPoint, isRemovingPoint, isAssigningCamera, isEditMode, polygonPoints, completedPolygons]);
 
-    useEffect(() => { renderPolygonLayers(); }, [polygonPoints, completedPolygons]);
+    useEffect(() => { 
+        if (map.current) {
+            renderPolygonLayers();
+        }
+    }, [polygonPoints, completedPolygons, selectedCameraId]);
 
     useEffect(() => {
         if (!isEditMode) {
@@ -480,6 +641,45 @@ export default function Map({ cameraLocations = [], onCameraClick, onCameraAdd, 
                     <button onClick={() => { if (isRemovingCamera) { stopRemovingCamera(); } else { startRemovingCamera(); } }} style={{ padding: '8px 16px', backgroundColor: isRemovingCamera ? '#f44336' : 'white', color: isRemovingCamera ? 'white' : 'black', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', fontWeight: isRemovingCamera ? 'bold' : 'normal' }}>- Camera</button>
                     <button onClick={() => { if (isAddingPoint) { stopAddingPoint(); } else { startAddingPoint(); } }} style={{ padding: '8px 16px', backgroundColor: isAddingPoint ? '#4CAF50' : 'white', color: isAddingPoint ? 'white' : 'black', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', fontWeight: isAddingPoint ? 'bold' : 'normal' }}>+ Point</button>
                     <button onClick={() => { if (isRemovingPoint) { stopRemovingPoint(); } else { startRemovingPoint(); } }} style={{ padding: '8px 16px', backgroundColor: isRemovingPoint ? '#f44336' : 'white', color: isRemovingPoint ? 'white' : 'black', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', fontWeight: isRemovingPoint ? 'bold' : 'normal' }}>- Point</button>
+                </div>
+            )}
+            {isAssigningCamera && (
+                <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 2000, backgroundColor: 'rgba(22, 27, 76, 0.7)', color: 'white', padding: '16px 24px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', fontSize: '16px'}}>
+                    Click on the camera you want this polygon to be assigned
+                </div>
+            )}
+            {showSuccessNotification && (
+                <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 2000, backgroundColor: 'rgba(76, 175, 80, 0.7)', color: 'white', padding: '16px 24px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '24px' }}>✓</span>
+                    Success!
+                </div>
+            )}
+            {showPolygonModal && (
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 2000, backgroundColor: 'white', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '300px' }}>
+                    <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: 'bold' }}>Polygon Options</h3>
+                    {isAssigningCamera ? (
+                        <p style={{ margin: '0 0 16px 0', color: '#666' }}>Click on a camera to assign it to this polygon</p>
+                    ) : (
+                        <p style={{ margin: '0 0 16px 0', color: '#666' }}>
+                            {selectedPolygonIndex !== null && completedPolygons[selectedPolygonIndex]?.cameraId 
+                                ? `Assigned to Camera ${completedPolygons[selectedPolygonIndex].cameraId}` 
+                                : 'No camera assigned'}
+                        </p>
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {!isAssigningCamera && (
+                            <>
+                                <button onClick={handleAssignCamera} style={{ padding: '12px', backgroundColor: '#161b4cff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}>
+                                    {selectedPolygonIndex !== null && completedPolygons[selectedPolygonIndex]?.cameraId ? 'Reassign Camera' : 'Assign to Camera'}
+                                </button>
+                                <button onClick={handleDeletePolygon} style={{ padding: '12px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}>Delete Polygon</button>
+                                <button onClick={handleCloseModal} style={{ padding: '12px', backgroundColor: '#9e9e9e', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
+                            </>
+                        )}
+                        {isAssigningCamera && (
+                            <button onClick={handleCloseModal} style={{ padding: '12px', backgroundColor: '#9e9e9e', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
+                        )}
+                    </div>
                 </div>
             )}
         </div>
