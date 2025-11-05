@@ -183,6 +183,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
             
             if (response.ok) {
                 const data = await response.json();
+                
                 if (data.success && data.cameras) {
                     camerasRef.current.forEach(c => c.marker?.remove());
                     
@@ -194,7 +195,6 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                             addCameraFromData(cam.lat, cam.lng, cam.id);
                         });
                         
-                        // Load polygons from cameras
                         const polygons = data.cameras
                             .filter(cam => cam.polygon && cam.polygon.length > 0)
                             .map(cam => ({
@@ -209,10 +209,8 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                         }
                     };
                     
-                    if (map.current && map.current.loaded()) {
+                    if (map.current) {
                         addCameras();
-                    } else if (map.current) {
-                        map.current.once('load', addCameras);
                     }
                 }
             } else {
@@ -380,10 +378,6 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
     };
     
     const renderPolygonLayers = () => {
-        if (!map.current) {
-            return;
-        }
-        
         const layersToRemove = ['polygon-fill', 'polygon-line', 'polygon-points', 'polygon-points-clickable', 'polygon-guide'];
         const sourcesToRemove = ['polygon', 'polygon-points', 'polygon-guide'];
         layersToRemove.forEach(layer => { if (map.current.getLayer(layer)) { try { map.current.removeLayer(layer); } catch (e) {} } });
@@ -620,7 +614,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
         };
     }, [isAddingCamera, isRemovingCamera, isAddingPoint, isRemovingPoint, isAssigningCamera, isEditMode, polygonPoints, completedPolygons]);
 
-    useEffect(() => { 
+    useEffect(() => {   
         if (map.current) {
             renderPolygonLayers();
         }
