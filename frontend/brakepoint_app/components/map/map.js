@@ -317,6 +317,10 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                 const polygon = completedPolygonsRef.current[polygonIndex];
                 
                 if (polygon) {
+                    if (polygon.cameraId && polygon.cameraId !== id) {
+                        savePolygonToCamera(polygon.cameraId, null);
+                    }
+                    
                     setCompletedPolygons(prev => prev.map((poly, idx) => 
                         idx === polygonIndex ? { ...poly, cameraId: id } : poly
                     ));
