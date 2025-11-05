@@ -160,10 +160,10 @@ export default function MapPage() {
   return (
     <>
       <Map 
-        cameraLocations={allFeeds} 
         onCameraClick={handleCameraClick} 
         onCameraAdd={handleNewCameraAdded}
         onVisibleCamerasChange={handleVisibleCamerasChange}
+        selectedCameraId={selectedFeedId}
       />
       <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>
         {allFeeds.length === 0 ? (
