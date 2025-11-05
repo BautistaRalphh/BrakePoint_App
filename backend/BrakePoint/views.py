@@ -1,4 +1,6 @@
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
@@ -7,6 +9,11 @@ from django.contrib.auth import authenticate, login
 from .models import SavedLocation, Camera
 from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer
 import requests
+import tempfile, os
+
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from yolo_processor import run_detection_on_video
 
 api_view(['GET'])
 @permission_classes([AllowAny])
@@ -199,6 +206,30 @@ def cameras_api(request):
         ser.save(user=user)
         return Response({"success": True, "camera": ser.data}, status=201)
     return Response({"success": False, "error": ser.errors}, status=400)
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+def upload_and_process_video(request):
+    """
+    Receives uploaded video, saves temporarily, and runs YOLO detection.
+    """
+    video = request.FILES.get('file')
+    if not video:
+        return Response({'error': 'No video file provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Save to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
+        for chunk in video.chunks():
+            tmp_file.write(chunk)
+        temp_path = tmp_file.name
+
+    # Run YOLO detection on uploaded file
+    detection_results = run_detection_on_video(temp_path)
+
+    # Clean up temp file
+    os.remove(temp_path)
+
+    return Response(detection_results)
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated]) 
