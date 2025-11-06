@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Box, Card, CardContent, CardActions, Container, Typography, TextField, Button, IconButton, Menu, MenuItem, List, ListItemButton, ListItemText } from '@mui/material'
+import { Box, Card, CardContent, CardActions, Container, Typography, TextField, Button, IconButton, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material'
 import { useRouter } from 'next/navigation'
 import DeleteIcon from '@mui/icons-material/Delete';
 import MapIcon from '@mui/icons-material/Map';
@@ -12,13 +12,23 @@ import { getSavedLocations } from '@/lib/api/api'
 type Loc = { id: number; name: string; lat: number; lng: number; zoom?: number; bearing?: number; pitch?: number }
 
 export default function DashboardPage() {
-  const [locations, setLocations] = useState<Loc[]>([])
+  const [locations, setLocations] = useState<Loc[]>([
+    { id: 1, name: "Manila City Hall", lat: 14.5995, lng: 120.9842, zoom: 15, bearing: 0, pitch: 45 },
+    { id: 2, name: "Quezon City Circle", lat: 14.6542, lng: 121.0493, zoom: 16, bearing: 90, pitch: 60 },
+    { id: 3, name: "Makati Business District", lat: 14.5547, lng: 121.0244, zoom: 17, bearing: 180, pitch: 50 },
+    { id: 4, name: "BGC The Fort", lat: 14.5507, lng: 121.0470, zoom: 16, bearing: 45, pitch: 55 },
+    { id: 5, name: "EDSA Ortigas", lat: 14.5816, lng: 121.0577, zoom: 15, bearing: 270, pitch: 40 },
+  ])
   const [q, setQ] = useState('')
   const [isNavigating, setIsNavigating] = useState(false)
   const router = useRouter()
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [selectedLoc, setSelectedLoc] = useState<Loc | null>(null)
+  
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [editName, setEditName] = useState('')
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, loc: Loc) => {
     setAnchorEl(event.currentTarget)
@@ -32,23 +42,36 @@ export default function DashboardPage() {
 
   const handleEdit = () => {
     if (selectedLoc) {
-      const newName = prompt('Enter new name:', selectedLoc.name)
-      if (newName && newName.trim() !== '') {
-        setLocations(prev =>
-          prev.map(l =>
-            l.id === selectedLoc.id ? { ...l, name: newName } : l
-          )
-        )
-      }
+      setEditName(selectedLoc.name)
+      setEditDialogOpen(true)
     }
     handleMenuClose()
   }
 
+  const handleEditSave = () => {
+    if (selectedLoc && editName.trim() !== '') {
+      setLocations(prev =>
+        prev.map(l =>
+          l.id === selectedLoc.id ? { ...l, name: editName.trim() } : l
+        )
+      )
+      setEditDialogOpen(false)
+      setEditName('')
+    }
+  }
+
   const handleDelete = () => {
-    if (selectedLoc && confirm(`Delete location "${selectedLoc.name}"?`)) {
-      setLocations(prev => prev.filter(l => l.id !== selectedLoc.id))
+    if (selectedLoc) {
+      setDeleteDialogOpen(true)
     }
     handleMenuClose()
+  }
+
+  const handleDeleteConfirm = () => {
+    if (selectedLoc) {
+      setLocations(prev => prev.filter(l => l.id !== selectedLoc.id))
+      setDeleteDialogOpen(false)
+    }
   }
 
   const handleNavigateToMap = (url: string) => {
@@ -57,8 +80,16 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    getSavedLocations().then(data => setLocations(data.locations || []))
-      .catch(() => setLocations([]))
+    // Try to load from API, but fall back to hardcoded data
+    getSavedLocations()
+      .then(data => {
+        if (data.locations && data.locations.length > 0) {
+          setLocations(data.locations)
+        }
+      })
+      .catch(() => {
+        // Keep hardcoded data if API fails
+      })
     
     router.prefetch('/map')
   }, [])
@@ -89,7 +120,7 @@ export default function DashboardPage() {
             animation: 'spin 1s linear infinite',
             margin: '0 auto 16px'
           }}></Box>
-          <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading map...</Typography>
+          <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading...</Typography>
         </Box>
         <style>{`
           @keyframes spin {
@@ -167,16 +198,8 @@ export default function DashboardPage() {
         </div>
 
         {filtered.length === 0 ? (
-          <Typography color="text.secondary">No saved locations.</Typography>
+          <Typography color="text.secondary">No saved locations found.</Typography>
         ) : (
-          // <List>
-          //   {filtered.map(loc => (
-          //     <ListItem key={loc.id} button component={Link} href={`/map?focus=${encodeURIComponent(JSON.stringify(loc))}`}>
-          //       <ListItemText primary={loc.name} secondary={`${loc.lat}, ${loc.lng}`} />
-          //     </ListItem>
-          //   ))}
-          // </List>
-
           <Box display="grid" gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))" gap={2}>
             {filtered.map(loc => (
               <Card
@@ -211,8 +234,8 @@ export default function DashboardPage() {
                     Latitude: {loc.lat}, Longitude: {loc.lng}
                   </Typography>
                   <Typography variant="body2">Zoom: {loc.zoom}</Typography>
-                  <Typography variant="body2">Bearing: {loc.bearing}</Typography>
-                  <Typography variant="body2">Pitch: {loc.pitch}</Typography>
+                  <Typography variant="body2">Bearing: {loc.bearing}°</Typography>
+                  <Typography variant="body2">Pitch: {loc.pitch}°</Typography>
                 </CardContent>
 
                 <CardActions>
@@ -227,28 +250,58 @@ export default function DashboardPage() {
               </Card>
             ))}
           </Box>
-
-          // <List>
-          //   {filtered.map(loc => (
-          //     <ListItemButton
-          //       key={loc.id}
-          //       component={Link}
-          //       href={`/map?focus=${encodeURIComponent(JSON.stringify(loc))}`}
-          //     >
-          //       <ListItemText primary={loc.name} secondary={`${loc.lat}, ${loc.lng}`} />
-          //     </ListItemButton>
-          //   ))}
-          // </List>
-
         )}
+        
         <Menu
           anchorEl={anchorEl}
           open={Boolean(anchorEl)}
           onClose={handleMenuClose}
         >
           <MenuItem onClick={handleEdit}>Edit Name</MenuItem>
-          <MenuItem onClick={handleDelete}>Delete</MenuItem>
+          <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>Delete</MenuItem>
         </Menu>
+
+        <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Edit Location Name</DialogTitle>
+          <DialogContent>
+            <TextField
+              autoFocus
+              margin="dense"
+              label="Location Name"
+              type="text"
+              fullWidth
+              variant="outlined"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleEditSave()
+                }
+              }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleEditSave} variant="contained" sx={{ backgroundColor: "#161b4cff" }}>
+              Save
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Delete Location</DialogTitle>
+          <DialogContent>
+            <Typography>
+              Are you sure you want to delete "{selectedLoc?.name}"? This action cannot be undone.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleDeleteConfirm} variant="contained" color="error">
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
 
       </Container>
     </Box>

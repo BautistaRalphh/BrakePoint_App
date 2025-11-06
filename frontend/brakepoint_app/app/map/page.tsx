@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic';
 import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import CheckIcon from '@mui/icons-material/Check';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import { useRouter } from 'next/navigation';
 
 import ToggleDrawer from '@components/map/toggleDrawer';
 import SideTab from '@components/map/sideTab';
@@ -16,7 +18,6 @@ import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
 import CarCrashIcon from '@mui/icons-material/CarCrash';
 import DirectionsIcon from '@mui/icons-material/Directions';
 import LocalTaxiIcon from '@mui/icons-material/LocalTaxi';
-import TrafficIcon from '@mui/icons-material/Traffic';
 
 const Map = dynamic(() => import('@/components/map/map.js'), { 
   ssr: false,
@@ -43,7 +44,7 @@ const Map = dynamic(() => import('@/components/map/map.js'), {
           animation: 'spin 1s linear infinite',
           margin: '0 auto 16px'
         }}></div>
-        <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading map...</Typography>
+        <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading...</Typography>
       </div>
       <style>{`
         @keyframes spin {
@@ -56,8 +57,10 @@ const Map = dynamic(() => import('@/components/map/map.js'), {
 });
 
 export default function MapPage() {
+  const router = useRouter();
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null); 
+  const [isNavigating, setIsNavigating] = useState(false);
   
   const [allFeeds, setAllFeeds] = useState<any[]>([]);
   
@@ -184,8 +187,63 @@ export default function MapPage() {
   }, [newFeedName, selectedFeed, selectedFeedId]);
 
 
+  if (isNavigating) {
+    return (
+      <Box sx={{ 
+        position: 'fixed', 
+        top: 0, 
+        left: 0, 
+        right: 0, 
+        bottom: 0, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        backgroundColor: '#f5f5f5',
+        zIndex: 9999
+      }}>
+        <Box sx={{ textAlign: 'center' }}>
+          <Box sx={{ 
+            width: 50, 
+            height: 50, 
+            border: '4px solid #f3f3f3', 
+            borderTop: '4px solid #161b4cff',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 16px'
+          }}></Box>
+          <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading...</Typography>
+        </Box>
+        <style>{`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}</style>
+      </Box>
+    );
+  }
+
   return (
     <>
+      <IconButton
+        onClick={() => {
+          setIsNavigating(true);
+          router.back();
+        }}
+        sx={{
+          position: 'absolute',
+          top: 16,
+          left: 16,
+          zIndex: 1000,
+          backgroundColor: 'white',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+          '&:hover': {
+            backgroundColor: '#f5f5f5',
+          },
+        }}
+      >
+        <ArrowBackIcon />
+      </IconButton>
       <Map 
         mode = "map"
         onCameraClick={handleCameraClick} 
@@ -216,7 +274,7 @@ export default function MapPage() {
           <>
             {aggregateData ? (
               <>
-                <Box className="feed-details" sx={{marginBottom:2}}>
+                <Box className="feed-details" sx={{marginBottom:2, marginTop: 6}}>
                   <Typography variant="h4">Total Data</Typography>
                   <Typography variant="body1">
                     Showing data from {aggregateData.cameraCount} camera{aggregateData.cameraCount !== 1 ? 's' : ''} visible in map
@@ -242,7 +300,7 @@ export default function MapPage() {
                       </ListItem>
                       <ListItem disableGutters>
                         <ListItemAvatar>
-                          <TrafficIcon/>
+                          <DirectionsIcon/>
                         </ListItemAvatar>
                         <ListItemText primary={`${aggregateData.totalSigns} Traffic Signs`}></ListItemText>
                       </ListItem>
@@ -375,7 +433,7 @@ export default function MapPage() {
                   </ListItem>
                   <ListItem disableGutters>
                     <ListItemAvatar>
-                      <TrafficIcon/>
+                      <DirectionsIcon/>
                     </ListItemAvatar>
                     <ListItemText primary={`${selectedFeed.signs || 0} Traffic Signs`}></ListItemText>
                   </ListItem>
