@@ -18,6 +18,7 @@ interface ToolbarProps {
 
 interface TableProps {
   onVideoFileSelect: (url: string) => void;
+  hideUpload?: boolean;
 }
 interface AddModalProps {
   open: boolean;
@@ -563,7 +564,7 @@ function CustomToolbar({ title, onAdd } : ToolbarProps) {
   )
 }
 
-export default function Table({ onVideoFileSelect }: TableProps) {
+export default function Table({ onVideoFileSelect, hideUpload = false }: TableProps) {
   const [handleOpenAddModal, setAddModalOpen] = useState(false);
 
   const columns = [
@@ -598,21 +599,23 @@ export default function Table({ onVideoFileSelect }: TableProps) {
             pagination: { paginationModel: { pageSize:  5} },
           }}
           slots={{
-            toolbar: () => <CustomToolbar onAdd={() => setAddModalOpen(true)} />,
+            toolbar: hideUpload ? undefined : () => <CustomToolbar onAdd={() => setAddModalOpen(true)} />,
           }}
           slotProps={{toolbar:
             {title: "Videos"}
           }}
-          showToolbar
+          showToolbar={!hideUpload}
           checkboxSelection
         />
       </div>
-      <AddModal 
-        open={handleOpenAddModal} 
-        onClose={() => setAddModalOpen(false)} 
-        onSubmit={handleAdd} 
-        onVideoFileSelect={onVideoFileSelect} 
-      />
+      {!hideUpload && (
+        <AddModal 
+          open={handleOpenAddModal} 
+          onClose={() => setAddModalOpen(false)} 
+          onSubmit={handleAdd} 
+          onVideoFileSelect={onVideoFileSelect} 
+        />
+      )}
     </Box>
   );
 }

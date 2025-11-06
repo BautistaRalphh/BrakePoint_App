@@ -14,6 +14,9 @@ import './style.css';
 
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
 import CarCrashIcon from '@mui/icons-material/CarCrash';
+import DirectionsIcon from '@mui/icons-material/Directions';
+import LocalTaxiIcon from '@mui/icons-material/LocalTaxi';
+import TrafficIcon from '@mui/icons-material/Traffic';
 
 const Map = dynamic(() => import('@/components/map/map.js'), { 
   ssr: false,
@@ -87,7 +90,10 @@ export default function MapPage() {
     return {
       totalVehicles: visibleFeeds.reduce((sum, feed) => sum + feed.vehicles, 0),
       totalOccurrences: visibleFeeds.reduce((sum, feed) => sum + feed.occurrences, 0),
+      totalSigns: visibleFeeds.reduce((sum, feed) => sum + (feed.signs || 0), 0),
       allBehaviors: Array.from(new Set(visibleFeeds.flatMap(feed => feed.behaviors))).filter(b => b !== 'No Data'),
+      allSignClasses: Array.from(new Set(visibleFeeds.flatMap(feed => feed.signClasses || []))),
+      hasJeepneyHotspot: visibleFeeds.some(feed => feed.jeepneyHotspot),
       cameraCount: visibleFeeds.length
     };
   }, [visibleFeeds]);
@@ -102,7 +108,10 @@ export default function MapPage() {
       latestUpload: cam.latest_upload || 'No uploads yet',
       vehicles: cam.vehicles,
       occurrences: cam.occurrences,
-      behaviors: cam.behaviors.length > 0 ? cam.behaviors : ['No Data']
+      behaviors: cam.behaviors.length > 0 ? cam.behaviors : ['No Data'],
+      signs: cam.signs || 0,
+      signClasses: cam.sign_classes || [],
+      jeepneyHotspot: cam.jeepney_hotspot || false
     }));
     
     setAllFeeds(formattedCameras);
@@ -143,7 +152,10 @@ export default function MapPage() {
       latestUpload: cameraData.latest_upload || new Date().toLocaleDateString(), 
       vehicles: cameraData.vehicles || 0, 
       occurrences: cameraData.occurrences || 0, 
-      behaviors: cameraData.behaviors || ["No Data"] 
+      behaviors: cameraData.behaviors || ["No Data"],
+      signs: cameraData.signs || 0,
+      signClasses: cameraData.sign_classes || [],
+      jeepneyHotspot: cameraData.jeepney_hotspot || false
     };
 
     setAllFeeds(prevFeeds => [...prevFeeds, newFeed]);
@@ -228,8 +240,27 @@ export default function MapPage() {
                         </ListItemAvatar>
                         <ListItemText primary={`${aggregateData.totalOccurrences} Occurrences`}></ListItemText>
                       </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <TrafficIcon/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${aggregateData.totalSigns} Traffic Signs`}></ListItemText>
+                      </ListItem>
                     </List>
                   </Box>
+
+                  {aggregateData.allSignClasses.length > 0 && (
+                    <Box sx={{marginTop: 2, marginBottom: 2}}>
+                      <Typography variant="h6" sx={{marginBottom: 1}}>Sign Classes Detected:</Typography>
+                      <Box className="feed-behavior-list">
+                        <List>
+                          {aggregateData.allSignClasses.map((signClass: string, index: number) => (
+                            <ListItemText key={index} primary={`• ${signClass}`}></ListItemText>
+                          ))}
+                        </List>
+                      </Box>
+                    </Box>
+                  )}
 
                   {aggregateData.allBehaviors.length > 0 && (
                     <Box className="feed-behavior-list">
@@ -244,7 +275,7 @@ export default function MapPage() {
                 
                 <Divider sx={{marginBottom:2}} />
 
-                <Table onVideoFileSelect={handleVideoFileSelect} /> 
+                <Table onVideoFileSelect={handleVideoFileSelect} hideUpload={true} /> 
               </>
             ) : (
               <Box sx={{ 
@@ -342,8 +373,36 @@ export default function MapPage() {
                     </ListItemAvatar>
                     <ListItemText primary={`${selectedFeed.occurrences} Occurences`}></ListItemText>
                   </ListItem>
+                  <ListItem disableGutters>
+                    <ListItemAvatar>
+                      <TrafficIcon/>
+                    </ListItemAvatar>
+                    <ListItemText primary={`${selectedFeed.signs || 0} Traffic Signs`}></ListItemText>
+                  </ListItem>
+                  <ListItem disableGutters>
+                    <ListItemAvatar>
+                      <LocalTaxiIcon sx={{color: selectedFeed.jeepneyHotspot ? '#4CAF50' : '#000000ff'}}/>
+                    </ListItemAvatar>
+                    <ListItemText 
+                      primary={`Jeepney Hotspot: ${selectedFeed.jeepneyHotspot ? 'Yes' : 'No'}`}
+                      sx={{color: selectedFeed.jeepneyHotspot ? '#4CAF50' : 'text.secondary'}}
+                    ></ListItemText>
+                  </ListItem>
                 </List>
               </Box>
+
+              {selectedFeed.signClasses && selectedFeed.signClasses.length > 0 && (
+                <Box sx={{marginTop: 2, marginBottom: 2}}>
+                  <Typography variant="h6" sx={{marginBottom: 1}}>Sign Classes Detected:</Typography>
+                  <Box className="feed-behavior-list">
+                    <List>
+                      {selectedFeed.signClasses.map((signClass: string, index: number) => (
+                        <ListItemText key={index} primary={`• ${signClass}`}></ListItemText>
+                      ))}
+                    </List>
+                  </Box>
+                </Box>
+              )}
 
               <Box className="feed-behavior-list">
                 <List>
