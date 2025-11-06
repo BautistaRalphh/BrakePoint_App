@@ -36,7 +36,7 @@ class toggleEditButton {
     }
 }
 
-export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId }) { 
+export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -71,8 +71,58 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
     };
 
     useEffect(() => {
+        if (mode !== "explore") return;
+        if (map.current) return;
+        map.current = new maplibregl.Map({
+          container: mapContainer.current,
+          style: style,
+          center: [lng, lat],
+          zoom: zoom,
+          pitch: 45,
+          bearing: 0,
+          antialias: true,
+          maxPitch: 85,
+          hash: false,
+          trackResize: true,
+          preserveDrawingBuffer: false,
+          refreshExpiredTiles: false,
+          fadeDuration: 0,
+        });
+        map.current.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+
+        map.current.on("load", () => {
+          const layers = map.current.getStyle().layers;
+          let firstSymbolId;
+          for (const layer of layers) {
+            if (layer.type === "symbol") {
+              firstSymbolId = layer.id;
+              break;
+            }
+          }
+          map.current.addLayer(
+            {
+              id: "3d-buildings",
+              source: "openmaptiles",
+              "source-layer": "building",
+              filter: ["==", "extrude", "true"],
+              type: "fill-extrusion",
+              minzoom: 15,
+              paint: {
+                "fill-extrusion-color": "#aaa",
+                "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
+                "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
+                "fill-extrusion-opacity": 0.6,
+              },
+            },
+            firstSymbolId
+          );
+        });
+      }, [mode]);
+
+    useEffect(() => {
+        if (mode !== "map") return;
         isRemovingCameraRef.current = isRemovingCamera;
-    }, [isRemovingCamera]);
+    }, [isRemovingCamera, mode]);
 
     useEffect(() => {
         isAssigningCameraRef.current = isAssigningCamera;
@@ -116,6 +166,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
     }, []);
 
     useEffect(() => {
+        if (mode !== "map") return;
         if (map.current) return;
         map.current = new maplibregl.Map({
             container: mapContainer.current,
