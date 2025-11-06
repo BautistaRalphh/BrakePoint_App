@@ -87,7 +87,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
         camerasRef.current.forEach(camera => {
             if (camera.element) {
                 if (selectedCameraId === camera.id) {
-                    camera.element.style.color = '#2196F3';
+                    camera.element.style.color = '#161b4cff';
                 } else {
                     camera.element.style.color = '#999';
                 }
@@ -99,7 +99,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
         camerasRef.current.forEach(camera => {
             if (camera.element) {
                 if (selectedCameraId === camera.id) {
-                    camera.element.style.color = '#2196F3';
+                    camera.element.style.color = '#161b4cff';
                 } else {
                     camera.element.style.color = '#999';
                 }
@@ -316,7 +316,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                       stroke-width="0.5"/>
             </svg>
         `;
-        el.style.color = '#2196F3';
+        el.style.color = '#161b4cff';
         el.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))';
         
         const marker = new maplibregl.Marker({ element: el, draggable: false, anchor: 'center' }).setLngLat([lng, lat]).addTo(map.current);
@@ -440,7 +440,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                 type: 'fill', 
                 source: 'polygon', 
                 paint: { 
-                    'fill-color': '#2196F3', 
+                    'fill-color': '#161b4cff', 
                     'fill-opacity': [
                         'case',
                         ['==', ['get', 'cameraId'], null],
@@ -470,12 +470,12 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
             });
         } else if (lineFeatures.length > 0) {
             map.current.addSource('polygon', { type: 'geojson', data: { type: 'FeatureCollection', features: lineFeatures } });
-            map.current.addLayer({ id: 'polygon-line', type: 'line', source: 'polygon', paint: { 'line-color': '#2196F3', 'line-width': 3 } });
+            map.current.addLayer({ id: 'polygon-line', type: 'line', source: 'polygon', paint: { 'line-color': '#161b4cff', 'line-width': 3 } });
         }
         if (pointFeatures.length > 0) {
             map.current.addSource('polygon-points', { type: 'geojson', data: { type: 'FeatureCollection', features: pointFeatures } });
             map.current.addLayer({ id: 'polygon-points-clickable', type: 'circle', source: 'polygon-points', paint: { 'circle-radius': 20, 'circle-color': 'transparent', 'circle-opacity': 0 } });
-            map.current.addLayer({ id: 'polygon-points', type: 'circle', source: 'polygon-points', paint: { 'circle-radius': ['case', ['all', ['==', ['get', 'index'], 0], ['==', ['get', 'isCompleted'], false], ['>=', ['literal', polygonPoints.length], 3]], 14, 9], 'circle-color': '#2196F3', 'circle-stroke-color': '#fff', 'circle-stroke-width': ['case', ['all', ['==', ['get', 'index'], 0], ['==', ['get', 'isCompleted'], false], ['>=', ['literal', polygonPoints.length], 3]], 4, 3] } });
+            map.current.addLayer({ id: 'polygon-points', type: 'circle', source: 'polygon-points', paint: { 'circle-radius': ['case', ['all', ['==', ['get', 'index'], 0], ['==', ['get', 'isCompleted'], false], ['>=', ['literal', polygonPoints.length], 3]], 14, 9], 'circle-color': '#161b4cff', 'circle-stroke-color': '#fff', 'circle-stroke-width': ['case', ['all', ['==', ['get', 'index'], 0], ['==', ['get', 'isCompleted'], false], ['>=', ['literal', polygonPoints.length], 3]], 4, 3] } });
         }
     };
 
@@ -489,7 +489,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                     map.current.removeSource('polygon-guide');
                 }
                 map.current.addSource('polygon-guide', { type: 'geojson', data: guideData });
-                map.current.addLayer({ id: 'polygon-guide', type: 'circle', source: 'polygon-guide', paint: { 'circle-radius': 6, 'circle-color': '#2196F3', 'circle-opacity': 0.5 } });
+                map.current.addLayer({ id: 'polygon-guide', type: 'circle', source: 'polygon-guide', paint: { 'circle-radius': 6, 'circle-color': '#161b4cff', 'circle-opacity': 0.5 } });
             } else {
                 const lastPoint = polygonPoints[polygonPoints.length - 1];
                 const guideData = { type: 'Feature', geometry: { type: 'LineString', coordinates: [lastPoint, [e.lngLat.lng, e.lngLat.lat]] } };
@@ -498,7 +498,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                     map.current.removeSource('polygon-guide');
                 }
                 map.current.addSource('polygon-guide', { type: 'geojson', data: guideData });
-                map.current.addLayer({ id: 'polygon-guide', type: 'line', source: 'polygon-guide', paint: { 'line-color': '#2196F3', 'line-width': 2, 'line-dasharray': [3, 3], 'line-opacity': 0.7 } });
+                map.current.addLayer({ id: 'polygon-guide', type: 'line', source: 'polygon-guide', paint: { 'line-color': '#161b4cff', 'line-width': 2, 'line-dasharray': [3, 3], 'line-opacity': 0.7 } });
             }
         } catch (err) { }
     };
