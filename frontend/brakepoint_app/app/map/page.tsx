@@ -175,6 +175,7 @@ export default function MapPage() {
   return (
     <>
       <Map 
+        mode = "map"
         onCameraClick={handleCameraClick} 
         onCameraAdd={handleNewCameraAdded}
         onVisibleCamerasChange={handleVisibleCamerasChange}
@@ -196,7 +197,7 @@ export default function MapPage() {
               No Cameras Available
             </Typography>
             <Typography variant="body1" color="text.secondary">
-              Click the edit button on the map and click on the map to add your first camera
+              Click the pencil icon in the bottom-right corner, then click on the map to place your first camera.
             </Typography>
           </Box>
         ) : !selectedFeed ? (
