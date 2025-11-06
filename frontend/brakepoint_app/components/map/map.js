@@ -1,39 +1,39 @@
-'use client';
+"use client";
 
-import React, { useRef, useEffect, useState } from 'react';
-import ReactDOM from 'react-dom/client';
-import maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
-import './map.css';
-import ModeEditIcon from '@mui/icons-material/ModeEdit';
+import React, { useRef, useEffect, useState } from "react";
+import ReactDOM from "react-dom/client";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import "./map.css";
+import ModeEditIcon from "@mui/icons-material/ModeEdit";
 
 class toggleEditButton {
-    constructor(onToggle) {
-        this._onToggle = onToggle;
-        this._container = null;
-        this._isEditMode = false;
-    }
+  constructor(onToggle) {
+    this._onToggle = onToggle;
+    this._container = null;
+    this._isEditMode = false;
+  }
 
-    onAdd(map) {
-        this._map = map;
-        this._container = document.createElement('div');
-        this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
-        const editButton = document.createElement('button');
-        editButton.title = 'Toggle Edit Mode';
-        ReactDOM.createRoot(editButton).render(<ModeEditIcon sx={{width: 16}} />);
-        editButton.onclick = () => {
-            this._isEditMode = !this._isEditMode;
-            editButton.style.backgroundColor = this._isEditMode ? '#e0e4e9ff' : '';
-            this._onToggle(this._isEditMode);
-        };
-        this._container.appendChild(editButton);
-        return this._container;
-    }
+  onAdd(map) {
+    this._map = map;
+    this._container = document.createElement("div");
+    this._container.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    const editButton = document.createElement("button");
+    editButton.title = "Toggle Edit Mode";
+    ReactDOM.createRoot(editButton).render(<ModeEditIcon sx={{ width: 16 }} />);
+    editButton.onclick = () => {
+      this._isEditMode = !this._isEditMode;
+      editButton.style.backgroundColor = this._isEditMode ? "#e0e4e9ff" : "";
+      this._onToggle(this._isEditMode);
+    };
+    this._container.appendChild(editButton);
+    return this._container;
+  }
 
-    onRemove() {
-        this._container.parentNode.removeChild(this._container);
-        this._map = undefined;
-    }
+  onRemove() {
+    this._container.parentNode.removeChild(this._container);
+    this._map = undefined;
+  }
 }
 
 export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId }) { 
@@ -63,13 +63,62 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
     const lat = 14.5995;
     const zoom = 10;
 
-    const getAuthToken = () => {
-        if (typeof window !== 'undefined') {
-            return localStorage.getItem('access_token');
-        }
-        return null;
-    };
+  const getAuthToken = () => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("access_token");
+    }
+    return null;
+  };
 
+  if (mode == "explore") {
+    useEffect(() => {
+      if (map.current) return;
+      map.current = new maplibregl.Map({
+        container: mapContainer.current,
+        style: style,
+        center: [lng, lat],
+        zoom: zoom,
+        pitch: 45,
+        bearing: 0,
+        antialias: true,
+        maxPitch: 85,
+        hash: false,
+        trackResize: true,
+        preserveDrawingBuffer: false,
+        refreshExpiredTiles: false,
+        fadeDuration: 0,
+      });
+      map.current.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+
+      map.current.on("load", () => {
+        const layers = map.current.getStyle().layers;
+        let firstSymbolId;
+        for (const layer of layers) {
+          if (layer.type === "symbol") {
+            firstSymbolId = layer.id;
+            break;
+          }
+        }
+        map.current.addLayer(
+          {
+            id: "3d-buildings",
+            source: "openmaptiles",
+            "source-layer": "building",
+            filter: ["==", "extrude", "true"],
+            type: "fill-extrusion",
+            minzoom: 15,
+            paint: {
+              "fill-extrusion-color": "#aaa",
+              "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
+              "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
+              "fill-extrusion-opacity": 0.6,
+            },
+          },
+          firstSymbolId
+        );
+      });
+    }, []);
+  } else if (mode == "map") {
     useEffect(() => {
         if (mode !== "explore") return;
         if (map.current) return;
@@ -162,7 +211,7 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
     }, [selectedCameraId]);
 
     useEffect(() => {
-        loadCamerasFromDatabase();
+      loadCamerasFromDatabase();
     }, []);
 
     useEffect(() => {
@@ -287,39 +336,39 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
     };
 
     const updateVisibleCameras = () => {
-        if (!map.current || !onVisibleCamerasChange) return;
-        
-        const bounds = map.current.getBounds();
-        const visibleCameras = camerasRef.current.filter(camera => {
-            return bounds.contains([camera.lng, camera.lat]);
-        });
-        
-        const visibleCameraIds = visibleCameras.map(c => c.id);
-        onVisibleCamerasChange(visibleCameraIds);
+      if (!map.current || !onVisibleCamerasChange) return;
+
+      const bounds = map.current.getBounds();
+      const visibleCameras = camerasRef.current.filter((camera) => {
+        return bounds.contains([camera.lng, camera.lat]);
+      });
+
+      const visibleCameraIds = visibleCameras.map((c) => c.id);
+      onVisibleCamerasChange(visibleCameraIds);
     };
 
     useEffect(() => {
-        if (!map.current) return;
-        
-        const handleMapUpdate = () => {
-            updateVisibleCameras();
-        };
-        
-        map.current.on('moveend', handleMapUpdate);
-        map.current.on('zoomend', handleMapUpdate);
-        
-        if (map.current.loaded()) {
-            updateVisibleCameras();
-        } else {
-            map.current.once('load', updateVisibleCameras);
+      if (!map.current) return;
+
+      const handleMapUpdate = () => {
+        updateVisibleCameras();
+      };
+
+      map.current.on("moveend", handleMapUpdate);
+      map.current.on("zoomend", handleMapUpdate);
+
+      if (map.current.loaded()) {
+        updateVisibleCameras();
+      } else {
+        map.current.once("load", updateVisibleCameras);
+      }
+
+      return () => {
+        if (map.current) {
+          map.current.off("moveend", handleMapUpdate);
+          map.current.off("zoomend", handleMapUpdate);
         }
-        
-        return () => {
-            if (map.current) {
-                map.current.off('moveend', handleMapUpdate);
-                map.current.off('zoomend', handleMapUpdate);
-            }
-        };
+      };
     }, [cameras]);
 
     const addCamera = async (lat, lng) => {
@@ -444,7 +493,7 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
         } catch (error) {
         }
     };
-    
+
     const renderPolygonLayers = () => {
         const layersToRemove = ['polygon-fill', 'polygon-line', 'polygon-points', 'polygon-points-clickable', 'polygon-guide'];
         const sourcesToRemove = ['polygon', 'polygon-points', 'polygon-guide'];
@@ -555,11 +604,15 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
     };
 
     const clearGuideline = () => {
-        if (!map.current) return;
-        try {
-            if (map.current.getLayer('polygon-guide')) { map.current.removeLayer('polygon-guide'); }
-            if (map.current.getSource('polygon-guide')) { map.current.removeSource('polygon-guide'); }
-        } catch (e) {}
+      if (!map.current) return;
+      try {
+        if (map.current.getLayer("polygon-guide")) {
+          map.current.removeLayer("polygon-guide");
+        }
+        if (map.current.getSource("polygon-guide")) {
+          map.current.removeSource("polygon-guide");
+        }
+      } catch (e) {}
     };
 
     const handleMapClick = (e) => {
@@ -689,10 +742,14 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
     }, [polygonPoints, completedPolygons, selectedCameraId]);
 
     useEffect(() => {
-        if (!isEditMode) {
-            stopAddingCamera(); stopRemovingCamera(); stopAddingPoint(); stopRemovingPoint();
-        }
+      if (!isEditMode) {
+        stopAddingCamera();
+        stopRemovingCamera();
+        stopAddingPoint();
+        stopRemovingPoint();
+      }
     }, [isEditMode]);
+  }
 
     return (
         <div className="map-wrap">
