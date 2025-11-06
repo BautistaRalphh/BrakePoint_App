@@ -1,0 +1,14 @@
+.location-search {
+    width:30%;
+    z-index: 10;
+    position:absolute;
+    background-color:white;
+    box-shadow: 0px 0 6px rgba(0, 0, 0, 0.2);
+    outline:none !important;
+    margin:16px;
+}
+
+.map-wrap {
+    height: 100vh !important;
+    z-index: 8 !important;
+}
