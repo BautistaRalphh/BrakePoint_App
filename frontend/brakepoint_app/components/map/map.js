@@ -70,110 +70,63 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
     return null;
   };
 
-  if (mode == "explore") {
-    useEffect(() => {
-      if (map.current) return;
-      map.current = new maplibregl.Map({
-        container: mapContainer.current,
-        style: style,
-        center: [lng, lat],
-        zoom: zoom,
-        pitch: 45,
-        bearing: 0,
-        antialias: true,
-        maxPitch: 85,
-        hash: false,
-        trackResize: true,
-        preserveDrawingBuffer: false,
-        refreshExpiredTiles: false,
-        fadeDuration: 0,
-      });
-      map.current.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+  // Explore mode initialization
+  useEffect(() => {
+    if (mode !== "explore") return;
+    if (map.current) return;
+    map.current = new maplibregl.Map({
+      container: mapContainer.current,
+      style: style,
+      center: [lng, lat],
+      zoom: zoom,
+      pitch: 45,
+      bearing: 0,
+      antialias: true,
+      maxPitch: 85,
+      hash: false,
+      trackResize: true,
+      preserveDrawingBuffer: false,
+      refreshExpiredTiles: false,
+      fadeDuration: 0,
+    });
+    map.current.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
 
-      map.current.on("load", () => {
-        const layers = map.current.getStyle().layers;
-        let firstSymbolId;
-        for (const layer of layers) {
-          if (layer.type === "symbol") {
-            firstSymbolId = layer.id;
-            break;
-          }
+    map.current.on("load", () => {
+      const layers = map.current.getStyle().layers;
+      let firstSymbolId;
+      for (const layer of layers) {
+        if (layer.type === "symbol") {
+          firstSymbolId = layer.id;
+          break;
         }
-        map.current.addLayer(
-          {
-            id: "3d-buildings",
-            source: "openmaptiles",
-            "source-layer": "building",
-            filter: ["==", "extrude", "true"],
-            type: "fill-extrusion",
-            minzoom: 15,
-            paint: {
-              "fill-extrusion-color": "#aaa",
-              "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
-              "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
-              "fill-extrusion-opacity": 0.6,
-            },
+      }
+      map.current.addLayer(
+        {
+          id: "3d-buildings",
+          source: "openmaptiles",
+          "source-layer": "building",
+          filter: ["==", "extrude", "true"],
+          type: "fill-extrusion",
+          minzoom: 15,
+          paint: {
+            "fill-extrusion-color": "#aaa",
+            "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
+            "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
+            "fill-extrusion-opacity": 0.6,
           },
-          firstSymbolId
-        );
-      });
-    }, []);
-  } else if (mode == "map") {
-    useEffect(() => {
-        if (mode !== "explore") return;
-        if (map.current) return;
-        map.current = new maplibregl.Map({
-          container: mapContainer.current,
-          style: style,
-          center: [lng, lat],
-          zoom: zoom,
-          pitch: 45,
-          bearing: 0,
-          antialias: true,
-          maxPitch: 85,
-          hash: false,
-          trackResize: true,
-          preserveDrawingBuffer: false,
-          refreshExpiredTiles: false,
-          fadeDuration: 0,
-        });
-        map.current.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+        },
+        firstSymbolId
+      );
+    });
+  }, [mode]);
 
-        map.current.on("load", () => {
-          const layers = map.current.getStyle().layers;
-          let firstSymbolId;
-          for (const layer of layers) {
-            if (layer.type === "symbol") {
-              firstSymbolId = layer.id;
-              break;
-            }
-          }
-          map.current.addLayer(
-            {
-              id: "3d-buildings",
-              source: "openmaptiles",
-              "source-layer": "building",
-              filter: ["==", "extrude", "true"],
-              type: "fill-extrusion",
-              minzoom: 15,
-              paint: {
-                "fill-extrusion-color": "#aaa",
-                "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
-                "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
-                "fill-extrusion-opacity": 0.6,
-              },
-            },
-            firstSymbolId
-          );
-        });
-      }, [mode]);
+  // Map mode useEffect hooks
+  useEffect(() => {
+      if (mode !== "map") return;
+      isRemovingCameraRef.current = isRemovingCamera;
+  }, [isRemovingCamera, mode]);
 
-    useEffect(() => {
-        if (mode !== "map") return;
-        isRemovingCameraRef.current = isRemovingCamera;
-    }, [isRemovingCamera, mode]);
-
-    useEffect(() => {
+  useEffect(() => {
         isAssigningCameraRef.current = isAssigningCamera;
         selectedPolygonIndexRef.current = selectedPolygonIndex;
     }, [isAssigningCamera, selectedPolygonIndex]);
@@ -749,7 +702,6 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
         stopRemovingPoint();
       }
     }, [isEditMode]);
-  }
 
     return (
         <div className="map-wrap">
