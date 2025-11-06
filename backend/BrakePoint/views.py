@@ -217,14 +217,20 @@ def upload_and_process_video(request):
     if not video:
         return Response({'error': 'No video file provided'}, status=status.HTTP_400_BAD_REQUEST)
 
+    calibration_points_json = request.POST.get('calibration_points')
+    calibration_points = None
+    if calibration_points_json:
+        import json
+        calibration_points = json.loads(calibration_points_json)
+
     # Save to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
         for chunk in video.chunks():
             tmp_file.write(chunk)
         temp_path = tmp_file.name
 
-    # Run YOLO detection on uploaded file
-    detection_results = run_detection_on_video(temp_path)
+    # The perspective transform should be applied to each frame BEFORE running YOLO detection
+    detection_results = run_detection_on_video(temp_path, calibration_points)
 
     # Clean up temp file
     os.remove(temp_path)
