@@ -249,6 +249,7 @@ export default function MapPage() {
         onCameraClick={handleCameraClick} 
         onCameraAdd={handleNewCameraAdded}
         onVisibleCamerasChange={handleVisibleCamerasChange}
+        goTo={undefined}
         onCamerasLoaded={handleCamerasLoaded}
         selectedCameraId={selectedFeedId}
       />

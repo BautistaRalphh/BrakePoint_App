@@ -36,7 +36,7 @@ class toggleEditButton {
   }
 }
 
-export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId }) { 
+export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, goTo, onCamerasLoaded, selectedCameraId }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -119,6 +119,18 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
       );
     });
   }, [mode]);
+
+    React.useEffect(() => {
+      if (!map.current || !goTo) return;
+      const defaults = { zoom: 16, speed: 1.2, curve: 1.4, essential: true };
+      const [lng, lat] = goTo;
+      if (!map.current.loaded()) {
+        map.current.once("load", () => map.current?.flyTo({ center: [lng, lat], ...defaults}));
+        return;
+      }
+      map.current.flyTo({ center: [lng, lat], ...defaults});
+    }, [goTo,]);
+
 
   // Map mode useEffect hooks
   useEffect(() => {

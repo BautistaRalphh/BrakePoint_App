@@ -25,3 +25,32 @@ export async function getSavedLocations() {
   if (!res.ok) throw new Error('Failed to load locations')
   return res.json() as Promise<{ locations: Array<any> }>
 }
+
+export type LocationSuggestion = {
+  id: string;
+  primary: string;     // main label
+  secondary: string;   // sublabel
+  center: { lat: number; lon: number };
+};
+
+export async function getSuggestions(q: string): Promise<LocationSuggestion[]> {
+  if (!q.trim()) return [];
+
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
+    q
+  )}&addressdetails=1&limit=5`;
+
+  const res = await fetch(url, {
+    headers: { "User-Agent": "BrakePoint (contact@example.com)" },
+    cache: "no-store",
+  });
+
+  const json = (await res.json()) as any[];
+
+  return json.map((it) => ({
+    id: String(it.place_id),
+    primary: String(it.display_name).split(",")[0] ?? "",
+    secondary: String(it.display_name).split(",").slice(1).join(",").trim(),
+    center: { lat: parseFloat(it.lat), lon: parseFloat(it.lon) },
+  }));
+}
