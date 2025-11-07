@@ -1,4 +1,5 @@
 import Theme from './component_tempo/theme';
+import { NotificationProvider } from '@/contexts/NotificationContext';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -8,7 +9,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="dns-prefetch" href="https://tiles.openfreemap.org" />
       </head>
       <body>
-        <Theme>{children}</Theme>
+        <NotificationProvider>
+          <Theme>{children}</Theme>
+        </NotificationProvider>
       </body>
     </html>
   );

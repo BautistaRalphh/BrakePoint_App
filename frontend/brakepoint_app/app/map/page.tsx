@@ -2,11 +2,14 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'; 
 import dynamic from 'next/dynamic';
-import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton } from '@mui/material';
+import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton, Badge, Menu, MenuItem, Snackbar, Alert, LinearProgress } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import CheckIcon from '@mui/icons-material/Check';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { useRouter } from 'next/navigation';
+import { useNotifications } from '@/contexts/NotificationContext';
 
 import ToggleDrawer from '@components/map/toggleDrawer';
 import SideTab from '@components/map/sideTab';
@@ -58,9 +61,16 @@ const Map = dynamic(() => import('@/components/map/map.js'), {
 
 export default function MapPage() {
   const router = useRouter();
+  const { notifications, addNotification, addProcessingNotification, updateStageProgress, completeProcessing, removeNotification, markAsRead, clearAll, unreadCount } = useNotifications();
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null); 
+  const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
+  const notificationsRef = useRef(notifications);
+  
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
   
   const [allFeeds, setAllFeeds] = useState<any[]>([]);
   
@@ -72,6 +82,16 @@ export default function MapPage() {
   
   const [visibleCameraIds, setVisibleCameraIds] = useState<number[]>([]);
   const [camerasLoaded, setCamerasLoaded] = useState(false);
+  const [selectedFeedData, setSelectedFeedData] = useState<any>(null);
+  const [selectedVideoData, setSelectedVideoData] = useState<any>(null);
+  const [aggregatedVideoData, setAggregatedVideoData] = useState<any>(null);
+  const [loadingFeedData, setLoadingFeedData] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [camerasRefreshTrigger, setCamerasRefreshTrigger] = useState(0);
+  
+  const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
 
   useEffect(() => {
     selectedFeedIdRef.current = selectedFeedId;
@@ -82,12 +102,217 @@ export default function MapPage() {
     [allFeeds, selectedFeedId]
   );
 
+  useEffect(() => {
+    const fetchCameraData = async () => {
+      if (selectedFeedId === null) {
+        setSelectedFeedData(null);
+        return;
+      }
+
+      setLoadingFeedData(true);
+      try {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+          console.error('No access token found');
+          setSelectedFeedData(null);
+          return;
+        }
+
+        const response = await fetch(`http://localhost:8000/brakepoint/api/cameras/`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.cameras) {
+            const camera = data.cameras.find((cam: any) => cam.id === selectedFeedId);
+            if (camera) {
+              setSelectedFeedData({
+                id: camera.id,
+                name: camera.name,
+                lat: camera.lat,
+                lng: camera.lng,
+                location: camera.location,
+                latestUpload: camera.latest_upload || 'No uploads yet',
+                vehicles: camera.vehicles || 0,
+                occurrences: camera.occurrences || 0,
+                behaviors: camera.behaviors && camera.behaviors.length > 0 ? camera.behaviors : ['No Data'],
+                signs: camera.signs || 0,
+                signClasses: camera.sign_classes || [],
+                jeepneyHotspot: camera.latest_video?.jeepney_hotspot || false
+              });
+            }
+          }
+        } else {
+          console.error('Failed to fetch camera data:', response.statusText);
+          setSelectedFeedData(null);
+        }
+      } catch (error) {
+        console.error('Error fetching camera data:', error);
+        setSelectedFeedData(null);
+      } finally {
+        setLoadingFeedData(false);
+      }
+    };
+
+    fetchCameraData();
+  }, [selectedFeedId, refreshTrigger]);
+
+  useEffect(() => {
+    const fetchLatestVideo = async () => {
+      if (selectedFeedId === null) {
+        setSelectedVideoData(null);
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+          console.error('No access token found');
+          return;
+        }
+
+        const response = await fetch(`http://localhost:8000/brakepoint/api/cameras/${selectedFeedId}/videos/`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.videos && data.videos.length > 0) {
+            const latestVideo = data.videos[0];
+            const occurrences = (latestVideo.speeding_count || 0) + (latestVideo.swerving_count || 0) + (latestVideo.abrupt_stopping_count || 0);
+            setSelectedVideoData({
+              vehicles: latestVideo.vehicles || 0,
+              occurrences: occurrences,
+              behaviors: latestVideo.behaviors || ['No Data'],
+              signs: latestVideo.signs || 0,
+              signClasses: latestVideo.sign_classes || [],
+              jeepneyHotspot: latestVideo.jeepney_hotspot || false,
+              speeding: latestVideo.speeding_count || 0,
+              swerving: latestVideo.swerving_count || 0,
+              abruptStop: latestVideo.abrupt_stopping_count || 0,
+              duration: latestVideo.duration_seconds || 0,
+              videoName: latestVideo.filename || 'Unknown'
+            });
+            
+            // Set thumbnail from latest video
+            if (latestVideo.thumbnail) {
+              setVideoThumbnail(latestVideo.thumbnail);
+              setVideoSrc('placeholder');
+            } else {
+              setVideoThumbnail(null);
+              setVideoSrc(null);
+            }
+          } else {
+            setSelectedVideoData(null);
+            setVideoThumbnail(null);
+            setVideoSrc(null);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching latest video:', error);
+      }
+    };
+
+    fetchLatestVideo();
+  }, [selectedFeedId, refreshTrigger]);
+
+  // Fetch and aggregate all videos from visible cameras
+  useEffect(() => {
+    const fetchAggregatedVideos = async () => {
+      if (visibleCameraIds.length === 0) {
+        setAggregatedVideoData(null);
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+          console.error('No access token found');
+          return;
+        }
+
+        // Fetch videos from all visible cameras in parallel
+        const videoPromises = visibleCameraIds.map(cameraId =>
+          fetch(`http://localhost:8000/brakepoint/api/cameras/${cameraId}/videos/`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          }).then(res => res.json())
+        );
+
+        const results = await Promise.all(videoPromises);
+        
+        // Combine all videos from all cameras
+        const allVideos = results.flatMap(result => 
+          result.success && result.videos ? result.videos : []
+        );
+
+        if (allVideos.length > 0) {
+          // Sum all values from all videos
+          const totalVehicles = allVideos.reduce((sum, video) => sum + (video.vehicles || 0), 0);
+          const totalSpeeding = allVideos.reduce((sum, video) => sum + (video.speeding_count || 0), 0);
+          const totalSwerving = allVideos.reduce((sum, video) => sum + (video.swerving_count || 0), 0);
+          const totalAbruptStop = allVideos.reduce((sum, video) => sum + (video.abrupt_stopping_count || 0), 0);
+          const totalSigns = allVideos.reduce((sum, video) => sum + (video.signs || 0), 0);
+          const totalOccurrences = totalSpeeding + totalSwerving + totalAbruptStop;
+
+          // Collect all unique behaviors
+          const allBehaviors = new Set<string>();
+          allVideos.forEach(video => {
+            if (video.speeding_count > 0) allBehaviors.add('Speeding');
+            if (video.swerving_count > 0) allBehaviors.add('Swerving');
+            if (video.abrupt_stopping_count > 0) allBehaviors.add('Abrupt Stopping');
+          });
+
+          // Collect all unique sign classes
+          const allSignClasses = new Set<string>();
+          allVideos.forEach(video => {
+            if (video.sign_classes && Array.isArray(video.sign_classes)) {
+              video.sign_classes.forEach((sc: string) => allSignClasses.add(sc));
+            }
+          });
+
+          // Check if any video has jeepney hotspot
+          const hasJeepneyHotspot = allVideos.some(video => video.jeepney_hotspot);
+
+          setAggregatedVideoData({
+            totalVehicles,
+            totalOccurrences,
+            totalSigns,
+            allBehaviors: Array.from(allBehaviors),
+            allSignClasses: Array.from(allSignClasses),
+            hasJeepneyHotspot,
+            cameraCount: visibleCameraIds.length
+          });
+        } else {
+          setAggregatedVideoData(null);
+        }
+      } catch (error) {
+        console.error('Error fetching aggregated videos:', error);
+      }
+    };
+
+    fetchAggregatedVideos();
+  }, [visibleCameraIds, refreshTrigger]);
+
   const visibleFeeds = useMemo(() => 
     allFeeds.filter(feed => visibleCameraIds.includes(feed.id)),
     [allFeeds, visibleCameraIds]
   );
 
   const aggregateData = useMemo(() => {
+    if (aggregatedVideoData) {
+      return aggregatedVideoData;
+    }
+    
     if (visibleFeeds.length === 0) return null;
     
     return {
@@ -99,7 +324,7 @@ export default function MapPage() {
       hasJeepneyHotspot: visibleFeeds.some(feed => feed.jeepneyHotspot),
       cameraCount: visibleFeeds.length
     };
-  }, [visibleFeeds]);
+  }, [aggregatedVideoData, visibleFeeds]);
 
   const handleCamerasLoaded = useCallback((cameras: any[]) => {
     const formattedCameras = cameras.map((cam: any) => ({
@@ -114,7 +339,7 @@ export default function MapPage() {
       behaviors: cam.behaviors.length > 0 ? cam.behaviors : ['No Data'],
       signs: cam.signs || 0,
       signClasses: cam.sign_classes || [],
-      jeepneyHotspot: cam.jeepney_hotspot || false
+      jeepneyHotspot: cam.latest_video?.jeepney_hotspot || false
     }));
     
     setAllFeeds(formattedCameras);
@@ -124,12 +349,16 @@ export default function MapPage() {
     }
   }, []);
 
-  const handleVideoFileSelect = useCallback((url: string) => {
+  const handleVideoFileSelect = useCallback((url: string, thumbnail?: string) => {
     if (videoSrc) {
       URL.revokeObjectURL(videoSrc);
     }
+    if (videoThumbnail && videoThumbnail.startsWith('blob:')) {
+      URL.revokeObjectURL(videoThumbnail);
+    }
     setVideoSrc(url);
-  }, [videoSrc]);
+    setVideoThumbnail(thumbnail || null);
+  }, [videoSrc, videoThumbnail]);
 
   const handleCameraClick = useCallback((cameraId: number) => {
     if (selectedFeedIdRef.current === cameraId) {
@@ -138,6 +367,8 @@ export default function MapPage() {
       setSelectedFeedId(cameraId);
     }
     setVideoSrc(null); 
+    setVideoThumbnail(null);
+    setSelectedVideoData(null);
     setIsEditingName(false);
   }, []);
 
@@ -158,21 +389,249 @@ export default function MapPage() {
       behaviors: cameraData.behaviors || ["No Data"],
       signs: cameraData.signs || 0,
       signClasses: cameraData.sign_classes || [],
-      jeepneyHotspot: cameraData.jeepney_hotspot || false
+      jeepneyHotspot: cameraData.latest_video?.jeepney_hotspot || false
     };
 
     setAllFeeds(prevFeeds => [...prevFeeds, newFeed]);
     setSelectedFeedId(id);
     setIsEditingName(false);
   }, []);
+
+  const handleVideoUploadComplete = useCallback(() => {
+    setRefreshTrigger(prev => prev + 1);
+    setCamerasRefreshTrigger(prev => prev + 1);
+  }, []);
+
+  const handleProcessingStart = useCallback((videoName: string, videoId: number) => {
+    const notificationId = addProcessingNotification(videoName);
+    setSnackbarMessage(`Processing started for "${videoName}"`);
+    setSnackbarOpen(true);
+    
+    // Poll for real progress from backend
+    const pollInterval = setInterval(async () => {
+      try {
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/progress/`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[Progress Poll]', data);
+          if (data.success) {
+            const { processing_status, processing_stage, yolo_progress, maskrcnn_progress } = data;
+            console.log('[Stage]', processing_stage, 'YOLO:', yolo_progress, 'MaskRCNN:', maskrcnn_progress);
+            
+            // Update progress based on current stage
+            if (processing_stage === 'yolo') {
+              updateStageProgress(notificationId, 'yolo', yolo_progress);
+            } else if (processing_stage === 'mask-rcnn') {
+              // Update to mask-rcnn stage
+              updateStageProgress(notificationId, 'mask-rcnn', maskrcnn_progress);
+            } else if (processing_stage === 'complete' && processing_status === 'completed') {
+              // First update mask-rcnn to 100% to show final progress
+              updateStageProgress(notificationId, 'mask-rcnn', 100);
+              
+              // Wait 1 second to show "Detecting traffic signs 100%" before completing
+              setTimeout(async () => {
+                // Fetch full video data for results
+                const videoResponse = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/`, {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                let videoData = data;
+                if (videoResponse.ok) {
+                  const fullData = await videoResponse.json();
+                  if (fullData.success && fullData.video) {
+                    videoData = {
+                      ...data,
+                      yolo_results: {
+                        total_unique: fullData.video.vehicles || 0
+                      },
+                      sign_results: {
+                        unique_signs: fullData.video.signs || 0
+                      }
+                    };
+                  }
+                }
+                
+                completeProcessing(notificationId, true, videoData);
+              }, 1000);
+              
+              clearInterval(pollInterval);
+              delete (window as any)[`pollInterval_${notificationId}`];
+            } else if (processing_stage === '' && processing_status === 'processing') {
+              updateStageProgress(notificationId, 'yolo', 0);
+            }
+            
+            // Stop polling on failure
+            if (processing_status === 'failed') {
+              completeProcessing(notificationId, false, data);
+              clearInterval(pollInterval);
+              delete (window as any)[`pollInterval_${notificationId}`];
+            }
+          }
+        }
+      } catch (error) {
+        // Silently handle polling errors
+      }
+    }, 1000); 
+    
+    (window as any)[`pollInterval_${notificationId}`] = pollInterval;
+    
+    return notificationId;
+  }, [addProcessingNotification, updateStageProgress, completeProcessing]);
+
+  const handleProcessingComplete = useCallback((videoName: string, success: boolean, data?: any) => {
+    const processingNotification = notificationsRef.current.find(
+      n => n.videoName === videoName && n.processing
+    );
+    
+    if (processingNotification) {
+      // Clear poll interval
+      const pollIntervalId = (window as any)[`pollInterval_${processingNotification.id}`];
+      
+      if (pollIntervalId) {
+        clearInterval(pollIntervalId);
+        delete (window as any)[`pollInterval_${processingNotification.id}`];
+      }
+      
+      // Complete the notification
+      completeProcessing(processingNotification.id, success, data);
+    } else {
+      addNotification(videoName, success, data);
+    }
+    
+    setRefreshTrigger(prev => prev + 1);
+    setCamerasRefreshTrigger(prev => prev + 1);
+  }, [completeProcessing, addNotification]);
+
+  const handleNotificationClick = (event: React.MouseEvent<HTMLElement>) => {
+    setNotificationAnchor(event.currentTarget);
+  };
+
+  const handleNotificationClose = () => {
+    setNotificationAnchor(null);
+  };
+
+  const handleNotificationRead = (id: number) => {
+    markAsRead(id);
+  };
+
+  const handleClearAll = () => {
+    clearAll();
+    setNotificationAnchor(null);
+  };
+
+  const handleVideoSelect = useCallback((videoData: any) => {
+    if (!videoData) {
+      setSelectedVideoData(null);
+      setVideoSrc(null);
+      setVideoThumbnail(null);
+      return;
+    }
+    
+    const occurrences = (videoData.speeding || 0) + (videoData.swerving || 0) + (videoData.abrupt_stop || 0);
+    
+    const behaviors = [];
+    if (videoData.speeding > 0) behaviors.push('Speeding');
+    if (videoData.swerving > 0) behaviors.push('Swerving');
+    if (videoData.abrupt_stop > 0) behaviors.push('Abrupt Stopping');
+    
+    setSelectedVideoData({
+      vehicles: videoData.vehicles || 0,
+      occurrences: occurrences,
+      behaviors: behaviors.length > 0 ? behaviors : ['No Data'],
+      signs: videoData.signs || 0,
+      signClasses: videoData.sign_classes || [],
+      jeepneyHotspot: videoData.jeepney_hotspot || false,
+      speeding: videoData.speeding || 0,
+      swerving: videoData.swerving || 0,
+      abruptStop: videoData.abrupt_stop || 0,
+      duration: videoData.duration || 0,
+      videoName: videoData.video_name || 'Unknown'
+    });
+    
+    // Set thumbnail from database
+    if (videoData.thumbnail) {
+      setVideoThumbnail(videoData.thumbnail);
+      setVideoSrc('placeholder'); // Set a placeholder so thumbnail displays
+    } else {
+      setVideoThumbnail(null);
+      setVideoSrc(null);
+    }
+  }, []);
+
+  // Handle multiple video selection from table - sum all values
+  const handleMultipleVideoSelect = useCallback((videoDataArray: any[]) => {
+    if (!videoDataArray || videoDataArray.length === 0) {
+      setSelectedVideoData(null);
+      return;
+    }
+
+    const totalVehicles = videoDataArray.reduce((sum, video) => sum + (video.vehicles || 0), 0);
+    const totalSpeeding = videoDataArray.reduce((sum, video) => sum + (video.speeding || 0), 0);
+    const totalSwerving = videoDataArray.reduce((sum, video) => sum + (video.swerving || 0), 0);
+    const totalAbruptStop = videoDataArray.reduce((sum, video) => sum + (video.abrupt_stop || 0), 0);
+    const totalSigns = videoDataArray.reduce((sum, video) => sum + (video.signs || 0), 0);
+    const totalOccurrences = totalSpeeding + totalSwerving + totalAbruptStop;
+
+    const behaviors = [];
+    if (totalSpeeding > 0) behaviors.push('Speeding');
+    if (totalSwerving > 0) behaviors.push('Swerving');
+    if (totalAbruptStop > 0) behaviors.push('Abrupt Stopping');
+
+    const allSignClasses = new Set<string>();
+    videoDataArray.forEach(video => {
+      if (video.sign_classes && Array.isArray(video.sign_classes)) {
+        video.sign_classes.forEach((sc: string) => allSignClasses.add(sc));
+      }
+    });
+
+    const hasJeepneyHotspot = videoDataArray.some(video => video.jeepney_hotspot);
+
+    setSelectedVideoData({
+      vehicles: totalVehicles,
+      occurrences: totalOccurrences,
+      behaviors: behaviors.length > 0 ? behaviors : ['No Data'],
+      signs: totalSigns,
+      signClasses: Array.from(allSignClasses),
+      jeepneyHotspot: hasJeepneyHotspot,
+      speeding: totalSpeeding,
+      swerving: totalSwerving,
+      abruptStop: totalAbruptStop,
+      duration: 0, 
+      videoName: `${videoDataArray.length} videos selected`
+    });
+  }, []);
+
+  const displayData = useMemo(() => {
+    if (selectedVideoData) {
+      return selectedVideoData;
+    }
+    if (selectedFeedData) {
+      return {
+        vehicles: selectedFeedData.vehicles,
+        occurrences: selectedFeedData.occurrences,
+        behaviors: selectedFeedData.behaviors,
+        signs: selectedFeedData.signs,
+        signClasses: selectedFeedData.signClasses,
+        jeepneyHotspot: selectedFeedData.jeepneyHotspot
+      };
+    }
+    return null;
+  }, [selectedVideoData, selectedFeedData]);
   
   const startEdit = useCallback(() => {
-    setNewFeedName(selectedFeed.name);
+    if (!selectedFeedData) return;
+    setNewFeedName(selectedFeedData.name);
     setIsEditingName(true);
-  }, [selectedFeed]);
+  }, [selectedFeedData]);
 
   const saveName = useCallback(() => {
-    if (newFeedName.trim() === selectedFeed.name || newFeedName.trim() === '') {
+    if (!selectedFeedData || newFeedName.trim() === selectedFeedData.name || newFeedName.trim() === '') {
       setIsEditingName(false);
       return;
     }
@@ -183,8 +642,10 @@ export default function MapPage() {
       )
     );
 
+    setSelectedFeedData((prev: any) => prev ? { ...prev, name: newFeedName.trim() } : null);
+
     setIsEditingName(false);
-  }, [newFeedName, selectedFeed, selectedFeedId]);
+  }, [newFeedName, selectedFeedData, selectedFeedId]);
 
 
   if (isNavigating) {
@@ -198,7 +659,7 @@ export default function MapPage() {
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#e8eaf6',
         zIndex: 9999
       }}>
         <Box sx={{ textAlign: 'center' }}>
@@ -244,6 +705,179 @@ export default function MapPage() {
       >
         <ArrowBackIcon />
       </IconButton>
+
+      <IconButton
+        onClick={handleNotificationClick}
+        sx={{
+          position: 'absolute',
+          top: 16,
+          right: 16,
+          zIndex: 1000,
+          backgroundColor: 'white',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+          '&:hover': {
+            backgroundColor: '#f5f5f5',
+          },
+        }}
+      >
+        <Badge badgeContent={unreadCount} color="error">
+          <NotificationsIcon />
+        </Badge>
+      </IconButton>
+
+      <Menu
+        anchorEl={notificationAnchor}
+        open={Boolean(notificationAnchor)}
+        onClose={handleNotificationClose}
+        PaperProps={{
+          sx: {
+            maxHeight: 400,
+            width: 350,
+            mt: 1
+          }
+        }}
+      >
+        <Box sx={{ px: 2, py: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e0e0e0' }}>
+          <Typography variant="h6">Notifications</Typography>
+          {notifications.length > 0 && (
+            <Typography 
+              variant="caption" 
+              sx={{ color: 'primary.main', cursor: 'pointer' }}
+              onClick={handleClearAll}
+            >
+              Clear All
+            </Typography>
+          )}
+        </Box>
+        
+        {notifications.length === 0 ? (
+          <MenuItem disabled>
+            <Typography variant="body2" color="text.secondary">No notifications</Typography>
+          </MenuItem>
+        ) : (
+          notifications.map((notification) => (
+            <MenuItem 
+              key={notification.id}
+              onClick={() => !notification.processing && handleNotificationRead(notification.id)}
+              sx={{
+                backgroundColor: notification.read ? 'transparent' : '#f5f5f5',
+                borderLeft: notification.read ? 'none' : '4px solid #161b4cff',
+                '&:hover': {
+                  backgroundColor: notification.read ? '#fafafa' : '#e8e8e8',
+                },
+                cursor: notification.processing ? 'default' : 'pointer'
+              }}
+            >
+              <Box sx={{ width: '100%' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  {notification.processing ? (
+                    <HourglassEmptyIcon 
+                      sx={{ 
+                        width: 20, 
+                        height: 20, 
+                        color: '#FF9800',
+                        animation: 'spin 2s linear infinite',
+                        '@keyframes spin': {
+                          '0%': { transform: 'rotate(0deg)' },
+                          '100%': { transform: 'rotate(360deg)' }
+                        }
+                      }} 
+                    />
+                  ) : (
+                    <Box sx={{ 
+                      width: 8, 
+                      height: 8, 
+                      borderRadius: '50%', 
+                      backgroundColor: notification.success ? '#4CAF50' : '#f44336' 
+                    }} />
+                  )}
+                  <Typography variant="subtitle2" sx={{ fontWeight: notification.read ? 400 : 600 }}>
+                    {notification.videoName}
+                  </Typography>
+                </Box>
+                
+                {notification.processing ? (
+                  <>
+                    {(!notification.stage || notification.stage === 'yolo') && (
+                      <>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                          Detecting vehicles<span className="processing-dots">...</span>
+                        </Typography>
+                        <LinearProgress 
+                          variant="determinate" 
+                          value={notification.yoloProgress || 0} 
+                          sx={{ 
+                            height: 6, 
+                            borderRadius: 2,
+                            backgroundColor: '#e0e0e0',
+                            '& .MuiLinearProgress-bar': {
+                              backgroundColor: '#161b4cff'
+                            }
+                          }} 
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
+                          {Math.round(notification.yoloProgress || 0)}%
+                        </Typography>
+                      </>
+                    )}
+                    
+                    {notification.stage === 'mask-rcnn' && (
+                      <>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                          Detecting traffic signs<span className="processing-dots">...</span>
+                        </Typography>
+                        <LinearProgress 
+                          variant="determinate" 
+                          value={notification.maskRcnnProgress || 0} 
+                          sx={{ 
+                            height: 6, 
+                            borderRadius: 2,
+                            backgroundColor: '#e0e0e0',
+                            '& .MuiLinearProgress-bar': {
+                              backgroundColor: '#4CAF50'
+                            }
+                          }} 
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
+                          {Math.round(notification.maskRcnnProgress || 0)}%
+                        </Typography>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">
+                    {notification.success ? (
+                      <>
+                        ✓ Processing completed successfully
+                        {notification.data?.yolo_results && (
+                          <> - {notification.data.yolo_results.total_unique || 0} vehicles</>
+                        )}
+                        {notification.data?.sign_results && (
+                          <>, {notification.data.sign_results.unique_signs || 0} signs</>
+                        )}
+                      </>
+                    ) : (
+                      <>✗ Processing failed</>
+                    )}
+                  </Typography>
+                )}
+              </Box>
+            </MenuItem>
+          ))
+        )}
+      </Menu>
+
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={3000}
+        onClose={() => setSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSnackbarOpen(false)} severity="info" sx={{ width: '100%' }}>
+          {snackbarMessage}
+        </Alert>
+      </Snackbar>
+
       <Map 
         mode = "map"
         onCameraClick={handleCameraClick} 
@@ -251,6 +885,7 @@ export default function MapPage() {
         onVisibleCamerasChange={handleVisibleCamerasChange}
         onCamerasLoaded={handleCamerasLoaded}
         selectedCameraId={selectedFeedId}
+        refreshTrigger={camerasRefreshTrigger}
       />
       <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>
         {allFeeds.length === 0 ? (
@@ -270,7 +905,7 @@ export default function MapPage() {
               Click the pencil icon in the bottom-right corner, then click on the map to place your first camera.
             </Typography>
           </Box>
-        ) : !selectedFeed ? (
+        ) : selectedFeedId === null ? (
           <>
             {aggregateData ? (
               <>
@@ -307,19 +942,6 @@ export default function MapPage() {
                     </List>
                   </Box>
 
-                  {aggregateData.allSignClasses.length > 0 && (
-                    <Box sx={{marginTop: 2, marginBottom: 2}}>
-                      <Typography variant="h6" sx={{marginBottom: 1}}>Sign Classes Detected:</Typography>
-                      <Box className="feed-behavior-list">
-                        <List>
-                          {aggregateData.allSignClasses.map((signClass: string, index: number) => (
-                            <ListItemText key={index} primary={`• ${signClass}`}></ListItemText>
-                          ))}
-                        </List>
-                      </Box>
-                    </Box>
-                  )}
-
                   {aggregateData.allBehaviors.length > 0 && (
                     <Box className="feed-behavior-list">
                       <List>
@@ -329,11 +951,21 @@ export default function MapPage() {
                       </List>
                     </Box>
                   )}
+
+                  {aggregateData.allSignClasses.length > 0 && (
+                    <Box className="feed-behavior-list">
+                      <List>
+                        {aggregateData.allSignClasses.map((signClass: string, index: number) => (
+                          <ListItemText key={`sign-${index}`} primary={signClass}></ListItemText>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
                 </Box>
                 
                 <Divider sx={{marginBottom:2}} />
 
-                <Table onVideoFileSelect={handleVideoFileSelect} hideUpload={true} /> 
+                <Table onVideoFileSelect={handleVideoFileSelect} hideUpload={true} cameraId={null} visibleCameraIds={visibleCameraIds} /> 
               </>
             ) : (
               <Box sx={{ 
@@ -356,6 +988,18 @@ export default function MapPage() {
           </>
         ) : (
           <>
+        {loadingFeedData ? (
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            height: '100%',
+            padding: 4
+          }}>
+            <Typography variant="h6">Loading camera data...</Typography>
+          </Box>
+        ) : selectedFeedData ? (
+          <>
         <Box 
           sx={{
             display:'flex',
@@ -365,23 +1009,34 @@ export default function MapPage() {
             bgcolor: 'black', 
             width: '100%', 
             height: 480, 
-            marginBottom: 4
+            marginBottom: 4,
+            position: 'relative'
           }}
         >
-          {videoSrc ? (
-            <video 
-              controls 
-              width="100%" 
-              height="100%" 
-              src={videoSrc} 
-              style={{ objectFit: 'cover' }} 
+          {videoThumbnail ? (
+            <Box
+              component="img"
+              src={videoThumbnail}
+              alt="Video thumbnail"
+              sx={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                cursor: 'pointer'
+              }}
             />
+          ) : videoSrc ? (
+            <Typography variant="body1" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+              Thumbnail unavailable
+            </Typography>
           ) : (
-            <Typography variant="h5">Video Placeholder</Typography>
+            <Typography variant="h5" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+              Select a video to view thumbnail
+            </Typography>
           )}
         </Box>
         
-        {selectedFeed && (
+        {selectedFeedData && (
           <>
             <Box className="feed-details" sx={{marginBottom:2}}>
               
@@ -396,7 +1051,7 @@ export default function MapPage() {
                   />
                 ) : (
                   <Typography variant="h4" onClick={startEdit} sx={{ cursor: 'pointer' }}> 
-                    Feed #{selectedFeed.id} - {selectedFeed.name}
+                    Feed #{selectedFeedData.id} - {selectedFeedData.name}
                   </Typography>
                 )}
                 
@@ -409,73 +1064,91 @@ export default function MapPage() {
                 </IconButton>
               </Box>
 
-              <Typography variant="h5"> {selectedFeed.location}  </Typography>
-              <Typography variant="h5"> {selectedFeed.lng}°E, {selectedFeed.lat}°N  </Typography>
-              <Typography variant="body1" > Latest Video Uploaded: {selectedFeed.latestUpload}  </Typography>
+              <Typography variant="h5"> {selectedFeedData.location}  </Typography>
+              <Typography variant="h5"> {selectedFeedData.lng}°E, {selectedFeedData.lat}°N  </Typography>
+              <Typography variant="body1" > Latest Video Uploaded: {selectedFeedData.latestUpload}  </Typography>
+              {selectedVideoData && (
+                <Typography variant="body2" sx={{ color: 'primary.main', fontStyle: 'italic', mt: 1 }}>
+                  Viewing: {selectedVideoData.videoName}
+                </Typography>
+              )}
             </Box>
 
             <Divider/>
 
             <Box className="feed-data">
-              <Box className="feed-aggregates" >
-                <List>
-                  <ListItem disableGutters>
-                    <ListItemAvatar>
-                      <DirectionsCarIcon/>
-                    </ListItemAvatar>
-                    <ListItemText primary={`${selectedFeed.vehicles} Vehicles`}></ListItemText>
-                  </ListItem>
-                  <ListItem disableGutters>
-                    <ListItemAvatar>
-                      <CarCrashIcon sx={{color:'red'}}/>
-                    </ListItemAvatar>
-                    <ListItemText primary={`${selectedFeed.occurrences} Occurences`}></ListItemText>
-                  </ListItem>
-                  <ListItem disableGutters>
-                    <ListItemAvatar>
-                      <DirectionsIcon/>
-                    </ListItemAvatar>
-                    <ListItemText primary={`${selectedFeed.signs || 0} Traffic Signs`}></ListItemText>
-                  </ListItem>
-                  <ListItem disableGutters>
-                    <ListItemAvatar>
-                      <LocalTaxiIcon sx={{color: selectedFeed.jeepneyHotspot ? '#4CAF50' : '#000000ff'}}/>
-                    </ListItemAvatar>
-                    <ListItemText 
-                      primary={`Jeepney Hotspot: ${selectedFeed.jeepneyHotspot ? 'Yes' : 'No'}`}
-                      sx={{color: selectedFeed.jeepneyHotspot ? '#4CAF50' : 'text.secondary'}}
-                    ></ListItemText>
-                  </ListItem>
-                </List>
-              </Box>
-
-              {selectedFeed.signClasses && selectedFeed.signClasses.length > 0 && (
-                <Box sx={{marginTop: 2, marginBottom: 2}}>
-                  <Typography variant="h6" sx={{marginBottom: 1}}>Sign Classes Detected:</Typography>
-                  <Box className="feed-behavior-list">
+              {displayData && (
+                <>
+                  <Box className="feed-aggregates" >
                     <List>
-                      {selectedFeed.signClasses.map((signClass: string, index: number) => (
-                        <ListItemText key={index} primary={`• ${signClass}`}></ListItemText>
-                      ))}
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <DirectionsCarIcon/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${displayData.vehicles} Vehicles`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <CarCrashIcon sx={{color:'red'}}/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${displayData.occurrences} Occurences`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <DirectionsIcon/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${displayData.signs || 0} Traffic Signs`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <LocalTaxiIcon sx={{color: displayData.jeepneyHotspot ? '#4CAF50' : '#000000ff'}}/>
+                        </ListItemAvatar>
+                        <ListItemText 
+                          primary={`Jeepney Hotspot: ${displayData.jeepneyHotspot ? 'Yes' : 'No'}`}
+                          sx={{color: displayData.jeepneyHotspot ? '#4CAF50' : 'text.secondary'}}
+                        ></ListItemText>
+                      </ListItem>
                     </List>
                   </Box>
-                </Box>
-              )}
 
-              <Box className="feed-behavior-list">
-                <List>
-                  {selectedFeed.behaviors.map((value: string) => (
-                    <ListItemText key={value} primary={value}></ListItemText>
-                  ))}
-                </List>
-              </Box>
+                  {displayData.behaviors.filter((b: string) => b !== 'No Data').length > 0 && (
+                    <Box className="feed-behavior-list">
+                      <List>
+                        {displayData.behaviors.filter((b: string) => b !== 'No Data').map((value: string, index: number) => (
+                          <ListItemText key={`${value}-${index}`} primary={value}></ListItemText>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+
+                  {displayData.signClasses && displayData.signClasses.length > 0 && (
+                    <Box className="feed-behavior-list">
+                      <List>
+                        {displayData.signClasses.map((signClass: string, index: number) => (
+                          <ListItemText key={`sign-${index}`} primary={signClass}></ListItemText>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+                </>
+              )}
             </Box>
             
             <Divider sx={{marginBottom:2}} />
 
-            <Table onVideoFileSelect={handleVideoFileSelect} /> 
+            <Table 
+              onVideoFileSelect={handleVideoFileSelect} 
+              cameraId={selectedFeedId} 
+              onUploadComplete={handleVideoUploadComplete}
+              onProcessingStart={handleProcessingStart}
+              onProcessingComplete={handleProcessingComplete}
+              onVideoSelect={handleVideoSelect}
+              onMultipleVideoSelect={handleMultipleVideoSelect}
+            /> 
           </>
         )}
+        </>
+        ) : null}
         </>
         )}
       </SideTab>

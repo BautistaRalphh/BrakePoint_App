@@ -36,7 +36,7 @@ class toggleEditButton {
   }
 }
 
-export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId }) { 
+export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId, refreshTrigger }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -324,6 +324,12 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
       };
     }, [cameras]);
 
+    useEffect(() => {
+      if (refreshTrigger > 0 && map.current) {
+        loadCamerasFromDatabase();
+      }
+    }, [refreshTrigger]);
+
     const addCamera = async (lat, lng) => {
         try {
             const token = getAuthToken();
@@ -509,7 +515,7 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
                 type: 'line', 
                 source: 'polygon', 
                 paint: { 
-                    'line-color': '#1976D2', 
+                    'line-color': '#161b4cff', 
                     'line-width': 3,
                     'line-opacity': [
                         'case',

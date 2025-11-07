@@ -15,5 +15,10 @@ urlpatterns = [
     path('api/cameras/', views.cameras_api, name='cameras_api'),
     path('api/cameras/<int:pk>/', views.camera_delete_api, name='camera_delete_api'),
     path('api/cameras/<int:pk>/polygon/', views.camera_polygon_api, name='camera_polygon_api'),
+    path('api/cameras/<int:pk>/videos/', views.camera_videos_api, name='camera_videos_api'),
     path('api/upload_and_process/', views.upload_and_process_video, name='upload_and_process'),
+    
+    # Video endpoints
+    path('api/videos/<int:pk>/', views.video_detail_api, name='video_detail_api'),
+    path('api/videos/<int:pk>/progress/', views.video_progress_api, name='video_progress_api'),
 ]

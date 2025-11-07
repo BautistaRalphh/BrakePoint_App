@@ -6,14 +6,16 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib import messages
 from django.contrib.auth import authenticate, login
-from .models import SavedLocation, Camera
-from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer
+from .models import SavedLocation, Camera, Video
+from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer, VideoSerializer
 import requests
 import tempfile, os
 
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from yolo_processor import run_detection_on_video
+from mask_rcnn_detectron2_processor import run_traffic_sign_detection_on_video
+from django.utils import timezone
 
 api_view(['GET'])
 @permission_classes([AllowAny])
@@ -209,33 +211,230 @@ def cameras_api(request):
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
 def upload_and_process_video(request):
     """
-    Receives uploaded video, saves temporarily, and runs YOLO detection.
+    Receives uploaded video, saves temporarily, and runs both YOLO vehicle detection 
+    and Mask R-CNN traffic sign detection with calibration.
+    Creates a Video record linked to a Camera.
     """
-    video = request.FILES.get('file')
-    if not video:
+    user = request.user
+    video_file = request.FILES.get('file')
+    video_name = request.POST.get('video_name', 'Untitled Video')
+    camera_id = request.POST.get('camera_id')
+    
+    if not video_file:
         return Response({'error': 'No video file provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if not camera_id:
+        return Response({'error': 'Camera ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        camera = Camera.objects.get(pk=camera_id, user=user)
+    except Camera.DoesNotExist:
+        return Response({'error': 'Camera not found'}, status=status.HTTP_404_NOT_FOUND)
 
     calibration_points_json = request.POST.get('calibration_points')
+    reference_points_json = request.POST.get('reference_points')
+    reference_distance_str = request.POST.get('reference_distance_meters')
+    
     calibration_points = None
+    reference_points = None
+    reference_distance_meters = None
+    
     if calibration_points_json:
         import json
         calibration_points = json.loads(calibration_points_json)
+    
+    if reference_points_json:
+        import json
+        reference_points = json.loads(reference_points_json)
+    
+    if reference_distance_str:
+        try:
+            reference_distance_meters = float(reference_distance_str)
+        except ValueError:
+            return Response({'error': 'Invalid reference distance value'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Save to a temporary file
+    video_record = Video.objects.create(
+        camera=camera,
+        filename=video_name,
+        calibration_points=calibration_points or [],
+        reference_points=reference_points or [],
+        reference_distance_meters=reference_distance_meters,
+        processing_status='processing',
+        processing_started_at=timezone.now()
+    )
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
-        for chunk in video.chunks():
+        for chunk in video_file.chunks():
             tmp_file.write(chunk)
         temp_path = tmp_file.name
+    
+    try:
 
-    # The perspective transform should be applied to each frame BEFORE running YOLO detection
-    detection_results = run_detection_on_video(temp_path, calibration_points)
+        import cv2
+        import base64
+        cap = cv2.VideoCapture(temp_path)
+        if cap.isOpened():
+            video_record.fps = cap.get(cv2.CAP_PROP_FPS)
+            video_record.duration_seconds = cap.get(cv2.CAP_PROP_FRAME_COUNT) / video_record.fps if video_record.fps > 0 else 0
+            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            video_record.resolution = f"{frame_width}x{frame_height}"
+            
+            # Generate thumbnail (frame 1)
+            try:
+                seek_time = min(1.0, video_record.duration_seconds * 0.1) if video_record.duration_seconds > 0 else 1.0
+                cap.set(cv2.CAP_PROP_POS_MSEC, seek_time * 1000)
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    # Resize to reasonable thumbnail size (maintain aspect ratio, max width 640px)
+                    max_width = 640
+                    height, width = frame.shape[:2]
+                    if width > max_width:
+                        scale = max_width / width
+                        new_width = max_width
+                        new_height = int(height * scale)
+                        frame = cv2.resize(frame, (new_width, new_height))
+                    
+                    # Encode to JPEG
+                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    # Convert to base64
+                    thumbnail_base64 = base64.b64encode(buffer).decode('utf-8')
+                    video_record.thumbnail = f"data:image/jpeg;base64,{thumbnail_base64}"
+            except Exception as thumb_error:
+                print(f"[Error] Thumbnail generation failed: {thumb_error}", flush=True)
+            
+            cap.release()
+        
+        # Get file size
+        video_record.file_size_mb = os.path.getsize(temp_path) / (1024 * 1024)
+        video_record.save()
 
-    # Clean up temp file
-    os.remove(temp_path)
+        # Return immediately, then process in background
+        response_data = {
+            'success': True,
+            'video_id': video_record.id,
+            'camera_id': camera.id,
+            'message': 'Video uploaded successfully, processing started',
+            'processing_status': 'processing'
+        }
+        
+        # Start processing in background thread (after response is sent)
+        import threading
+        
+        def process_video_background():
+            """Process video in background thread"""
+            # Close any parent thread database connections
+            from django.db import connection
+            connection.close()
+            
+            try:
+                # Get fresh video instance
+                video_obj = Video.objects.get(pk=video_record.id)
+                
+                # Run YOLO vehicle detection
+                yolo_results = run_detection_on_video(
+                    temp_path, 
+                    calibration_points, 
+                    reference_distance_meters,
+                    reference_points,
+                    video_record=video_obj
+                )
+                
+                # Reload Video object for Mask R-CNN (keep connection open)
+                video_obj.refresh_from_db()
+                
+                # Run Mask R-CNN traffic sign detection
+                sign_results = run_traffic_sign_detection_on_video(temp_path, video_record=video_obj)
 
-    return Response(detection_results)
+                # Reload for final update
+                connection.close()
+                video_obj = Video.objects.get(pk=video_record.id)
+                
+                # Update video record with results
+                if yolo_results.get('status') == 'success':
+                    video_obj.vehicles = yolo_results.get('total_unique', 0)
+                    video_obj.speeding_count = yolo_results.get('total_speeding', 0)
+                    video_obj.swerving_count = yolo_results.get('total_swerving', 0)
+                    video_obj.abrupt_stopping_count = yolo_results.get('total_abrupt_stopping', 0)
+                    video_obj.vehicle_breakdown = yolo_results.get('breakdown', {})
+                    video_obj.meter_per_pixel = yolo_results.get('meter_per_pixel', None)
+                    video_obj.jeepney_hotspot = yolo_results.get('jeepney_hotspot', False)
+                
+                if sign_results.get('status') == 'success':
+                    video_obj.signs = sign_results.get('unique_signs', 0) 
+                    sign_counts = sign_results.get('sign_counts', {})
+                    video_obj.sign_classes = list(sign_counts.keys())
+                    video_obj.sign_breakdown = sign_counts
+                
+                # Give frontend time to poll and show mask-rcnn at 100% before completing
+                import time
+                time.sleep(2)
+                
+                video_obj.processing_status = 'completed'
+                video_obj.processing_stage = 'complete'
+                video_obj.yolo_progress = 100
+                video_obj.maskrcnn_progress = 100
+                video_obj.processing_completed_at = timezone.now()
+                video_obj.save()
+                
+            except Exception as e:
+                print(f"[Error] Video {video_record.id} processing failed: {e}", flush=True)
+                connection.close()
+                try:
+                    video_obj = Video.objects.get(pk=video_record.id)
+                    video_obj.processing_status = 'failed'
+                    video_obj.error_message = str(e)
+                    video_obj.processing_completed_at = timezone.now()
+                    video_obj.save()
+                except Exception as save_error:
+                    print(f"[Error] Could not save error state: {save_error}", flush=True)
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except Exception as cleanup_error:
+                        print(f"[Error] Could not delete temp file: {cleanup_error}", flush=True)
+                connection.close()
+        
+        # Start background thread
+        thread = threading.Thread(target=process_video_background, daemon=True)
+        thread.start()
+
+    except Exception as e:
+        # Mark as failed
+        video_record.processing_status = 'failed'
+        video_record.error_message = str(e)
+        video_record.processing_completed_at = timezone.now()
+        video_record.save()
+        
+        response_data = {
+            'success': False,
+            'error': str(e),
+            'video_id': video_record.id
+        }
+
+    return Response(response_data)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def camera_videos_api(request, pk: int):
+    """Get all videos for a specific camera"""
+    user = request.user
+    
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+    
+    # Get all videos for this camera, ordered by most recent first
+    videos = Video.objects.filter(camera=camera).order_by('-uploaded_at')
+    ser = VideoSerializer(videos, many=True)
+    
+    return Response({"success": True, "videos": ser.data})
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated]) 
@@ -280,3 +479,44 @@ def camera_polygon_api(request, pk: int):
     
     return Response({"success": True, "polygon": camera.polygon})
 
+@api_view(['PATCH', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def video_detail_api(request, pk: int):
+    """Update or delete a specific video"""
+    user = request.user
+    
+    try:
+        video = Video.objects.get(pk=pk, camera__user=user)
+    except Video.DoesNotExist:
+        return Response({"success": False, "error": "Video not found"}, status=404)
+    
+    if request.method == 'PATCH':
+        filename = request.data.get('filename')
+        if filename:
+            video.filename = filename
+            video.save()
+            ser = VideoSerializer(video)
+            return Response({"success": True, "video": ser.data})
+        return Response({"success": False, "error": "No filename provided"}, status=400)
+    
+    elif request.method == 'DELETE':
+        video.delete()
+        return Response({"success": True})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def video_progress_api(request, pk: int):
+    """Get processing progress for a specific video"""
+    user = request.user
+    
+    try:
+        video = Video.objects.get(pk=pk, camera__user=user)
+        return Response({
+            "success": True,
+            "processing_status": video.processing_status,
+            "processing_stage": video.processing_stage,
+            "yolo_progress": video.yolo_progress,
+            "maskrcnn_progress": video.maskrcnn_progress
+        })
+    except Video.DoesNotExist:
+        return Response({"success": False, "error": "Video not found"}, status=404)

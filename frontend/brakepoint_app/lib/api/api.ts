@@ -25,3 +25,20 @@ export async function getSavedLocations() {
   if (!res.ok) throw new Error('Failed to load locations')
   return res.json() as Promise<{ locations: Array<any> }>
 }
+
+export async function getVideoProgress(videoId: number) {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const res = await fetch(`${BASE}/brakepoint/api/videos/${videoId}/progress/`, { 
+    cache: 'no-store',
+    headers: {
+      'Authorization': token ? `Bearer ${token}` : '',
+    }
+  })
+  if (!res.ok) throw new Error('Failed to fetch video progress')
+  return res.json() as Promise<{
+    processing_status: string;
+    processing_stage: string;
+    yolo_progress: number;
+    maskrcnn_progress: number;
+  }>
+}
