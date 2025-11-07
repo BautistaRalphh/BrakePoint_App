@@ -9,3 +9,4 @@ __pycache__/
 *.py[cod]
 
 /brakepoint_app/node_modules
+backend/traffic_sign.pth
