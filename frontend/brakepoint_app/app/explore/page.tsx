@@ -61,7 +61,7 @@ export default function Explore() {
   }
 
   return (
-    <>
+    <>  
       <div className="navigation">
         <IconButton
           className="back-button"
