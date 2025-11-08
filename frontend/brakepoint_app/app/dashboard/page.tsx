@@ -248,53 +248,9 @@ export default function DashboardPage() {
                 </Box>
                 
                 {notification.processing ? (
-                  <>
-                    {(!notification.stage || notification.stage === 'yolo') && (
-                      <>
-                        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
-                          Detecting vehicles<span className="processing-dots">...</span>
-                        </Typography>
-                        <LinearProgress 
-                          variant="determinate" 
-                          value={notification.yoloProgress || 0} 
-                          sx={{ 
-                            height: 6, 
-                            borderRadius: 2,
-                            backgroundColor: '#e0e0e0',
-                            '& .MuiLinearProgress-bar': {
-                              backgroundColor: '#161b4cff'
-                            }
-                          }} 
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
-                          {Math.round(notification.yoloProgress || 0)}%
-                        </Typography>
-                      </>
-                    )}
-                    
-                    {notification.stage === 'mask-rcnn' && (
-                      <>
-                        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
-                          Detecting traffic signs<span className="processing-dots">...</span>
-                        </Typography>
-                        <LinearProgress 
-                          variant="determinate" 
-                          value={notification.maskRcnnProgress || 0} 
-                          sx={{ 
-                            height: 6, 
-                            borderRadius: 2,
-                            backgroundColor: '#e0e0e0',
-                            '& .MuiLinearProgress-bar': {
-                              backgroundColor: '#4CAF50'
-                            }
-                          }} 
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
-                          {Math.round(notification.maskRcnnProgress || 0)}%
-                        </Typography>
-                      </>
-                    )}
-                  </>
+                  <Typography variant="caption" color="text.secondary">
+                    Processing video<span className="processing-dots">...</span>
+                  </Typography>
                 ) : (
                   <Typography variant="caption" color="text.secondary">
                     {notification.success ? (

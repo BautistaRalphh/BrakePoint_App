@@ -328,6 +328,8 @@ def upload_and_process_video(request):
             """Process video in background thread"""
             # Close any parent thread database connections
             from django.db import connection
+            import time
+            
             connection.close()
             
             try:
@@ -343,11 +345,13 @@ def upload_and_process_video(request):
                     video_record=video_obj
                 )
                 
-                # Reload Video object for Mask R-CNN (keep connection open)
+                # Reload Video object for Mask R-CNN
                 video_obj.refresh_from_db()
                 
                 # Run Mask R-CNN traffic sign detection
+                print(f"[views.py] Starting Mask R-CNN for video {video_obj.id}", flush=True)
                 sign_results = run_traffic_sign_detection_on_video(temp_path, video_record=video_obj)
+                print(f"[views.py] Mask R-CNN completed: {sign_results.get('status')}", flush=True)
 
                 # Reload for final update
                 connection.close()
@@ -369,16 +373,10 @@ def upload_and_process_video(request):
                     video_obj.sign_classes = list(sign_counts.keys())
                     video_obj.sign_breakdown = sign_counts
                 
-                # Give frontend time to poll and show mask-rcnn at 100% before completing
-                import time
-                time.sleep(2)
-                
                 video_obj.processing_status = 'completed'
-                video_obj.processing_stage = 'complete'
-                video_obj.yolo_progress = 100
-                video_obj.maskrcnn_progress = 100
                 video_obj.processing_completed_at = timezone.now()
                 video_obj.save()
+                print(f"[views.py] Processing completed for video {video_obj.id}", flush=True)
                 
             except Exception as e:
                 print(f"[Error] Video {video_record.id} processing failed: {e}", flush=True)
@@ -506,17 +504,14 @@ def video_detail_api(request, pk: int):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def video_progress_api(request, pk: int):
-    """Get processing progress for a specific video"""
+    """Get processing status for a specific video"""
     user = request.user
     
     try:
         video = Video.objects.get(pk=pk, camera__user=user)
         return Response({
             "success": True,
-            "processing_status": video.processing_status,
-            "processing_stage": video.processing_stage,
-            "yolo_progress": video.yolo_progress,
-            "maskrcnn_progress": video.maskrcnn_progress
+            "processing_status": video.processing_status
         })
     except Video.DoesNotExist:
         return Response({"success": False, "error": "Video not found"}, status=404)

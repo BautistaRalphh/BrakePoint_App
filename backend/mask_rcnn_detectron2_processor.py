@@ -246,7 +246,9 @@ def run_traffic_sign_detection_on_video(video_path: str, model_path=MODEL_PATH, 
     
     print(f"[Mask R-CNN] Processing video...", flush=True)
     print(f"[Mask R-CNN] FPS: {fps}, Total Frames: {total_frames}", flush=True)
-    print(f"[Mask R-CNN] video_record provided: {video_record is not None}, ID: {video_record.id if video_record else 'None'}", flush=True)
+    print(f"[Mask R-CNN] video_record provided: {video_record is not None}", flush=True)
+    if video_record:
+        print(f"[Mask R-CNN] video_record ID: {video_record.id}", flush=True)
     
     # Initialize tracker for unique sign counting
     tracker = SignTracker(iou_threshold=IOU_THRESHOLD)
@@ -262,23 +264,7 @@ def run_traffic_sign_detection_on_video(video_path: str, model_path=MODEL_PATH, 
         
         frame_idx += 1
         
-        # Update progress every 30 frames
-        if frame_idx % 30 == 0 and total_frames > 0:
-            progress = min(int((frame_idx / total_frames) * 100), 100)
-            if video_record:
-                try:
-                    # Close and reopen connection to ensure fresh updates
-                    connection.close()
-                    from BrakePoint.models import Video
-                    video_obj = Video.objects.get(pk=video_record.id)
-                    video_obj.maskrcnn_progress = progress
-                    video_obj.processing_stage = 'mask-rcnn'
-                    video_obj.save(update_fields=['maskrcnn_progress', 'processing_stage'])
-                    print(f"[Mask R-CNN] Updated DB: stage=mask-rcnn, progress={progress}%", flush=True)
-                except Exception as e:
-                    print(f"[Mask R-CNN] ERROR updating progress: {e}", flush=True)
-            if progress_callback:
-                progress_callback(progress)
+        # No progress tracking - just process frames
         
         outputs = predictor(frame)
         
@@ -322,22 +308,12 @@ def run_traffic_sign_detection_on_video(video_path: str, model_path=MODEL_PATH, 
         if frame_info['detections']:
             all_frame_detections.append(frame_info)
         
-        frame_idx += 1
-        
+        # Progress logging only (not saved to DB)
         if frame_idx % 100 == 0:
             progress = min((frame_idx / total_frames) * 100, 100.0) if total_frames > 0 else 0
             print(f"[Mask R-CNN] Progress: {progress:.1f}% ({frame_idx}/{total_frames} frames)", flush=True)
     
     cap.release()
-    
-    # Set final progress to 100% when Mask R-CNN processing is complete
-    if video_record:
-        connection.close()
-        from BrakePoint.models import Video
-        video_obj = Video.objects.get(pk=video_record.id)
-        video_obj.maskrcnn_progress = 100
-        video_obj.processing_stage = 'mask-rcnn'
-        video_obj.save(update_fields=['maskrcnn_progress', 'processing_stage'])
     
     # Get unique sign counts from tracker
     unique_sign_counts = tracker.get_unique_counts()

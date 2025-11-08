@@ -1,0 +1,17 @@
+.location-search {
+    width:30vw;
+    z-index: 10;
+    background-color:white;
+    box-shadow: 0px 0 6px rgba(0, 0, 0, 0.5);
+    outline:none !important;
+    border-radius:24px;
+    overflow:hidden;
+}
+
+.Mui-focused{
+    border-radius: 24px 24px 0px 0px;
+}
+
+.MuiOutlinedInput-notchedOutline{
+    border:none !important;
+}

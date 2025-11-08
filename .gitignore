@@ -10,3 +10,4 @@ __pycache__/
 
 /brakepoint_app/node_modules
 backend/traffic_sign.pth
+backend/yolov8n.pt

@@ -61,7 +61,7 @@ const Map = dynamic(() => import('@/components/map/map.js'), {
 
 export default function MapPage() {
   const router = useRouter();
-  const { notifications, addNotification, addProcessingNotification, updateStageProgress, completeProcessing, removeNotification, markAsRead, clearAll, unreadCount } = useNotifications();
+  const { notifications, addNotification, addProcessingNotification, completeProcessing, removeNotification, markAsRead, clearAll, unreadCount } = useNotifications();
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null); 
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
@@ -403,86 +403,64 @@ export default function MapPage() {
   }, []);
 
   const handleProcessingStart = useCallback((videoName: string, videoId: number) => {
-    const notificationId = addProcessingNotification(videoName);
+    const notifId = addProcessingNotification(videoName);
+    
     setSnackbarMessage(`Processing started for "${videoName}"`);
     setSnackbarOpen(true);
     
-    // Poll for real progress from backend
+    // Poll for completion only
     const pollInterval = setInterval(async () => {
       try {
         const token = localStorage.getItem('access_token');
         const response = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/progress/`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
+          headers: { 'Authorization': `Bearer ${token}` }
         });
         
         if (response.ok) {
           const data = await response.json();
-          console.log('[Progress Poll]', data);
           if (data.success) {
-            const { processing_status, processing_stage, yolo_progress, maskrcnn_progress } = data;
-            console.log('[Stage]', processing_stage, 'YOLO:', yolo_progress, 'MaskRCNN:', maskrcnn_progress);
+            const { processing_status } = data;
             
-            // Update progress based on current stage
-            if (processing_stage === 'yolo') {
-              updateStageProgress(notificationId, 'yolo', yolo_progress);
-            } else if (processing_stage === 'mask-rcnn') {
-              // Update to mask-rcnn stage
-              updateStageProgress(notificationId, 'mask-rcnn', maskrcnn_progress);
-            } else if (processing_stage === 'complete' && processing_status === 'completed') {
-              // First update mask-rcnn to 100% to show final progress
-              updateStageProgress(notificationId, 'mask-rcnn', 100);
-              
-              // Wait 1 second to show "Detecting traffic signs 100%" before completing
-              setTimeout(async () => {
-                // Fetch full video data for results
-                const videoResponse = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/`, {
-                  headers: { 'Authorization': `Bearer ${token}` }
-                });
-                
-                let videoData = data;
-                if (videoResponse.ok) {
-                  const fullData = await videoResponse.json();
-                  if (fullData.success && fullData.video) {
-                    videoData = {
-                      ...data,
-                      yolo_results: {
-                        total_unique: fullData.video.vehicles || 0
-                      },
-                      sign_results: {
-                        unique_signs: fullData.video.signs || 0
-                      }
-                    };
-                  }
-                }
-                
-                completeProcessing(notificationId, true, videoData);
-              }, 1000);
-              
+            // Complete
+            if (processing_status === 'completed') {
               clearInterval(pollInterval);
-              delete (window as any)[`pollInterval_${notificationId}`];
-            } else if (processing_stage === '' && processing_status === 'processing') {
-              updateStageProgress(notificationId, 'yolo', 0);
+              delete (window as any)[`pollInterval_${videoId}`];
+              
+              // Fetch full video data
+              const videoResponse = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+              });
+              
+              let videoData = data;
+              if (videoResponse.ok) {
+                const fullData = await videoResponse.json();
+                if (fullData.success && fullData.video) {
+                  videoData = {
+                    yolo_results: { total_unique: fullData.video.vehicles || 0 },
+                    sign_results: { unique_signs: fullData.video.signs || 0 }
+                  };
+                }
+              }
+              
+              completeProcessing(notifId, true, videoData);
+              handleVideoUploadComplete();
             }
             
-            // Stop polling on failure
+            // Failure
             if (processing_status === 'failed') {
-              completeProcessing(notificationId, false, data);
+              completeProcessing(notifId, false, data);
               clearInterval(pollInterval);
-              delete (window as any)[`pollInterval_${notificationId}`];
+              delete (window as any)[`pollInterval_${videoId}`];
             }
           }
         }
       } catch (error) {
-        // Silently handle polling errors
+        // Silent
       }
-    }, 1000); 
+    }, 2000); // Poll every 2 seconds
     
-    (window as any)[`pollInterval_${notificationId}`] = pollInterval;
-    
-    return notificationId;
-  }, [addProcessingNotification, updateStageProgress, completeProcessing]);
+    (window as any)[`pollInterval_${videoId}`] = pollInterval;
+  }, [addProcessingNotification, completeProcessing, handleVideoUploadComplete]);
 
   const handleProcessingComplete = useCallback((videoName: string, success: boolean, data?: any) => {
     const processingNotification = notificationsRef.current.find(
@@ -797,53 +775,9 @@ export default function MapPage() {
                 </Box>
                 
                 {notification.processing ? (
-                  <>
-                    {(!notification.stage || notification.stage === 'yolo') && (
-                      <>
-                        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
-                          Detecting vehicles<span className="processing-dots">...</span>
-                        </Typography>
-                        <LinearProgress 
-                          variant="determinate" 
-                          value={notification.yoloProgress || 0} 
-                          sx={{ 
-                            height: 6, 
-                            borderRadius: 2,
-                            backgroundColor: '#e0e0e0',
-                            '& .MuiLinearProgress-bar': {
-                              backgroundColor: '#161b4cff'
-                            }
-                          }} 
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
-                          {Math.round(notification.yoloProgress || 0)}%
-                        </Typography>
-                      </>
-                    )}
-                    
-                    {notification.stage === 'mask-rcnn' && (
-                      <>
-                        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
-                          Detecting traffic signs<span className="processing-dots">...</span>
-                        </Typography>
-                        <LinearProgress 
-                          variant="determinate" 
-                          value={notification.maskRcnnProgress || 0} 
-                          sx={{ 
-                            height: 6, 
-                            borderRadius: 2,
-                            backgroundColor: '#e0e0e0',
-                            '& .MuiLinearProgress-bar': {
-                              backgroundColor: '#4CAF50'
-                            }
-                          }} 
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
-                          {Math.round(notification.maskRcnnProgress || 0)}%
-                        </Typography>
-                      </>
-                    )}
-                  </>
+                  <Typography variant="caption" color="text.secondary">
+                    Processing video<span className="processing-dots">...</span>
+                  </Typography>
                 ) : (
                   <Typography variant="caption" color="text.secondary">
                     {notification.success ? (

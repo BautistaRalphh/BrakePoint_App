@@ -9,19 +9,13 @@ interface Notification {
   data?: any;
   read: boolean;
   timestamp: number;
-  processing?: boolean; 
-  progress?: number;    
-  stage?: 'yolo' | 'mask-rcnn' | 'complete'; 
-  yoloProgress?: number; 
-  maskRcnnProgress?: number;  
+  processing?: boolean;
 }
 
 interface NotificationContextType {
   notifications: Notification[];
   addNotification: (videoName: string, success: boolean, data?: any) => void;
   addProcessingNotification: (videoName: string) => number;
-  updateProgress: (id: number, progress: number) => void;
-  updateStageProgress: (id: number, stage: 'yolo' | 'mask-rcnn', progress: number) => void;
   completeProcessing: (id: number, success: boolean, data?: any) => void;
   removeNotification: (id: number) => void;
   markAsRead: (id: number) => void;
@@ -79,10 +73,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       read: false,
       timestamp: Date.now(),
       processing: true,
-      progress: 0,
-      stage: 'yolo',
-      yoloProgress: 0,
-      maskRcnnProgress: 0,
     };
     setNotifications(prev => {
       const updated = [newNotification, ...prev];
@@ -91,40 +81,13 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     return id;
   }, []);
 
-  const updateProgress = useCallback((id: number, progress: number) => {
-    setNotifications(prev =>
-      prev.map(n => (n.id === id ? { ...n, progress: Math.min(100, Math.max(0, progress)) } : n))
-    );
-  }, []);
-
-  const updateStageProgress = useCallback((id: number, stage: 'yolo' | 'mask-rcnn', progress: number) => {
-    setNotifications(prev =>
-      prev.map(n => {
-        if (n.id === id) {
-          const updates: Partial<Notification> = { stage };
-          if (stage === 'yolo') {
-            updates.yoloProgress = Math.min(100, Math.max(0, progress));
-          } else if (stage === 'mask-rcnn') {
-            updates.yoloProgress = 100;
-            updates.maskRcnnProgress = Math.min(100, Math.max(0, progress));
-          }
-          return { ...n, ...updates };
-        }
-        return n;
-      })
-    );
-  }, []);
-
   const completeProcessing = useCallback((id: number, success: boolean, data?: any) => {
     setNotifications(prev =>
       prev.map(n => (n.id === id ? { 
         ...n, 
         processing: false, 
         success, 
-        data, 
-        progress: 100,
-        yoloProgress: 100,
-        maskRcnnProgress: 100
+        data
       } : n))
     );
   }, []);
@@ -154,8 +117,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         notifications,
         addNotification,
         addProcessingNotification,
-        updateProgress,
-        updateStageProgress,
         completeProcessing,
         removeNotification,
         markAsRead,
