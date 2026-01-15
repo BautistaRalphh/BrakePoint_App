@@ -1,0 +1,202 @@
+'use client';
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Box, Button, TextField, Typography, Paper } from '@mui/material';
+
+export default function LogInPage() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
+  
+   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+     e.preventDefault();
+     setIsLoading(true);
+
+     try {
+       const response = await fetch("http://127.0.0.1:8000/brakepoint/api/login/", {
+         method: "POST",
+         headers: {
+           "Content-Type": "application/json",
+         },
+         body: JSON.stringify({ username, password }),
+       });
+
+       if (response.ok) {
+         const data = await response.json();
+         console.log("Login successful:", data);
+         
+         // Store JWT tokens in localStorage
+         localStorage.setItem('access_token', data.access);
+         localStorage.setItem('refresh_token', data.refresh);
+         localStorage.setItem('username', data.user.username);
+         
+         router.push('/dashboard');
+       } else {
+         const errData = await response.json();
+         setError(errData.error || "Invalid username or password");
+         setIsLoading(false);
+       }
+     } catch (err) {
+       setError("Something went wrong. Please try again later.");
+       console.error("Login error:", err);
+       setIsLoading(false);
+     }
+   };
+
+  if (isLoading) {
+    return (
+      <Box sx={{ 
+        position: 'fixed', 
+        top: 0, 
+        left: 0, 
+        right: 0, 
+        bottom: 0, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        backgroundColor: '#f5f5f5',
+        zIndex: 9999
+      }}>
+        <Box sx={{ textAlign: 'center' }}>
+          <Box sx={{ 
+            width: 50, 
+            height: 50, 
+            border: '4px solid #f3f3f3', 
+            borderTop: '4px solid #161b4cff',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 16px'
+          }}></Box>
+          <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading...</Typography>
+        </Box>
+        <style>{`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}</style>
+      </Box>
+    );
+  }
+
+  return (
+    // <div className="login-container" style={{ maxWidth: 400, margin: "auto", padding: 20 }}>
+    //   <h2 style={{ textAlign: "center" }}>Login</h2>
+    //   <form onSubmit={handleSubmit}>
+    //     <div className="form-group" style={{ marginBottom: 15 }}>
+    //       <label htmlFor="username">Username:</label>
+    //       <input
+    //         type="text"
+    //         id="username"
+    //         name="username"
+    //         value={username}
+    //         onChange={(e) => setUsername(e.target.value)}
+    //         required
+    //         style={{ width: "100%", padding: 8 }}
+    //       />
+    //     </div>
+
+    //     <div className="form-group" style={{ marginBottom: 15 }}>
+    //       <label htmlFor="password">Password:</label>
+    //       <input
+    //         type="password"
+    //         id="password"
+    //         name="password"
+    //         value={password}
+    //         onChange={(e) => setPassword(e.target.value)}
+    //         required
+    //         style={{ width: "100%", padding: 8 }}
+    //       />
+    //     </div>
+
+    //     {error && (
+    //       <div style={{ color: "red", marginBottom: 10, textAlign: "center" }}>
+    //         {error}
+    //       </div>
+    //     )}
+
+    //     <Button variant="contained" className="btn" style={{ width: "100%", padding: 10 }}>
+    //       Login
+    //     </Button>
+    //   </form>
+
+    //   <div className="text-center" style={{ marginTop: 20, textAlign: "center" }}>
+    //     <a href="/signup" className="link">
+    //       Don't have an account? Sign up here
+    //     </a>
+    //   </div>
+    // </div>
+
+    <Box
+      display="flex"
+      justifyContent="center"
+      alignItems="center"
+      minHeight="100vh"
+      sx={{ backgroundColor: "#f5f5f5" }}
+    >
+      <Paper
+        elevation={3}
+        sx={{
+          p: 4,
+          width: 400,
+          borderRadius: 3,
+        }}
+      >
+        <Typography variant="h5" align="center" sx={{ mb:2 }}>
+          <b>Login</b>
+        </Typography>
+
+        <Box component="form" onSubmit={handleSubmit} noValidate>
+          <TextField
+            fullWidth
+            label="Username"
+            variant="outlined"
+            margin="normal"
+            color="secondary" //  can change to diff color when focused
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
+
+          <TextField
+            fullWidth
+            label="Password"
+            type="password"
+            variant="outlined"
+            margin="normal"
+            color="secondary" //  can change to diff color when focused
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+
+          {error && (
+            <Typography color="error" variant="body2" sx={{ mt: 1 }}>
+              {error}
+            </Typography>
+          )}
+
+          <Button
+            type="submit"
+            fullWidth
+            variant="contained"
+            sx={{ mt: 2, mb: 1, backgroundColor: "#161b4cff" }}
+          >
+            Login
+          </Button>
+        </Box>
+
+        <Typography align="center" variant="body2" sx={{ mt: 2 }}>
+          Don't have an account?{" "}
+          <a href="/signUp" style={{ color: "#161b4cff", textDecoration: "underline" }}>
+            Sign-up here
+          </a>
+        </Typography>
+      </Paper>
+    </Box>
+  );
+}
+
