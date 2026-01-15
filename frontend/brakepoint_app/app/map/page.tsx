@@ -34,7 +34,7 @@ const Map = dynamic(() => import('@/components/map/map.js'), {
       display: 'flex', 
       alignItems: 'center', 
       justifyContent: 'center',
-      backgroundColor: '#e8eaf6',
+      backgroundColor: '#f5f5f5',
       zIndex: 9999
     }}>
       <div style={{ textAlign: 'center' }}>
@@ -637,7 +637,7 @@ export default function MapPage() {
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
-        backgroundColor: '#e8eaf6',
+        backgroundColor: '#f5f5f5',
         zIndex: 9999
       }}>
         <Box sx={{ textAlign: 'center' }}>
@@ -820,6 +820,7 @@ export default function MapPage() {
         onCamerasLoaded={handleCamerasLoaded}
         selectedCameraId={selectedFeedId}
         refreshTrigger={camerasRefreshTrigger}
+        goTo={undefined}
       />
       <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>
         {allFeeds.length === 0 ? (

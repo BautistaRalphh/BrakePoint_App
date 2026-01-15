@@ -13,8 +13,10 @@ export default function HomePage() {
       >
         <Toolbar sx={{ marginLeft: "auto", mr: 6.5, display: 'flex', gap: 1 }}>
           {/*we can take inspo from the Mapillary home page hehe*/}
-          <Button color="inherit" > About </Button>
-          <Button color="inherit" > Developers </Button>
+          <Button color="inherit" component={Link} href="/home"> Home </Button>
+          <Button color="inherit" > Project Overview </Button>
+          <Button color="inherit" > Documentation </Button>
+          <Button color="inherit" > FAQs </Button>
           <Button color="inherit" component={Link} href="/logIn"> Login </Button>
           <Button color="inherit" component={Link} href="/signUp"> SignUp </Button>
         </Toolbar>
@@ -34,7 +36,8 @@ export default function HomePage() {
             Welcome to BrakePoint
           </Typography>
           <Typography variant="h6" sx={{ color: 'text.secondary' }}>
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed accumsan orci lectus, finibus consectetur lacus pellentesque eget. Sed et facilisis nibh, non vulputate orci. Proin eu metus rutrum, tincidunt est in, volutpat lorem. Pellentesque fringilla ultrices augue. Vestibulum ultricies sagittis velit, dignissim tincidunt orci molestie sed.
+            {/* Empowering road planners and engineers with data-driven insights to design safer, efficient road networks. */}
+            BrakePoint is a smart decision support tool designed to improve road safety and optimize traffic planning through data-driven solutions.
           </Typography>
         </Box>
 
@@ -47,17 +50,27 @@ export default function HomePage() {
             alignItems: 'center',
           }}>
           <Box sx={{position: 'relative' }}>
-            <iframe
+            {/* <iframe
               width="560"
               height="315"
-              src="https://www.youtube.com/embed/aN-wS7a-RnE?si=yWMDo3L31dQ8zW0i" //  replace with GIF demo video of brakepoint
+              src="placeholder" //  replace with GIF demo video of brakepoint
               title="YouTube video player"
 
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             // referrerpolicy="strict-origin-when-cross-origin"
             //  allowfullscreen
             >
-            </iframe>
+            </iframe> */}
+            <Box
+              component="img"
+              sx={{
+                height: 300,
+                width: 500,
+                maxHeight: { xs: 300, md: 300 },
+                maxWidth: { xs: 500, md: 500 },
+                backgroundColor: 'lightgray'
+              }}
+            />
           </Box>
         </Box>
       </Box>

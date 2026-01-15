@@ -1,12 +1,22 @@
-.location-search {
-    width:30%;
-    z-index: 10;
+.navigation {
+    width:auto;
+    height:auto;
+    display:flex;
+    flex-direction:row;
+    gap:32px;
     position:absolute;
-    background-color:white;
-    box-shadow: 0px 0 6px rgba(0, 0, 0, 0.2);
-    outline:none !important;
-    margin:16px;
-    margin-left: 72px;
+    z-index:100001;
+    padding:16px;
+}
+
+.back-button {
+    background-color:white !important;
+    box-shadow: 0px 0 6px rgba(0, 0, 0, 0.5);
+    padding:12px !important;
+}
+
+.back-button:hover {
+    background-color:#f5f5f5;
 }
 
 .map-wrap {

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import dynamic from "next/dynamic";
 import "./style.css";
 import { Autocomplete, TextField, IconButton, Badge, Menu, MenuItem, Box, Typography, Snackbar, Alert, LinearProgress } from "@mui/material";
+import SearchLocation, { LocationSuggestion } from "@components/ui/searchsuggestions";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
@@ -16,6 +17,7 @@ export default function Explore() {
   const router = useRouter();
   const { notifications, markAsRead, clearAll, unreadCount } = useNotifications();
   const [isNavigating, setIsNavigating] = useState(false);
+  const [target, setTarget] = useState<[number, number] | null>(null);
 
   const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
@@ -36,6 +38,10 @@ export default function Explore() {
   const handleClearAll = () => {
     clearAll();
     setNotificationAnchor(null);
+  };
+
+  const handleSelect = (s: LocationSuggestion) => {
+    setTarget([s.center.lon, s.center.lat]); // [lng, lat]
   };
 
   if (isNavigating) {
@@ -224,26 +230,11 @@ export default function Explore() {
         </Alert>
       </Snackbar>
 
-      <Autocomplete
-          freeSolo
-          className="location-search"
-          disableClearable
-          options={["hi", "hello", "what's up?"]}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              label="Search for the area you want to monitor."
-              sx={{border: "none"}}
-              slotProps={{
-                input: {
-                  ...params.InputProps,
-                  type: "search",
-                },
-              }}
-            />
-          )}
-        />
-      <Map mode="explore" onCameraClick={null} onCameraAdd={null} onVisibleCamerasChange={0} onCamerasLoaded={null} selectedCameraId={null} refreshTrigger={null} />
+      <div className="navigation">
+        <SearchLocation onSelect={handleSelect} />
+      </div>
+      
+      <Map mode="explore" onCameraClick={null} goTo={target ?? undefined} onCameraAdd={null} onVisibleCamerasChange={null} onCamerasLoaded={null} selectedCameraId={null} refreshTrigger={null} />
       
       <style jsx>{`
         .processing-dots {

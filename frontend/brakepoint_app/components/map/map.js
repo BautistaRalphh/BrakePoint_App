@@ -36,7 +36,7 @@ class toggleEditButton {
   }
 }
 
-export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId, refreshTrigger }) { 
+export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCamerasChange, onCamerasLoaded, selectedCameraId, refreshTrigger, goTo }) { 
     const mapContainer = useRef(null);
     const map = useRef(null);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -69,6 +69,19 @@ export default function Map({ mode, onCameraClick, onCameraAdd, onVisibleCameras
     }
     return null;
   };
+
+  // Handle goTo navigation for explore mode
+  useEffect(() => {
+    if (mode !== "explore") return;
+    if (!map.current || !goTo) return;
+    
+    map.current.flyTo({
+      center: goTo,
+      zoom: 14,
+      duration: 2000,
+      essential: true
+    });
+  }, [goTo, mode]);
 
   // Explore mode initialization
   useEffect(() => {

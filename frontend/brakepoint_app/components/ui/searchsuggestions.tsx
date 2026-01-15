@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Autocomplete, TextField } from "@mui/material";
+import { Autocomplete, TextField, Box, Typography, CircularProgress } from "@mui/material";
+import SearchIcon from '@mui/icons-material/Search';
+import LocationOnIcon from '@mui/icons-material/LocationOn';
 import "./searchsuggestions.css";
 
 export type LocationSuggestion = {
@@ -56,16 +58,40 @@ export default function SearchLocation({ onSelect }: Props) {
       onChange={(_, v) => {
         if (v && typeof v !== "string") onSelect(v);
       }}
+      renderOption={(props, option) => (
+        <li {...props} key={option.id}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 0.5 }}>
+            <LocationOnIcon sx={{ color: '#161b4cff', fontSize: 20 }} />
+            <Box>
+              <Typography variant="body1" sx={{ fontWeight: 500, color: '#161b4cff' }}>
+                {option.primary}
+              </Typography>
+              {option.secondary && (
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {option.secondary}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+        </li>
+      )}
       renderInput={(params) => (
         <TextField
           {...params}
-          label="" // hide label…
-          placeholder="Search for the area you want to monitor." // …use placeholder instead
-          slotProps={{
-            input: {
-              ...params.InputProps,
-              type: "search",
-            },
+          label=""
+          placeholder="Search for the area you want to monitor."
+          InputProps={{
+            ...params.InputProps,
+            type: "search",
+            startAdornment: (
+              <SearchIcon sx={{ color: '#161b4cff', mr: 1, fontSize: 24 }} />
+            ),
+            endAdornment: (
+              <React.Fragment>
+                {loading ? <CircularProgress color="inherit" size={20} /> : null}
+                {params.InputProps.endAdornment}
+              </React.Fragment>
+            ),
           }}
         />
       )}
