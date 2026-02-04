@@ -1,18 +1,38 @@
-'use client'
-import { useEffect, useState, useMemo, useCallback } from 'react'
-import { Box, Card, CardContent, CardActions, Container, Typography, TextField, Button, IconButton, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, Badge, Snackbar, Alert, LinearProgress } from '@mui/material'
-import { useRouter } from 'next/navigation'
-import DeleteIcon from '@mui/icons-material/Delete';
-import MapIcon from '@mui/icons-material/Map';
-import AddIcon from '@mui/icons-material/Add';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
-import NotificationsIcon from '@mui/icons-material/Notifications';
-import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
-import { useNotifications } from '@/contexts/NotificationContext';
+"use client";
+import { useEffect, useState, useMemo, useCallback } from "react";
+import {
+  Box,
+  Card,
+  CardContent,
+  CardActions,
+  Container,
+  Typography,
+  TextField,
+  Button,
+  IconButton,
+  Menu,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Badge,
+  Snackbar,
+  Alert,
+  LinearProgress,
+} from "@mui/material";
+import { useRouter } from "next/navigation";
 
-import { getSavedLocations } from '@/lib/api/api'
+import MoreVertIcon from "@mui/icons-material/MoreVert";
+import NotificationsIcon from "@mui/icons-material/Notifications";
+import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
+import { useNotifications } from "@/contexts/NotificationContext";
 
-type Loc = { id: number; name: string; lat: number; lng: number; zoom?: number; bearing?: number; pitch?: number }
+import MenuBar from "@/components/dashboard/menuBar";
+
+import { getSavedLocations } from "@/lib/api/api";
+
+type Loc = { id: number; name: string; lat: number; lng: number; zoom?: number; bearing?: number; pitch?: number };
 
 export default function DashboardPage() {
   const { notifications, markAsRead, clearAll, unreadCount } = useNotifications();
@@ -20,130 +40,131 @@ export default function DashboardPage() {
     { id: 1, name: "Manila City Hall", lat: 14.5995, lng: 120.9842, zoom: 15, bearing: 0, pitch: 45 },
     { id: 2, name: "Quezon City Circle", lat: 14.6542, lng: 121.0493, zoom: 16, bearing: 90, pitch: 60 },
     { id: 3, name: "Makati Business District", lat: 14.5547, lng: 121.0244, zoom: 17, bearing: 180, pitch: 50 },
-    { id: 4, name: "BGC The Fort", lat: 14.5507, lng: 121.0470, zoom: 16, bearing: 45, pitch: 55 },
+    { id: 4, name: "BGC The Fort", lat: 14.5507, lng: 121.047, zoom: 16, bearing: 45, pitch: 55 },
     { id: 5, name: "EDSA Ortigas", lat: 14.5816, lng: 121.0577, zoom: 15, bearing: 270, pitch: 40 },
-  ])
-  const [q, setQ] = useState('')
-  const [isNavigating, setIsNavigating] = useState(false)
-  const router = useRouter()
+  ]);
+  const [q, setQ] = useState("");
+  const [isNavigating, setIsNavigating] = useState(false);
+  const router = useRouter();
 
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
-  const [selectedLoc, setSelectedLoc] = useState<Loc | null>(null)
-  
-  const [editDialogOpen, setEditDialogOpen] = useState(false)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [editName, setEditName] = useState('')
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [selectedLoc, setSelectedLoc] = useState<Loc | null>(null);
 
-  const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null)
-  const [snackbarOpen, setSnackbarOpen] = useState(false)
-  const [snackbarMessage, setSnackbarMessage] = useState('')
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+
+  const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState("");
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, loc: Loc) => {
-    setAnchorEl(event.currentTarget)
-    setSelectedLoc(loc)
-  }
+    setAnchorEl(event.currentTarget);
+    setSelectedLoc(loc);
+  };
 
   const handleMenuClose = () => {
-    setAnchorEl(null)
-    setSelectedLoc(null)
-  }
+    setAnchorEl(null);
+    setSelectedLoc(null);
+  };
 
   const handleEdit = () => {
     if (selectedLoc) {
-      setEditName(selectedLoc.name)
-      setEditDialogOpen(true)
+      setEditName(selectedLoc.name);
+      setEditDialogOpen(true);
     }
-    handleMenuClose()
-  }
+    handleMenuClose();
+  };
 
   const handleEditSave = () => {
-    if (selectedLoc && editName.trim() !== '') {
-      setLocations(prev =>
-        prev.map(l =>
-          l.id === selectedLoc.id ? { ...l, name: editName.trim() } : l
-        )
-      )
-      setEditDialogOpen(false)
-      setEditName('')
+    if (selectedLoc && editName.trim() !== "") {
+      setLocations((prev) => prev.map((l) => (l.id === selectedLoc.id ? { ...l, name: editName.trim() } : l)));
+      setEditDialogOpen(false);
+      setEditName("");
     }
-  }
+  };
 
   const handleDelete = () => {
     if (selectedLoc) {
-      setDeleteDialogOpen(true)
+      setDeleteDialogOpen(true);
     }
-    handleMenuClose()
-  }
+    handleMenuClose();
+  };
 
   const handleDeleteConfirm = () => {
     if (selectedLoc) {
-      setLocations(prev => prev.filter(l => l.id !== selectedLoc.id))
-      setDeleteDialogOpen(false)
+      setLocations((prev) => prev.filter((l) => l.id !== selectedLoc.id));
+      setDeleteDialogOpen(false);
     }
-  }
+  };
 
   const handleNavigateToMap = (url: string) => {
-    setIsNavigating(true)
-    router.push(url)
-  }
+    setIsNavigating(true);
+    router.push(url);
+  };
 
   const handleNotificationClick = (event: React.MouseEvent<HTMLElement>) => {
-    setNotificationAnchor(event.currentTarget)
-  }
+    setNotificationAnchor(event.currentTarget);
+  };
 
   const handleNotificationClose = () => {
-    setNotificationAnchor(null)
-  }
+    setNotificationAnchor(null);
+  };
 
   const handleNotificationRead = (id: number) => {
-    markAsRead(id)
-  }
+    markAsRead(id);
+  };
 
   const handleClearAll = () => {
-    clearAll()
-    setNotificationAnchor(null)
-  }
+    clearAll();
+    setNotificationAnchor(null);
+  };
 
   useEffect(() => {
     getSavedLocations()
-      .then(data => {
+      .then((data) => {
         if (data.locations && data.locations.length > 0) {
-          setLocations(data.locations)
+          setLocations(data.locations);
         }
       })
-      .catch(() => {
-      })
-    
-    router.prefetch('/map')
-  }, [])
+      .catch(() => {});
 
-  const filtered = locations.filter(l => l.name.toLowerCase().includes(q.toLowerCase()))
+    router.prefetch("/map");
+  }, []);
+
+  const filtered = locations.filter((l) => l.name.toLowerCase().includes(q.toLowerCase()));
 
   if (isNavigating) {
     return (
-      <Box sx={{ 
-        position: 'fixed', 
-        top: 0, 
-        left: 0, 
-        right: 0, 
-        bottom: 0, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        backgroundColor: '#e8eaf6',
-        zIndex: 9999
-      }}>
-        <Box sx={{ textAlign: 'center' }}>
-          <Box sx={{ 
-            width: 50, 
-            height: 50, 
-            border: '4px solid #f3f3f3', 
-            borderTop: '4px solid #161b4cff',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 16px'
-          }}></Box>
-          <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading...</Typography>
+      <Box
+        sx={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#e8eaf6",
+          zIndex: 9999,
+        }}
+      >
+        <Box sx={{ textAlign: "center" }}>
+          <Box
+            sx={{
+              width: 50,
+              height: 50,
+              border: "4px solid #f3f3f3",
+              borderTop: "4px solid #161b4cff",
+              borderRadius: "50%",
+              animation: "spin 1s linear infinite",
+              margin: "0 auto 16px",
+            }}
+          ></Box>
+          <Typography variant="h6" style={{ color: "#161b4cff" }}>
+            Loading...
+          </Typography>
         </Box>
         <style>{`
           @keyframes spin {
@@ -152,22 +173,24 @@ export default function DashboardPage() {
           }
         `}</style>
       </Box>
-    )
+    );
   }
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+    <Box sx={{ display: "flex", minHeight: "100vh" }}>
+      <MenuBar></MenuBar>
+
       <IconButton
         onClick={handleNotificationClick}
         sx={{
-          position: 'fixed',
+          position: "fixed",
           top: 16,
           right: 16,
           zIndex: 1000,
-          backgroundColor: 'white',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-          '&:hover': {
-            backgroundColor: '#f5f5f5',
+          backgroundColor: "white",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+          "&:hover": {
+            backgroundColor: "#f5f5f5",
           },
         }}
       >
@@ -184,69 +207,69 @@ export default function DashboardPage() {
           sx: {
             maxHeight: 400,
             width: 350,
-            mt: 1
-          }
+            mt: 1,
+          },
         }}
       >
-        <Box sx={{ px: 2, py: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e0e0e0' }}>
+        <Box sx={{ px: 2, py: 1, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e0e0e0" }}>
           <Typography variant="h6">Notifications</Typography>
           {notifications.length > 0 && (
-            <Typography 
-              variant="caption" 
-              sx={{ color: 'primary.main', cursor: 'pointer' }}
-              onClick={handleClearAll}
-            >
+            <Typography variant="caption" sx={{ color: "primary.main", cursor: "pointer" }} onClick={handleClearAll}>
               Clear All
             </Typography>
           )}
         </Box>
-        
+
         {notifications.length === 0 ? (
           <MenuItem disabled>
-            <Typography variant="body2" color="text.secondary">No notifications</Typography>
+            <Typography variant="body2" color="text.secondary">
+              No notifications
+            </Typography>
           </MenuItem>
         ) : (
           notifications.map((notification) => (
-            <MenuItem 
+            <MenuItem
               key={notification.id}
               onClick={() => !notification.processing && handleNotificationRead(notification.id)}
               sx={{
-                backgroundColor: notification.read ? 'transparent' : '#f5f5f5',
-                borderLeft: notification.read ? 'none' : '4px solid #161b4cff',
-                '&:hover': {
-                  backgroundColor: notification.read ? '#fafafa' : '#e8e8e8',
+                backgroundColor: notification.read ? "transparent" : "#f5f5f5",
+                borderLeft: notification.read ? "none" : "4px solid #161b4cff",
+                "&:hover": {
+                  backgroundColor: notification.read ? "#fafafa" : "#e8e8e8",
                 },
-                cursor: notification.processing ? 'default' : 'pointer'
+                cursor: notification.processing ? "default" : "pointer",
               }}
             >
-              <Box sx={{ width: '100%' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+              <Box sx={{ width: "100%" }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
                   {notification.processing ? (
-                    <HourglassEmptyIcon 
-                      sx={{ 
-                        width: 20, 
-                        height: 20, 
-                        color: '#FF9800',
-                        animation: 'spin 2s linear infinite',
-                        '@keyframes spin': {
-                          '0%': { transform: 'rotate(0deg)' },
-                          '100%': { transform: 'rotate(360deg)' }
-                        }
-                      }} 
+                    <HourglassEmptyIcon
+                      sx={{
+                        width: 20,
+                        height: 20,
+                        color: "#FF9800",
+                        animation: "spin 2s linear infinite",
+                        "@keyframes spin": {
+                          "0%": { transform: "rotate(0deg)" },
+                          "100%": { transform: "rotate(360deg)" },
+                        },
+                      }}
                     />
                   ) : (
-                    <Box sx={{ 
-                      width: 8, 
-                      height: 8, 
-                      borderRadius: '50%', 
-                      backgroundColor: notification.success ? '#4CAF50' : '#f44336' 
-                    }} />
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        backgroundColor: notification.success ? "#4CAF50" : "#f44336",
+                      }}
+                    />
                   )}
                   <Typography variant="subtitle2" sx={{ fontWeight: notification.read ? 400 : 600 }}>
                     {notification.videoName}
                   </Typography>
                 </Box>
-                
+
                 {notification.processing ? (
                   <Typography variant="caption" color="text.secondary">
                     Processing video<span className="processing-dots">...</span>
@@ -256,12 +279,8 @@ export default function DashboardPage() {
                     {notification.success ? (
                       <>
                         ✓ Processing completed successfully
-                        {notification.data?.yolo_results && (
-                          <> - {notification.data.yolo_results.total_unique || 0} vehicles</>
-                        )}
-                        {notification.data?.sign_results && (
-                          <>, {notification.data.sign_results.unique_signs || 0} signs</>
-                        )}
+                        {notification.data?.yolo_results && <> - {notification.data.yolo_results.total_unique || 0} vehicles</>}
+                        {notification.data?.sign_results && <>, {notification.data.sign_results.unique_signs || 0} signs</>}
                       </>
                     ) : (
                       <>✗ Processing failed</>
@@ -278,90 +297,40 @@ export default function DashboardPage() {
         open={snackbarOpen}
         autoHideDuration={3000}
         onClose={() => setSnackbarOpen(false)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        anchorOrigin={{ vertical: "top", horizontal: "center" }}
       >
-        <Alert onClose={() => setSnackbarOpen(false)} severity="info" sx={{ width: '100%' }}>
+        <Alert onClose={() => setSnackbarOpen(false)} severity="info" sx={{ width: "100%" }}>
           {snackbarMessage}
         </Alert>
       </Snackbar>
 
-      <Box
-        sx={{
-          width: 240,
-          backgroundColor: '#161b4cff',
-          color: 'white',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'stretch',
-          p: 2,
-          gap: 2,
-        }}
-      >
-        <Typography variant="h6" sx={{ mt: 2, fontWeight: 'bold' }}>
-          Menu
-        </Typography>
-
-        <Button
-          variant="contained"
-          sx={{ backgroundColor: 'white', color: '#161b4cff' }}
-          onClick={() => handleNavigateToMap('/map')}
-          startIcon={<AddIcon />}
-        >
-          New
-        </Button>
-
-        <Button
-          variant="outlined"
-          sx={{ backgroundColor: 'white', color: '#161b4cff' }}
-          onClick={() => handleNavigateToMap('/map')}
-          startIcon={<MapIcon />}
-        >
-          Map
-        </Button>
-
-        <Button
-          variant="contained"
-          sx={{ backgroundColor: 'white', color: '#161b4cff' }}
-          startIcon={<DeleteIcon />}
-        >
-          Trash
-        </Button>
-
-        <Button
-          variant="contained"
-          sx={{ backgroundColor: 'white', color: '#161b4cff', mt: 50 }}
-          onClick={() => handleNavigateToMap('/home')}
-        >
-          Logout
-        </Button>
-      </Box>
+        
 
       <Container sx={{ py: 4 }}>
-        <Typography variant="h5" fontWeight={"bold"} gutterBottom>Dashboard</Typography>
-        <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-          <TextField
-            placeholder="Search locations..."
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            fullWidth
-          />
-          <Button onClick={() => handleNavigateToMap('/map')} variant="contained" sx={{ backgroundColor: "#161b4cff" }}>New</Button>
+        <Typography variant="h5" fontWeight={"bold"} gutterBottom>
+          Dashboard
+        </Typography>
+        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          <TextField placeholder="Search locations..." value={q} onChange={(e) => setQ(e.target.value)} fullWidth />
+          <Button onClick={() => handleNavigateToMap("/map")} variant="contained" sx={{ backgroundColor: "#161b4cff" }}>
+            New
+          </Button>
         </div>
 
         {filtered.length === 0 ? (
           <Typography color="text.secondary">No saved locations found.</Typography>
         ) : (
           <Box display="grid" gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))" gap={2}>
-            {filtered.map(loc => (
+            {filtered.map((loc) => (
               <Card
                 key={loc.id}
                 sx={{
-                  border: '1px solid #ddd',
+                  border: "1px solid #ddd",
                   borderRadius: 2,
                   p: 1,
                   boxShadow: 1,
-                  backgroundColor: 'white',
-                  position: "relative"
+                  backgroundColor: "white",
+                  position: "relative",
                 }}
               >
                 <Box
@@ -371,16 +340,15 @@ export default function DashboardPage() {
                     right: 8,
                   }}
                 >
-                  <IconButton 
-                    aria-label="more-options"
-                    onClick={(e) => handleMenuOpen(e, loc)}
-                  >
+                  <IconButton aria-label="more-options" onClick={(e) => handleMenuOpen(e, loc)}>
                     <MoreVertIcon />
                   </IconButton>
                 </Box>
 
                 <CardContent>
-                  <Typography variant="h6" fontWeight={"bold"}>{loc.name}</Typography>
+                  <Typography variant="h6" fontWeight={"bold"}>
+                    {loc.name}
+                  </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Latitude: {loc.lat}, Longitude: {loc.lng}
                   </Typography>
@@ -402,14 +370,12 @@ export default function DashboardPage() {
             ))}
           </Box>
         )}
-        
-        <Menu
-          anchorEl={anchorEl}
-          open={Boolean(anchorEl)}
-          onClose={handleMenuClose}
-        >
+
+        <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
           <MenuItem onClick={handleEdit}>Edit Name</MenuItem>
-          <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>Delete</MenuItem>
+          <MenuItem onClick={handleDelete} sx={{ color: "error.main" }}>
+            Delete
+          </MenuItem>
         </Menu>
 
         <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="sm" fullWidth>
@@ -425,8 +391,8 @@ export default function DashboardPage() {
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleEditSave()
+                if (e.key === "Enter") {
+                  handleEditSave();
                 }
               }}
             />
@@ -442,9 +408,7 @@ export default function DashboardPage() {
         <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="sm" fullWidth>
           <DialogTitle>Delete Location</DialogTitle>
           <DialogContent>
-            <Typography>
-              Are you sure you want to delete "{selectedLoc?.name}"? This action cannot be undone.
-            </Typography>
+            <Typography>Are you sure you want to delete "{selectedLoc?.name}"? This action cannot be undone.</Typography>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
@@ -453,27 +417,28 @@ export default function DashboardPage() {
             </Button>
           </DialogActions>
         </Dialog>
-
       </Container>
-      
+
       <style jsx>{`
         .processing-dots {
           display: inline-block;
           animation: processingDots 1.5s infinite;
         }
-        
+
         @keyframes processingDots {
-          0%, 20% {
-            content: '.';
+          0%,
+          20% {
+            content: ".";
           }
           40% {
-            content: '..';
+            content: "..";
           }
-          60%, 100% {
-            content: '...';
+          60%,
+          100% {
+            content: "...";
           }
         }
       `}</style>
     </Box>
-  )
+  );
 }
