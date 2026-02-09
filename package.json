@@ -18,14 +18,18 @@
     "react-dom": "19.2.0"
   },
   "dependencies": {
+    "@emotion/cache": "^11.14.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@mui/material-nextjs": "^7.3.7",
     "@mui/x-charts": "^8.26.0",
     "@mui/x-data-grid": "^8.16.0",
+    "@mui/x-date-pickers": "^8.27.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "baseline-browser-mapping": "^2.9.14",
+    "dayjs": "^1.11.19",
     "eslint": "^9",
     "eslint-config-next": "16.0.0",
     "typescript": "^5"

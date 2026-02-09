@@ -67,11 +67,7 @@ export default function MapPage() {
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
   const notificationsRef = useRef(notifications);
-  
-  useEffect(() => {
-    notificationsRef.current = notifications;
-  }, [notifications]);
-  
+
   const [allFeeds, setAllFeeds] = useState<any[]>([]);
   
   const [selectedFeedId, setSelectedFeedId] = useState<number | null>(null);
@@ -92,6 +88,10 @@ export default function MapPage() {
   const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
 
   useEffect(() => {
     selectedFeedIdRef.current = selectedFeedId;

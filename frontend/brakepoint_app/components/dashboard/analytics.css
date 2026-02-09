@@ -1,0 +1,19 @@
+.analytics-container {
+    padding:4em;
+    width:100%;
+}
+
+.analytics-header {
+    display:flex;
+    flex-direction: row;
+    gap: 64px;
+    margin-bottom:48px;
+}
+
+.MuiGrid-root {
+    background-color:transparent;
+}
+
+.MuiDatePicker-root {
+    background-color:white;
+}
