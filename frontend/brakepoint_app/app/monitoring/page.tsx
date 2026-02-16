@@ -486,7 +486,7 @@ export default function MonitoringPage() {
   };
 
   const handleNotificationRead = (id: number) => {
-    markAsRead(id);
+    markAsRead(String(id));
   };
 
   const handleClearAll = () => {
@@ -727,7 +727,7 @@ export default function MonitoringPage() {
           notifications.map((notification) => (
             <MenuItem 
               key={notification.id}
-              onClick={() => !notification.processing && handleNotificationRead(notification.id)}
+              onClick={() => !notification.processing && handleNotificationRead(Number(notification.id))}
               sx={{
                 backgroundColor: notification.read ? 'transparent' : '#f5f5f5',
                 borderLeft: notification.read ? 'none' : '4px solid #161b4cff',
@@ -815,6 +815,8 @@ export default function MonitoringPage() {
       />
 
       <Timeline/>
+      
+
     </>
 
 
