@@ -23,3 +23,6 @@
   }
 }
 
+.MuiFormControl-root {
+  background-color: white;
+}

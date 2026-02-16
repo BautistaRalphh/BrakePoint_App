@@ -20,14 +20,6 @@ export default function MenuBar() {
           
         </Button>
 
-        <Button className={styles.menuButton} startIcon={<PlaceIcon />}>
-         Locations
-        </Button>
-
-        <Button className={styles.menuButton} startIcon={<MapIcon />}>
-          Map Overview
-        </Button>
-
         <Button className={styles.menuButton} startIcon={<LogoutIcon />}>
           Sign Out
         </Button>

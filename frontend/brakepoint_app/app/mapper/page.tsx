@@ -2,18 +2,27 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'; 
 import dynamic from 'next/dynamic';
-import {Box, Typography, IconButton, Badge, Menu, MenuItem, Snackbar, Alert, LinearProgress } from '@mui/material';
+import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton, Badge, Menu, MenuItem, Snackbar, Alert, LinearProgress } from '@mui/material';
+import EditIcon from '@mui/icons-material/Edit';
+import CheckIcon from '@mui/icons-material/Check';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { useRouter } from 'next/navigation';
 import { useNotifications } from '@/contexts/NotificationContext';
 
-import Timeline from '@components/timeline/timeline';
+import ToggleDrawer from '@components/map/toggleDrawer';
+import SideTab from '@components/map/sideTab';
+import Table from '@components/ui/table'; 
 
 import './style.css';
 
-const Map = dynamic(() => import('@/components/map/map'), { 
+import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
+import CarCrashIcon from '@mui/icons-material/CarCrash';
+import DirectionsIcon from '@mui/icons-material/Directions';
+import LocalTaxiIcon from '@mui/icons-material/LocalTaxi';
+
+const Map = dynamic(() => import('@/components/map/map.js'), { 
   ssr: false,
   loading: () => (
     <div style={{ 
@@ -50,7 +59,7 @@ const Map = dynamic(() => import('@/components/map/map'), {
   )
 });
 
-export default function MonitoringPage() {
+export default function MapPage() {
   const router = useRouter();
   const { notifications, addNotification, addProcessingNotification, completeProcessing, removeNotification, markAsRead, clearAll, unreadCount } = useNotifications();
   const [open, setOpen] = useState(true);
@@ -58,11 +67,7 @@ export default function MonitoringPage() {
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
   const notificationsRef = useRef(notifications);
-  
-  useEffect(() => {
-    notificationsRef.current = notifications;
-  }, [notifications]);
-  
+
   const [allFeeds, setAllFeeds] = useState<any[]>([]);
   
   const [selectedFeedId, setSelectedFeedId] = useState<number | null>(null);
@@ -83,6 +88,10 @@ export default function MonitoringPage() {
   const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
 
   useEffect(() => {
     selectedFeedIdRef.current = selectedFeedId;
@@ -655,168 +664,272 @@ export default function MonitoringPage() {
 
   return (
     <>
-      <IconButton
-        onClick={() => {
-          setIsNavigating(true);
-          router.back();
-        }}
-        sx={{
-          position: 'absolute',
-          top: 16,
-          left: 16,
-          zIndex: 1000,
-          backgroundColor: 'white',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-          '&:hover': {
-            backgroundColor: '#f5f5f5',
-          },
-        }}
-      >
-        <ArrowBackIcon />
-      </IconButton>
+      
+      <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>
+        {allFeeds.length === 0 ? (
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: 'column',
+            alignItems: 'center', 
+            justifyContent: 'center',
+            height: '100%',
+            padding: 4,
+            textAlign: 'center'
+          }}>
+            <Typography variant="h5" sx={{ marginBottom: 2 }}>
+              No Cameras Available
+            </Typography>
+            <Typography variant="body1" color="text.secondary">
+              Click the pencil icon in the bottom-right corner, then click on the map to place your first camera.
+            </Typography>
+          </Box>
+        ) : selectedFeedId === null ? (
+          <>
+            {aggregateData ? (
+              <>
+                <Box className="feed-details" sx={{marginBottom:2, marginTop: 6}}>
+                  <Typography variant="h4">Total Data</Typography>
+                  <Typography variant="body1">
+                    Showing data from {aggregateData.cameraCount} camera{aggregateData.cameraCount !== 1 ? 's' : ''} visible in map
+                  </Typography>
+                </Box>
 
-      <IconButton
-        onClick={handleNotificationClick}
-        sx={{
-          position: 'absolute',
-          top: 16,
-          right: 16,
-          zIndex: 1000,
-          backgroundColor: 'white',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-          '&:hover': {
-            backgroundColor: '#f5f5f5',
-          },
-        }}
-      >
-        <Badge badgeContent={unreadCount} color="error">
-          <NotificationsIcon />
-        </Badge>
-      </IconButton>
+                <Divider/>
 
-      <Menu
-        anchorEl={notificationAnchor}
-        open={Boolean(notificationAnchor)}
-        onClose={handleNotificationClose}
-        PaperProps={{
-          sx: {
-            maxHeight: 400,
-            width: 350,
-            mt: 1
-          }
-        }}
-      >
-        <Box sx={{ px: 2, py: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e0e0e0' }}>
-          <Typography variant="h6">Notifications</Typography>
-          {notifications.length > 0 && (
-            <Typography 
-              variant="caption" 
-              sx={{ color: 'primary.main', cursor: 'pointer' }}
-              onClick={handleClearAll}
-            >
-              Clear All
+                <Box className="feed-data">
+                  <Box className="feed-aggregates">
+                    <List>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <DirectionsCarIcon/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${aggregateData.totalVehicles} Vehicles`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <CarCrashIcon sx={{color:'red'}}/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${aggregateData.totalOccurrences} Occurrences`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <DirectionsIcon/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${aggregateData.totalSigns} Traffic Signs`}></ListItemText>
+                      </ListItem>
+                    </List>
+                  </Box>
+
+                  {aggregateData.allBehaviors.length > 0 && (
+                    <Box className="feed-behavior-list">
+                      <List>
+                        {aggregateData.allBehaviors.map((value: string) => (
+                          <ListItemText key={value} primary={value}></ListItemText>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+
+                  {aggregateData.allSignClasses.length > 0 && (
+                    <Box className="feed-behavior-list">
+                      <List>
+                        {aggregateData.allSignClasses.map((signClass: string, index: number) => (
+                          <ListItemText key={`sign-${index}`} primary={signClass}></ListItemText>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+                </Box>
+                
+                <Divider sx={{marginBottom:2}} />
+
+                <Table onVideoFileSelect={handleVideoFileSelect} hideUpload={true} cameraId={null} visibleCameraIds={visibleCameraIds} /> 
+              </>
+            ) : (
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: 'column',
+                alignItems: 'center', 
+                justifyContent: 'center',
+                height: '100%',
+                padding: 4,
+                textAlign: 'center'
+              }}>
+                <Typography variant="h5" sx={{ marginBottom: 2 }}>
+                  No Cameras in View
+                </Typography>
+                <Typography variant="body1" color="text.secondary">
+                  Pan or zoom the map to see camera data
+                </Typography>
+              </Box>
+            )}
+          </>
+        ) : (
+          <>
+        {loadingFeedData ? (
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            height: '100%',
+            padding: 4
+          }}>
+            <Typography variant="h6">Loading camera data...</Typography>
+          </Box>
+        ) : selectedFeedData ? (
+          <>
+        <Box 
+          sx={{
+            display:'flex',
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            color:'white', 
+            bgcolor: 'black', 
+            width: '100%', 
+            height: 480, 
+            marginBottom: 4,
+            position: 'relative'
+          }}
+        >
+          {videoThumbnail ? (
+            <Box
+              component="img"
+              src={videoThumbnail}
+              alt="Video thumbnail"
+              sx={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                cursor: 'pointer'
+              }}
+            />
+          ) : videoSrc ? (
+            <Typography variant="body1" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+              Thumbnail unavailable
+            </Typography>
+          ) : (
+            <Typography variant="h5" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+              Select a video to view thumbnail
             </Typography>
           )}
         </Box>
         
-        {notifications.length === 0 ? (
-          <MenuItem disabled>
-            <Typography variant="body2" color="text.secondary">No notifications</Typography>
-          </MenuItem>
-        ) : (
-          notifications.map((notification) => (
-            <MenuItem 
-              key={notification.id}
-              onClick={() => !notification.processing && handleNotificationRead(notification.id)}
-              sx={{
-                backgroundColor: notification.read ? 'transparent' : '#f5f5f5',
-                borderLeft: notification.read ? 'none' : '4px solid #161b4cff',
-                '&:hover': {
-                  backgroundColor: notification.read ? '#fafafa' : '#e8e8e8',
-                },
-                cursor: notification.processing ? 'default' : 'pointer'
-              }}
-            >
-              <Box sx={{ width: '100%' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  {notification.processing ? (
-                    <HourglassEmptyIcon 
-                      sx={{ 
-                        width: 20, 
-                        height: 20, 
-                        color: '#FF9800',
-                        animation: 'spin 2s linear infinite',
-                        '@keyframes spin': {
-                          '0%': { transform: 'rotate(0deg)' },
-                          '100%': { transform: 'rotate(360deg)' }
-                        }
-                      }} 
-                    />
-                  ) : (
-                    <Box sx={{ 
-                      width: 8, 
-                      height: 8, 
-                      borderRadius: '50%', 
-                      backgroundColor: notification.success ? '#4CAF50' : '#f44336' 
-                    }} />
-                  )}
-                  <Typography variant="subtitle2" sx={{ fontWeight: notification.read ? 400 : 600 }}>
-                    {notification.videoName}
-                  </Typography>
-                </Box>
-                
-                {notification.processing ? (
-                  <Typography variant="caption" color="text.secondary">
-                    Processing video<span className="processing-dots">...</span>
-                  </Typography>
+        {selectedFeedData && (
+          <>
+            <Box className="feed-details" sx={{marginBottom:2}}>
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {isEditingName ? (
+                  <TextField
+                    variant="standard"
+                    value={newFeedName}
+                    onChange={(e) => setNewFeedName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }}
+                    sx={{ '& .MuiInputBase-input': { padding: 0, fontSize: '1.5rem', fontWeight: 700 } }}
+                  />
                 ) : (
-                  <Typography variant="caption" color="text.secondary">
-                    {notification.success ? (
-                      <>
-                        ✓ Processing completed successfully
-                        {notification.data?.yolo_results && (
-                          <> - {notification.data.yolo_results.total_unique || 0} vehicles</>
-                        )}
-                        {notification.data?.sign_results && (
-                          <>, {notification.data.sign_results.unique_signs || 0} signs</>
-                        )}
-                      </>
-                    ) : (
-                      <>✗ Processing failed</>
-                    )}
+                  <Typography variant="h4" onClick={startEdit} sx={{ cursor: 'pointer' }}> 
+                    Feed #{selectedFeedData.id} - {selectedFeedData.name}
                   </Typography>
                 )}
+                
+                <IconButton 
+                  onClick={isEditingName ? saveName : startEdit} 
+                  size="small"
+                  sx={{ p: 0 }}
+                >
+                  {isEditingName ? <CheckIcon color="primary" /> : <EditIcon fontSize="small" />}
+                </IconButton>
               </Box>
-            </MenuItem>
-          ))
+
+              <Typography variant="h5"> {selectedFeedData.location}  </Typography>
+              <Typography variant="h5"> {selectedFeedData.lng}°E, {selectedFeedData.lat}°N  </Typography>
+              <Typography variant="body1" > Latest Video Uploaded: {selectedFeedData.latestUpload}  </Typography>
+              {selectedVideoData && (
+                <Typography variant="body2" sx={{ color: 'primary.main', fontStyle: 'italic', mt: 1 }}>
+                  Viewing: {selectedVideoData.videoName}
+                </Typography>
+              )}
+            </Box>
+
+            <Divider/>
+
+            <Box className="feed-data">
+              {displayData && (
+                <>
+                  <Box className="feed-aggregates" >
+                    <List>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <DirectionsCarIcon/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${displayData.vehicles} Vehicles`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <CarCrashIcon sx={{color:'red'}}/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${displayData.occurrences} Occurences`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <DirectionsIcon/>
+                        </ListItemAvatar>
+                        <ListItemText primary={`${displayData.signs || 0} Traffic Signs`}></ListItemText>
+                      </ListItem>
+                      <ListItem disableGutters>
+                        <ListItemAvatar>
+                          <LocalTaxiIcon sx={{color: displayData.jeepneyHotspot ? '#4CAF50' : '#000000ff'}}/>
+                        </ListItemAvatar>
+                        <ListItemText 
+                          primary={`Jeepney Hotspot: ${displayData.jeepneyHotspot ? 'Yes' : 'No'}`}
+                          sx={{color: displayData.jeepneyHotspot ? '#4CAF50' : 'text.secondary'}}
+                        ></ListItemText>
+                      </ListItem>
+                    </List>
+                  </Box>
+
+                  {displayData.behaviors.filter((b: string) => b !== 'No Data').length > 0 && (
+                    <Box className="feed-behavior-list">
+                      <List>
+                        {displayData.behaviors.filter((b: string) => b !== 'No Data').map((value: string, index: number) => (
+                          <ListItemText key={`${value}-${index}`} primary={value}></ListItemText>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+
+                  {displayData.signClasses && displayData.signClasses.length > 0 && (
+                    <Box className="feed-behavior-list">
+                      <List>
+                        {displayData.signClasses.map((signClass: string, index: number) => (
+                          <ListItemText key={`sign-${index}`} primary={signClass}></ListItemText>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+                </>
+              )}
+            </Box>
+            
+            <Divider sx={{marginBottom:2}} />
+
+            <Table 
+              onVideoFileSelect={handleVideoFileSelect} 
+              cameraId={selectedFeedId} 
+              onUploadComplete={handleVideoUploadComplete}
+              onProcessingStart={handleProcessingStart}
+              onProcessingComplete={handleProcessingComplete}
+              onVideoSelect={handleVideoSelect}
+              onMultipleVideoSelect={handleMultipleVideoSelect}
+            /> 
+          </>
         )}
-      </Menu>
-
-      <Snackbar
-        open={snackbarOpen}
-        autoHideDuration={3000}
-        onClose={() => setSnackbarOpen(false)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setSnackbarOpen(false)} severity="info" sx={{ width: '100%' }}>
-          {snackbarMessage}
-        </Alert>
-      </Snackbar>
-
-      <Map 
-        mode = "heatmap"
-        onCameraClick={handleCameraClick} 
-        onCameraAdd={handleNewCameraAdded}
-        onVisibleCamerasChange={handleVisibleCamerasChange}
-        onCamerasLoaded={handleCamerasLoaded}
-        selectedCameraId={selectedFeedId}
-        refreshTrigger={camerasRefreshTrigger}
-        goTo={undefined}
-      />
-
-      <Timeline/>
+        </>
+        ) : null}
+        </>
+        )}
+      </SideTab>
     </>
-
-
   )
 }
