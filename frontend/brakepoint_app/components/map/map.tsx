@@ -353,6 +353,7 @@ export default function MapView({
     openDashboardPopupRef.current = popup;
     entry.marker.togglePopup();
   };
+  
   useEffect(() => {
     if (!mapContainer.current) return;
     if (mapRef.current) return;
@@ -578,7 +579,7 @@ export default function MapView({
   }, [addCameraFromData, onCamerasLoaded]);
 
   useEffect(() => {
-    if (mode !== "map") return;
+    if (mode !== "map" && mode !== "heatmap") return;
     loadCamerasFromDatabase();
   }, [mode, loadCamerasFromDatabase]);
 

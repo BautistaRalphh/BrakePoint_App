@@ -103,8 +103,6 @@ export default function AnalyticsCard({ headerText, icon, variant = "text", valu
           </Box>
         )}
 
-        {variant === "line" && <Box className="ac-line">{lineChart ?? <Fallback label="No line chart provided" />}</Box>}
-
         {variant === "pie" && (
           <Box className="ac-pie">
             {data?.length ? (

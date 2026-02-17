@@ -2,9 +2,10 @@
 
 import { LineChart } from "@mui/x-charts/LineChart";
 import { useState, useMemo } from 'react';
-import { Box, Slider, Typography, IconButton } from '@mui/material';
+import { Box, Slider, Typography, IconButton, Button, ButtonGroup, Paper } from '@mui/material';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
+import { HighlightScope } from '@mui/x-charts/context';
 
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -16,32 +17,247 @@ import dayjs from 'dayjs';
 // SAMPLE TIME DATA
 // -----------------------
 const SAMPLE_TIMELINE_DATA = [
-  { date: new Date(2024, 0, 1), speeding: 5, swerving: 1, abruptStop: 0, vehicles: 10 },
-  { date: new Date(2024, 0, 2), speeding: 10, swerving: 0, abruptStop: 2, vehicles: 20 },
-  { date: new Date(2024, 0, 3), speeding: 9, swerving: 1, abruptStop: 0, vehicles: 15 },
+  { date: new Date(2024, 0, 1), speeding: 45, swerving: 12, abruptStop: 8, vehicles: 156 },
+  { date: new Date(2024, 0, 2), speeding: 67, swerving: 18, abruptStop: 15, vehicles: 203 },
+  { date: new Date(2024, 0, 3), speeding: 52, swerving: 9, abruptStop: 11, vehicles: 178 },
   // Gap example: Jan 4 missing
-  {date: new Date(2024, 0, 4), speeding: null, swerving: null, abruptStop: null, vehicles: null },
+  { date: new Date(2024, 0, 4), speeding: null, swerving: null, abruptStop: null, vehicles: null },
   
-  { date: new Date(2024, 0, 5), speeding: 8, swerving: 2, abruptStop: 0, vehicles: 22 },
-  { date: new Date(2024, 0, 6), speeding: 6, swerving: 3, abruptStop: 0, vehicles: 26 },
-  { date: new Date(2024, 0, 7), speeding: 10, swerving: 2, abruptStop: 8, vehicles: 30 },
-  { date: new Date(2024, 0, 8), speeding: 6, swerving: 8, abruptStop: 14, vehicles: 32 },
+  { date: new Date(2024, 0, 5), speeding: 73, swerving: 21, abruptStop: 19, vehicles: 245 },
+  { date: new Date(2024, 0, 6), speeding: 58, swerving: 14, abruptStop: 7, vehicles: 189 },
+  { date: new Date(2024, 0, 7), speeding: 81, swerving: 25, abruptStop: 23, vehicles: 267 },
+  { date: new Date(2024, 0, 8), speeding: 94, swerving: 31, abruptStop: 28, vehicles: 312 },
   { date: new Date(2024, 0, 9), speeding: null, swerving: null, abruptStop: null, vehicles: null },
-  { date: new Date(2024, 0, 10), speeding: 9, swerving: 2, abruptStop: 7, vehicles: 24 },
-  { date: new Date(2024, 0, 11), speeding: 1, swerving: 5, abruptStop: 4, vehicles: 21 },
-  { date: new Date(2024, 0, 12), speeding: 5, swerving: 1, abruptStop: 0, vehicles: 18 },
-  { date: new Date(2024, 0, 13), speeding: 10, swerving: 19, abruptStop: 7, vehicles: 44 },
+  { date: new Date(2024, 0, 10), speeding: 69, swerving: 17, abruptStop: 14, vehicles: 234 },
+  { date: new Date(2024, 0, 11), speeding: 41, swerving: 11, abruptStop: 9, vehicles: 167 },
+  { date: new Date(2024, 0, 12), speeding: 55, swerving: 13, abruptStop: 6, vehicles: 198 },
+  { date: new Date(2024, 0, 13), speeding: 88, swerving: 29, abruptStop: 21, vehicles: 289 },
 ];
 
+function computeStats(values: (number | null)[]) {
+  const valid = values.filter(v => v !== null) as number[];
 
-// - not just for a day, over a span of time dapat ?
-// - show min and max on time range
-// - if the whole slider timeline represents the whole day -> add values on both ends + date
-// - instead of time range hour, do it with date instead
-// - make it so that the date can be chosen
-// - default: click intersection -> show data captured today or last date with data
-// - but there also has to be a way which dates u wanna view
-// - arrow date -> like picking flights nd all
+  if (valid.length === 0) {
+    return {
+      mean: null,
+      std: null,
+      upper: null,
+      lower: null,
+    };
+  }
+
+  const mean = valid.reduce((sum, v) => sum + v, 0) / valid.length;
+  const variance = valid.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / valid.length;
+  const std = Math.sqrt(variance);
+
+  return {
+    mean,
+    std,
+    upper: mean + std,
+    lower: mean - std,
+  };
+}
+
+
+// Custom Tooltip Component
+function CustomTooltip({ axisData, series, statistics, highlightedSeries }) {
+  if (!axisData || axisData.length === 0) return null;
+
+  const axisValue = axisData[0]?.value;
+  if (!axisValue) return null;
+
+  const date = new Date(axisValue);
+  const formattedDate = date.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  const dataIndex = axisData[0]?.index;
+
+  // Check if there's data at this point
+  const hasData = series.some((s) => {
+    const value = s.data[dataIndex];
+    return value !== null && value !== undefined;
+  });
+
+  // Metric name mapping
+  const metricNameMap = {
+    'speeding-line': 'speeding',
+    'swerving-line': 'swerving',
+    'abruptStop-line': 'abruptStop',
+    'vehicles-line': 'vehicles',
+  };
+
+  const metricLabelMap = {
+    speeding: 'Speeding',
+    swerving: 'Swerving',
+    abruptStop: 'Abrupt Stopping',
+    vehicles: 'Vehicle Count',
+  };
+
+  return (
+    <Paper
+      elevation={3}
+      sx={{
+        padding: 2,
+        backgroundColor: hasData ? 'background.paper' : 'rgba(255, 245, 245, 0.95)',
+        border: hasData ? '1px solid #ccc' : '1px solid #ffcccc',
+        minWidth: 250,
+        maxWidth: 350,
+      }}
+    >
+      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5, pb: 1, borderBottom: '1px solid #eee' }}>
+        {formattedDate}
+      </Typography>
+
+      {!hasData ? (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box
+            sx={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              bgcolor: '#ff6b6b',
+            }}
+          />
+          <Typography variant="body2" color="error.main" sx={{ fontStyle: 'italic' }}>
+            No video uploaded
+          </Typography>
+        </Box>
+      ) : (
+        <Box>
+          {series
+            .filter(s => s.label && !s.label.includes('±') && s.label !== 'Missing Data')
+            .map((s, index) => {
+              const value = s.data[dataIndex];
+              
+              if (value === null || value === undefined) return null;
+
+              // Get the metric name for this series
+              const metricName = metricNameMap[s.id] || s.label.toLowerCase().replace(/\s+/g, '');
+              const stats = statistics[metricName];
+
+              // Check if this metric is highlighted
+              const isHighlighted = highlightedSeries === metricName;
+
+              return (
+                <Box
+                  key={index}
+                  sx={{
+                    mb: isHighlighted ? 2 : 1,
+                    pb: isHighlighted ? 2 : 1,
+                    borderBottom: isHighlighted ? '1px solid #eee' : 'none',
+                  }}
+                >
+                  {/* Current Value */}
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      mb: isHighlighted ? 1 : 0,
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box
+                        sx={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: '50%',
+                          bgcolor: s.color,
+                        }}
+                      />
+                      <Typography variant="body2" sx={{ fontWeight: isHighlighted ? 600 : 400 }}>
+                        {metricLabelMap[metricName] || s.label}:
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ fontWeight: 600, fontSize: isHighlighted ? '1rem' : '0.875rem' }}>
+                      {value}
+                    </Typography>
+                  </Box>
+
+                  {/* Statistics (only show when highlighted) */}
+                  {isHighlighted && stats && (
+                    <Box
+                      sx={{
+                        mt: 1,
+                        pl: 2.5,
+                        borderLeft: `3px solid ${s.color}`,
+                        backgroundColor: 'rgba(0, 0, 0, 0.02)',
+                        py: 1,
+                        px: 1.5,
+                        borderRadius: '4px',
+                      }}
+                    >
+                      <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontWeight: 600, color: 'text.secondary' }}>
+                        Dataset Statistics
+                      </Typography>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Mean (μ):
+                        </Typography>
+                        <Typography variant="caption" sx={{ fontWeight: 600, textAlign: 'right' }}>
+                          {stats.mean.toFixed(2)}
+                        </Typography>
+                        
+                        <Typography variant="caption" color="text.secondary">
+                          Std Dev (σ):
+                        </Typography>
+                        <Typography variant="caption" sx={{ fontWeight: 600, textAlign: 'right' }}>
+                          ±{stats.stdDev.toFixed(2)}
+                        </Typography>
+                        
+                        <Typography variant="caption" color="text.secondary">
+                          Median:
+                        </Typography>
+                        <Typography variant="caption" sx={{ fontWeight: 600, textAlign: 'right' }}>
+                          {stats.median.toFixed(2)}
+                        </Typography>
+                        
+                        <Typography variant="caption" color="text.secondary">
+                          Range:
+                        </Typography>
+                        <Typography variant="caption" sx={{ fontWeight: 600, textAlign: 'right' }}>
+                          {stats.min} - {stats.max}
+                        </Typography>
+                      </Box>
+                      
+                      {/* Z-score (how many standard deviations from mean) */}
+                      {value !== null && (
+                        <Box sx={{ mt: 1, pt: 1, borderTop: '1px dashed #ddd' }}>
+                          <Typography variant="caption" color="text.secondary">
+                            Z-score:
+                          </Typography>
+                          <Typography 
+                            variant="caption" 
+                            sx={{ 
+                              fontWeight: 600, 
+                              ml: 0.5,
+                              color: Math.abs((value - stats.mean) / stats.stdDev) > 2 ? 'error.main' : 'text.primary'
+                            }}
+                          >
+                            {((value - stats.mean) / stats.stdDev).toFixed(2)}σ
+                            {Math.abs((value - stats.mean) / stats.stdDev) > 2 && ' (Outlier)'}
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+              );
+            })}
+
+          {!highlightedSeries && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 1.5, pt: 1, borderTop: '1px solid #eee', fontStyle: 'italic', color: 'text.secondary' }}>
+              💡 Select a metric to see detailed statistics
+            </Typography>
+          )}
+        </Box>
+      )}
+    </Paper>
+  );
+}
 
 export default function TimelineSlider() {
   const sortedData = useMemo(() => {
@@ -54,14 +270,9 @@ export default function TimelineSlider() {
     const WINDOW_SIZE = 4; // default window length
 
   // const [range, setRange] = useState([0, WINDOW_SIZE]);
-  const [startDate, setStartDate] = useState(
-    dayjs(sortedData[0].date)
-  );
-
-  const [endDate, setEndDate] = useState(
-    dayjs(sortedData[sortedData.length - 1].date)
-  );
-
+  const [startDate, setStartDate] = useState(dayjs(sortedData[0].date));
+  const [endDate, setEndDate] = useState(dayjs(sortedData[sortedData.length - 1].date));
+  const [highlightedSeries, setHighlightedSeries] = useState(null);
 
   const maxIndex = sortedData.length - 1;
 
@@ -98,6 +309,106 @@ export default function TimelineSlider() {
       });
     }, [startDate, endDate, sortedData]);
 
+    const highlightScope: HighlightScope = {
+      highlight: 'series',
+      fade: 'global',
+    };
+
+    const speedingStats = useMemo(() => {
+      return computeStats(filteredData.map(d => d.speeding));
+    }, [filteredData]);
+
+    const swervingStats = useMemo(() => {
+      return computeStats(filteredData.map(d => d.swerving));
+    }, [filteredData]);
+
+    const abruptStats = useMemo(() => {
+      return computeStats(filteredData.map(d => d.abruptStop));
+    }, [filteredData]);
+
+    const vehicleStats = useMemo(() => {
+      return computeStats(filteredData.map(d => d.vehicles));
+    }, [filteredData]);
+
+    // SPEEDING STATS
+    const speedingUpper = filteredData.map(d => d.speeding === null || speedingStats.std === null ? null : d.speeding + speedingStats.std);
+    const speedingLower = filteredData.map(d => d.speeding === null || speedingStats.std === null ? null : d.speeding - speedingStats.std);
+    const speedingBand = filteredData.map((_, i) => {
+      if (speedingUpper[i] === null || speedingLower[i] === null) return null;
+      return speedingUpper[i] - speedingLower[i];
+    });
+
+    const swervingUpper = filteredData.map(d => d.swerving === null || swervingStats.std === null ? null : d.swerving + swervingStats.std);
+    const swervingLower = filteredData.map(d => d.swerving === null || swervingStats.std === null ? null : d.swerving - swervingStats.std);
+    const swervingBand = filteredData.map((_, i) => {
+      if (swervingUpper[i] === null || swervingLower[i] === null) return null;
+      return swervingUpper[i] - swervingLower[i];
+    });
+
+    const abruptStopUpper = filteredData.map(d => d.abruptStop === null || abruptStats.std === null ? null : d.abruptStop + abruptStats.std);
+    const abruptStopLower = filteredData.map(d => d.abruptStop === null || abruptStats.std === null ? null : d.abruptStop - abruptStats.std);
+    const abruptStopBand = filteredData.map((_, i) => {
+       if (abruptStopUpper[i] === null || abruptStopLower[i] === null) return null;
+        return abruptStopUpper[i] - abruptStopLower[i];
+    });
+
+    const vehiclesUpper = filteredData.map(d => d.vehicles === null || vehicleStats.std === null ? null : d.vehicles + vehicleStats.std);
+    const vehiclesLower = filteredData.map(d => d.vehicles === null || vehicleStats.std === null ? null : d.vehicles - vehicleStats.std);
+    const vehiclesBand = filteredData.map((_, i) => {
+       if (vehiclesUpper[i] === null || vehiclesLower[i] === null) return null;
+        return vehiclesUpper[i] - vehiclesLower[i];
+    });
+
+
+  // Define series groupings - each metric has a main line and two band series
+  const seriesGroups = {
+    speeding: ['speeding-lower', 'speeding-band', 'speeding-line'],
+    swerving: ['swerving-lower', 'swerving-band', 'swerving-line'],
+    abruptStop: ['abruptStop-lower', 'abruptStop-band', 'abruptStop-line'],
+    vehicles: ['vehicles-lower', 'vehicles-band', 'vehicles-line'],
+  };
+
+  // Handle series click
+  const handleSeriesClick = (event, seriesId) => {
+    // Find which group this series belongs to
+    const group = Object.keys(seriesGroups).find(key => 
+      seriesGroups[key].includes(seriesId)
+    );
+    
+    // Toggle: if already highlighted, unhighlight; otherwise highlight this group
+    if (highlightedSeries === group) {
+      setHighlightedSeries(null);
+    } else {
+      setHighlightedSeries(group);
+    }
+  };
+
+  const handleButtonClick = (metric) => {
+    if (highlightedSeries === metric) {
+      setHighlightedSeries(null); // Deselect if already selected
+    } else {
+      setHighlightedSeries(metric); // Select new metric
+    }
+  };
+
+  // Helper function to determine opacity based on highlight state
+  const showSeries = (group) => {
+    if (!highlightedSeries) return true; // Nothing selected, show all normally
+    return highlightedSeries === group; // Dim non-selected series
+  };
+
+  const getBandOpacity = (group) => {
+    if (!highlightedSeries) return 0.25; // Default band opacity
+    return highlightedSeries === group ? 0.3 : 0; // Increase selected, dim others
+  };
+
+  // Button configurations
+  const metricButtons = [
+    { key: 'speeding', label: 'Speeding', color: '#1976d2' },
+    { key: 'swerving', label: 'Swerving', color: '#dc004e' },
+    { key: 'abruptStop', label: 'Abrupt Stop', color: '#ff9800' },
+    { key: 'vehicles', label: 'Vehicles', color: '#4caf50' },
+  ];
 
 
   return (
@@ -165,7 +476,48 @@ export default function TimelineSlider() {
       </Box>
     </LocalizationProvider>
 
-
+{/* Metric Selection Buttons */}
+      <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3, gap: 1 }}>
+        <ButtonGroup variant="outlined" size="small">
+          {metricButtons.map(({ key, label, color }) => (
+            <Button
+              key={key}
+              onClick={() => handleButtonClick(key)}
+              variant={highlightedSeries === key ? 'contained' : 'outlined'}
+              sx={{
+                borderColor: color,
+                color: highlightedSeries === key ? 'white' : color,
+                backgroundColor: highlightedSeries === key ? color : 'transparent',
+                '&:hover': {
+                  borderColor: color,
+                  backgroundColor: highlightedSeries === key ? color : `${color}15`,
+                },
+                textTransform: 'none',
+                minWidth: '110px',
+              }}
+            >
+              {label}
+            </Button>
+          ))}
+          {highlightedSeries && (
+            <Button
+              onClick={() => setHighlightedSeries(null)}
+              variant="outlined"
+              sx={{
+                borderColor: '#666',
+                color: '#666',
+                '&:hover': {
+                  borderColor: '#666',
+                  backgroundColor: '#66661a',
+                },
+                textTransform: 'none',
+              }}
+            >
+              Show All
+            </Button>
+          )}
+        </ButtonGroup>
+      </Box>
 
       <LineChart
         xAxis={[
@@ -181,41 +533,191 @@ export default function TimelineSlider() {
           },
         ]}
         series={[
+          // SPEEDING STATS
+          // {
+          //   data: speedingUpper,
+          //   showMark: false,
+          //   color: 'rgba(25, 118, 210, 0.3)',
+          //   area: true,
+          // },
+          ...(showSeries('speeding') ? [
           {
+            id: 'speeding-lower',
+            data: speedingLower,
+            stack:'speeding-band',
+            showMark: false,
+            color: `rgba(25, 118, 210, ${getBandOpacity('speeding')})`,
+            highlightScope,
+            valueFormatter: () => null
+          },
+          {
+            id: 'speeding-band',
+            data: speedingBand,
+            stack: 'speeding-band',
+            showMark: false,
+            area: true,
+            color: `rgba(25, 118, 210, ${getBandOpacity('speeding')})`,
+            valueFormatter: () => null
+          },
+          { 
+            id: 'speeding-line',
             data: filteredData.map(d => d.speeding),
             label: 'Speeding',
             connectNulls: false,
             showMark: true,
-            // stack: 'adb',
+            highlightScope,
+            color: '#1976d2',
+            valueFormatter: (value: number | null) =>
+              value === null ? "No video uploaded" : value.toString(),
+          },
+        ] : []),
+          // SWERVING STATS
+          // {
+          //   data: swervingUpper,
+          //   showMark: false,
+          //   color: 'rgba(220, 0, 78, 0.15)',
+          //   area: true,
+          //   stack: 'swerving'
+          // },
+          ...(showSeries('swerving') ? [
+          {
+            id: 'swerving-lower',
+            data: swervingLower,
+            stack:'swerving-band',
+            showMark: false,
+            color: `rgba(220, 0, 78, ${getBandOpacity('swerving')})`,
+            valueFormatter: () => null
           },
           {
+            id: 'swerving-band',
+            data: swervingBand,
+            stack: 'swerving-band',
+            showMark: false,
+            area: true,
+           color: `rgba(220, 0, 78, ${getBandOpacity('swerving')})`,
+            valueFormatter: () => null
+          },
+          {
+            id: 'swerving-line',
             data: filteredData.map(d => d.swerving),
             label: 'Swerving',
             connectNulls: false,
             showMark: true,
-            // stack: 'adb',
+            color: '#dc004e',
+            highlightScope,
+            valueFormatter: (value: number | null) =>
+              value === null ? "No video uploaded" : value.toString(),
+          },
+        ] : []),
+          // //ABRUPT STOP STATS
+          // // {
+          // //   data: abruptStopUpper,
+          // //   showMark: false,
+          // //   color: 'rgba(255, 152, 0, 0.3)',
+          // //   area: true,
+          // // },
+          ...(showSeries('abruptStop') ? [{
+            id: 'abruptStop-lower',
+            data: abruptStopLower,
+            stack:'abruptStop-band',
+            showMark: false,
+            color: `rgba(255, 152, 0, ${getBandOpacity('abruptStop')})`,
+            valueFormatter: () => null
           },
           {
+            id: 'abruptStop-band',
+            data: abruptStopBand,
+            stack: 'abruptStop-band',
+            showMark: false,
+            area: true,
+            color: `rgba(255, 152, 0, ${getBandOpacity('abruptStop')})`,
+            valueFormatter: () => null
+          },
+          {
+            id: 'abruptStop-line',
             data: filteredData.map(d => d.abruptStop),
             label: 'Abrupt Stopping',
             connectNulls: false,
             showMark: true,
-            // stack: 'adb',
+            highlightScope,
+            color:'#ff9800',
+            valueFormatter: (value: number | null) =>
+              value === null ? "No video uploaded" : value.toString(),
+          },
+        ] : []),
+          // // VEHICLE STATS
+          // // {
+          // //   data: vehiclesUpper,
+          // //   showMark: false,
+          // //   color: 'rgba(76, 175, 80, 0.3)',
+            
+          // // },
+          
+          ...(showSeries('vehicles') ? [
+          {
+            id: 'vehicles-lower',
+            data: vehiclesLower,
+            stack:'vehicles-band',
+            showMark: false,
+            color: `rgba(76, 175, 80, ${getBandOpacity('vehicles')})`,
+            valueFormatter: () => null
           },
           {
+            id: 'vehicles-band',
+            data: vehiclesBand,
+            stack: 'vehicles-band',
+            showMark: false,
+            area: true,
+            color: `rgba(76, 175, 80, ${getBandOpacity('vehicles')})`,
+            valueFormatter: () => null
+          },
+          {
+            id: 'vehicles-line',
             data: filteredData.map(d => d.vehicles),
             label: 'Vehicle Count',
             connectNulls: false,
             showMark: true,
-            color: '#4caf50',
+            color: 'rgba(76, 175, 80)',
+            highlightScope,
+            valueFormatter: (value: number | null) =>
+              value === null ? "No video uploaded" : value.toString(),
           },
+          ] : []),
         ]}
+
         height={300}
+        // onMarkClick={(event, d) => {
+        //   handleSeriesClick(event, d.seriesId);
+        // }}
+        // onLineClick={(event, d) => {
+        //   handleSeriesClick(event, d.seriesId);
+        // }}
+        // onAxisClick={(event, d) => {
+        //   // Click on axis area (not on a series) - clear highlight
+        //   setHighlightedSeries(null);
+        // }}
+        // sx={{
+        //   // Add cursor pointer to indicate clickable
+        //   '& .MuiLineElement-root': {
+        //     cursor: 'pointer',
+        //     transition: 'opacity 0.3s ease',
+        //     opacity: (theme) => {
+        //       // This won't work directly, we use the color opacity instead
+        //       return 1;
+        //     }
+        //   },
+        //   '& .MuiMarkElement-root': {
+        //     cursor: 'pointer',
+        //     transition: 'opacity 0.3s ease',
+        //   },
+        //   '& .MuiAreaElement-root': {
+        //     cursor: 'pointer',
+        //     transition: 'opacity 0.3s ease',
+        //   }
+        // }}
       />
 
       
-      
-
 
       {/* <Box sx={{ mb: 5, flex: 1, px: 7 }}>
         <Typography variant="body2" gutterBottom>
@@ -244,270 +746,303 @@ export default function TimelineSlider() {
 }
 
 
+//--------------------------------------------------------------------------------------------------
+
+
 // 'use client';
 
 // import { LineChart } from "@mui/x-charts/LineChart";
-// import { useState, useMemo } from 'react';
-// import { Box, Slider, Typography, IconButton } from '@mui/material';
-// import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
-// import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
+// import { useState, useMemo } from "react";
+// import { Box, Typography } from "@mui/material";
 
-// import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-// import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-// import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
-// import dayjs from 'dayjs';
+// import { DatePicker } from "@mui/x-date-pickers/DatePicker";
+// import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
+// import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+
+// import dayjs from "dayjs";
+
 
 
 // // -----------------------
-// // SAMPLE TIME DATA WITH STD DEV
+// // SAMPLE DATA
 // // -----------------------
 // const SAMPLE_TIMELINE_DATA = [
-//   { date: new Date(2024, 0, 1), speeding: 5, swerving: 1, abruptStop: 0, vehicles: 10, speedingStd: 1.2, swervingStd: 0.5, abruptStopStd: 0.3, vehiclesStd: 2 },
-//   { date: new Date(2024, 0, 2), speeding: 10, swerving: 0, abruptStop: 2, vehicles: 20, speedingStd: 1.5, swervingStd: 0.4, abruptStopStd: 0.6, vehiclesStd: 3 },
-//   { date: new Date(2024, 0, 3), speeding: 9, swerving: 1, abruptStop: 0, vehicles: 15, speedingStd: 1.3, swervingStd: 0.5, abruptStopStd: 0.2, vehiclesStd: 2.5 },
-//   { date: new Date(2024, 0, 4), speeding: null, swerving: null, abruptStop: null, vehicles: null, speedingStd: null, swervingStd: null, abruptStopStd: null, vehiclesStd: null },
-//   { date: new Date(2024, 0, 5), speeding: 8, swerving: 2, abruptStop: 0, vehicles: 22, speedingStd: 1.1, swervingStd: 0.7, abruptStopStd: 0.3, vehiclesStd: 3.2 },
-//   { date: new Date(2024, 0, 6), speeding: 6, swerving: 3, abruptStop: 0, vehicles: 26, speedingStd: 1.0, swervingStd: 0.8, abruptStopStd: 0.2, vehiclesStd: 3.5 },
-//   { date: new Date(2024, 0, 7), speeding: 10, swerving: 2, abruptStop: 8, vehicles: 30, speedingStd: 1.6, swervingStd: 0.6, abruptStopStd: 1.2, vehiclesStd: 4 },
-//   { date: new Date(2024, 0, 8), speeding: 6, swerving: 8, abruptStop: 14, vehicles: 32, speedingStd: 1.2, swervingStd: 1.5, abruptStopStd: 2.1, vehiclesStd: 4.2 },
-//   { date: new Date(2024, 0, 9), speeding: null, swerving: null, abruptStop: null, vehicles: null, speedingStd: null, swervingStd: null, abruptStopStd: null, vehiclesStd: null },
-//   { date: new Date(2024, 0, 10), speeding: 9, swerving: 2, abruptStop: 7, vehicles: 24, speedingStd: 1.4, swervingStd: 0.7, abruptStopStd: 1.0, vehiclesStd: 3.3 },
-//   { date: new Date(2024, 0, 11), speeding: 1, swerving: 5, abruptStop: 4, vehicles: 21, speedingStd: 0.8, swervingStd: 1.0, abruptStopStd: 0.8, vehiclesStd: 2.8 },
-//   { date: new Date(2024, 0, 12), speeding: 5, swerving: 1, abruptStop: 0, vehicles: 18, speedingStd: 1.0, swervingStd: 0.5, abruptStopStd: 0.2, vehiclesStd: 2.5 },
-//   { date: new Date(2024, 0, 13), speeding: 10, swerving: 19, abruptStop: 7, vehicles: 44, speedingStd: 1.5, swervingStd: 3.2, abruptStopStd: 1.1, vehiclesStd: 5.5 },
+//   { date: new Date(2024, 0, 1), speeding: 5, swerving: 1, abruptStop: 0, vehicles: 10 },
+//   { date: new Date(2024, 0, 2), speeding: 10, swerving: 0, abruptStop: 2, vehicles: 20 },
+//   { date: new Date(2024, 0, 3), speeding: 9, swerving: 1, abruptStop: 0, vehicles: 15 },
+
+//   { date: new Date(2024, 0, 4), speeding: null, swerving: null, abruptStop: null, vehicles: null },
+
+//   { date: new Date(2024, 0, 5), speeding: 8, swerving: 2, abruptStop: 0, vehicles: 22 },
+//   { date: new Date(2024, 0, 6), speeding: 6, swerving: 3, abruptStop: 0, vehicles: 26 },
+//   { date: new Date(2024, 0, 7), speeding: 10, swerving: 2, abruptStop: 8, vehicles: 30 },
+
+//   { date: new Date(2024, 0, 8), speeding: 6, swerving: 8, abruptStop: 14, vehicles: 32 },
+
+//   { date: new Date(2024, 0, 9), speeding: null, swerving: null, abruptStop: null, vehicles: null },
+
+//   { date: new Date(2024, 0, 10), speeding: 9, swerving: 2, abruptStop: 7, vehicles: 24 },
+//   { date: new Date(2024, 0, 11), speeding: 1, swerving: 5, abruptStop: 4, vehicles: 21 },
+//   { date: new Date(2024, 0, 12), speeding: 5, swerving: 1, abruptStop: 0, vehicles: 18 },
+//   { date: new Date(2024, 0, 13), speeding: 10, swerving: 19, abruptStop: 7, vehicles: 44 },
 // ];
 
+
 // export default function TimelineSlider() {
+
+//   //--------------------------------------------------
+//   // Sort data once
+//   //--------------------------------------------------
 //   const sortedData = useMemo(() => {
 //     return [...SAMPLE_TIMELINE_DATA].sort(
 //       (a, b) => a.date.getTime() - b.date.getTime()
 //     );
 //   }, []);
 
-//   const [startDate, setStartDate] = useState(
-//     dayjs(sortedData[0].date)
-//   );
 
-//   const [endDate, setEndDate] = useState(
-//     dayjs(sortedData[sortedData.length - 1].date)
-//   );
+//   //--------------------------------------------------
+//   // Date picker state
+//   //--------------------------------------------------
+//   const [startDate, setStartDate] = useState(dayjs(sortedData[0].date));
+//   const [endDate, setEndDate] = useState(dayjs(sortedData.at(-1).date));
 
+
+//   //--------------------------------------------------
+//   // Filter data safely
+//   //--------------------------------------------------
 //   const filteredData = useMemo(() => {
+
 //     if (!startDate || !endDate) return sortedData;
 
 //     return sortedData.filter(d => {
-//       const current = dayjs(d.date);
-//       return (
-//         current.isAfter(startDate.subtract(1, 'day')) &&
-//         current.isBefore(endDate.add(1, 'day'))
-//       );
-//     });
-//   }, [startDate, endDate, sortedData]);
 
-//   // Calculate bounds for error bands
-//   const errorBands = useMemo(() => {
-//     return {
-//       speeding: {
-//         upper: filteredData.map(d => d.speeding !== null ? d.speeding + d.speedingStd : null),
-//         lower: filteredData.map(d => d.speeding !== null ? Math.max(0, d.speeding - d.speedingStd) : null),
-//       },
-//       swerving: {
-//         upper: filteredData.map(d => d.swerving !== null ? d.swerving + d.swervingStd : null),
-//         lower: filteredData.map(d => d.swerving !== null ? Math.max(0, d.swerving - d.swervingStd) : null),
-//       },
-//       abruptStop: {
-//         upper: filteredData.map(d => d.abruptStop !== null ? d.abruptStop + d.abruptStopStd : null),
-//         lower: filteredData.map(d => d.abruptStop !== null ? Math.max(0, d.abruptStop - d.abruptStopStd) : null),
-//       },
-//       vehicles: {
-//         upper: filteredData.map(d => d.vehicles !== null ? d.vehicles + d.vehiclesStd : null),
-//         lower: filteredData.map(d => d.vehicles !== null ? Math.max(0, d.vehicles - d.vehiclesStd) : null),
-//       },
-//     };
+//       const current = dayjs(d.date);
+
+//       return (
+//         current.isSame(startDate, "day") ||
+//         current.isSame(endDate, "day") ||
+//         (current.isAfter(startDate, "day") &&
+//          current.isBefore(endDate, "day"))
+//       );
+
+//     });
+
+//   }, [sortedData, startDate, endDate]);
+
+
+//   //--------------------------------------------------
+//   // Detect missing ranges
+//   //--------------------------------------------------
+//   const missingRanges = useMemo(() => {
+
+//     const ranges = [];
+//     let start = null;
+
+//     filteredData.forEach((d, i) => {
+
+//       const missing =
+//         d.speeding === null &&
+//         d.swerving === null &&
+//         d.abruptStop === null &&
+//         d.vehicles === null;
+
+//       if (missing && start === null)
+//         start = d.date;
+
+//       if (!missing && start !== null) {
+
+//         ranges.push({
+//           start,
+//           end: filteredData[i - 1].date
+//         });
+
+//         start = null;
+//       }
+
+//     });
+
+//     if (start !== null)
+//       ranges.push({
+//         start,
+//         end: filteredData.at(-1).date
+//       });
+
+//     return ranges;
+
 //   }, [filteredData]);
 
+
+//   //--------------------------------------------------
+//   // Chart bounds
+//   //--------------------------------------------------
+//   const chartStart = filteredData[0]?.date?.getTime();
+//   const chartEnd = filteredData.at(-1)?.date?.getTime();
+//   const chartDuration = chartEnd - chartStart;
+
+
+//   //--------------------------------------------------
+//   // Render
+//   //--------------------------------------------------
 //   return (
-//     <Box sx={{ width: '100%', px: 2}}>
-//       <Typography variant="h6" gutterBottom sx={{ mt: 1 }}>
+//     <Box sx={{ width: "100%", px: 2 }}>
+
+//       <Typography variant="h6" sx={{ mb: 2 }}>
 //         Aggressive Driving Behaviors Over Time
 //       </Typography>
 
+
+//       {/* DATE PICKERS */}
 //       <LocalizationProvider dateAdapter={AdapterDayjs}>
-//         <Box
-//           sx={{
-//             display: 'flex',
-//             gap: 2,
-//             justifyContent: 'center',
-//             mb: 3,
-//             mt: 2,
-//           }}
-//         >
+
+//         <Box sx={{
+//           display: "flex",
+//           gap: 2,
+//           justifyContent: "center",
+//           mb: 3
+//         }}>
+
 //           <DatePicker
 //             label="Start Date"
 //             value={startDate}
-//             onChange={(newValue) => {
-//               if (!newValue) return;
-//               if (endDate && newValue.isAfter(endDate)) return;
-//               setStartDate(newValue);
+//             onChange={(v) => {
+//               if (!v || v.isAfter(endDate)) return;
+//               setStartDate(v);
 //             }}
-//             slotProps={{ textField: { size: 'small' } }}
+//             slotProps={{ textField: { size: "small" } }}
 //           />
 
 //           <DatePicker
 //             label="End Date"
 //             value={endDate}
-//             onChange={(newValue) => {
-//               if (!newValue) return;
-//               if (startDate && newValue.isBefore(startDate)) return;
-//               setEndDate(newValue);
+//             onChange={(v) => {
+//               if (!v || v.isBefore(startDate)) return;
+//               setEndDate(v);
 //             }}
-//             slotProps={{ textField: { size: 'small' } }}
+//             slotProps={{ textField: { size: "small" } }}
 //           />
+
 //         </Box>
+
 //       </LocalizationProvider>
 
-//       <LineChart
-//         xAxis={[
-//           {
+
+
+//       {/* CHART CONTAINER */}
+//       <Box sx={{
+//         position: "relative",
+//         width: "100%",
+//         height: 300
+//       }}>
+
+
+//         {/* SHADED MISSING REGIONS */}
+//         {missingRanges.map((range, i) => {
+
+//           const left =
+//             ((range.start.getTime() - chartStart)
+//             / chartDuration) * 100;
+
+//           const width =
+//             ((range.end.getTime() - range.start.getTime())
+//             / chartDuration) * 100;
+
+//           return (
+//             <Box
+//               key={i}
+//               sx={{
+//                 position: "absolute",
+//                 left: `${left}%`,
+//                 width: `${width}%`,
+//                 top: 0,
+//                 bottom: 0,
+
+//                 backgroundColor: "rgba(0,0,0,0.08)",
+
+//                 borderLeft: "2px dashed grey",
+//                 borderRight: "2px dashed grey",
+
+//                 display: "flex",
+//                 alignItems: "center",
+//                 justifyContent: "center",
+
+//                 pointerEvents: "none",
+//                 zIndex: 1
+//               }}
+//             >
+//               <Typography
+//                 variant="caption"
+//                 color="text.secondary"
+//               >
+//                 No video uploaded
+//               </Typography>
+//             </Box>
+//           );
+
+//         })}
+
+
+
+//         {/* CHART */}
+//         <LineChart
+
+//           xAxis={[{
 //             data: filteredData.map(d => d.date),
-//             scaleType: 'time',
+//             scaleType: "time",
 //             tickMinStep: 24 * 60 * 60 * 1000,
-//             valueFormatter: (value) =>
-//               value.toLocaleDateString('en-US', {
-//                 month: 'short',
-//                 day: 'numeric',
-//               }),
-//           },
-//         ]}
-//         series={[
-//           // Error band for Speeding (upper bound)
-//           {
-//             type: 'line',
-//             data: errorBands.speeding.upper,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: '#1976d2',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           // Error band for Speeding (lower bound - creates the band)
-//           {
-//             type: 'line',
-//             data: errorBands.speeding.lower,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: 'white',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           // Main Speeding line
-//           {
-//             data: filteredData.map(d => d.speeding),
-//             label: 'Speeding',
-//             connectNulls: false,
-//             showMark: true,
-//             color: '#1976d2',
-//           },
-          
-//           // Error band for Swerving
-//           {
-//             type: 'line',
-//             data: errorBands.swerving.upper,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: '#dc004e',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           {
-//             type: 'line',
-//             data: errorBands.swerving.lower,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: 'white',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           {
-//             data: filteredData.map(d => d.swerving),
-//             label: 'Swerving',
-//             connectNulls: false,
-//             showMark: true,
-//             color: '#dc004e',
-//           },
-          
-//           // Error band for Abrupt Stopping
-//           {
-//             type: 'line',
-//             data: errorBands.abruptStop.upper,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: '#ff9800',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           {
-//             type: 'line',
-//             data: errorBands.abruptStop.lower,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: 'white',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           {
-//             data: filteredData.map(d => d.abruptStop),
-//             label: 'Abrupt Stopping',
-//             connectNulls: false,
-//             showMark: true,
-//             color: '#ff9800',
-//           },
-          
-//           // Error band for Vehicle Count
-//           {
-//             type: 'line',
-//             data: errorBands.vehicles.upper,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: '#4caf50',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           {
-//             type: 'line',
-//             data: errorBands.vehicles.lower,
-//             area: true,
-//             baseline: 'min',
-//             connectNulls: false,
-//             showMark: false,
-//             color: 'white',
-//             highlightScope: { highlight: 'none' },
-//           },
-//           {
-//             data: filteredData.map(d => d.vehicles),
-//             label: 'Vehicle Count',
-//             connectNulls: false,
-//             showMark: true,
-//             color: '#4caf50',
-//           },
-//         ]}
-//         height={300}
-//         sx={{
-//           '& .MuiLineElement-root': {
-//             strokeWidth: 2,
-//           },
-//           '& .MuiAreaElement-root': {
-//             fillOpacity: 0.2,
-//           },
-//         }}
-//       />
+//             valueFormatter: (date) =>
+//               date.toLocaleDateString("en-US", {
+//                 month: "short",
+//                 day: "numeric"
+//               })
+//           }]}
+
+
+//           series={[
+//             {
+//               data: filteredData.map(d => d.speeding),
+//               label: "Speeding",
+//               connectNulls: false,
+//               showMark: true,
+//               valueFormatter: (v: number | null) =>
+//                 v !== null ? v.toString() : "No video uploaded"
+//             },
+
+//             {
+//               data: filteredData.map(d => d.swerving),
+//               label: "Swerving",
+//               connectNulls: false,
+//               showMark: true,
+//               valueFormatter: (v: number | null) =>
+//                 v !== null ? v.toString() : "No video uploaded"
+//             },
+
+//             {
+//               data: filteredData.map(d => d.abruptStop),
+//               label: "Abrupt Stop",
+//               connectNulls: false,
+//               showMark: true,
+//               valueFormatter: (v: number | null) =>
+//                 v !== null ? v.toString() : "No video uploaded"
+//             },
+
+//             {
+//               data: filteredData.map(d => d.vehicles),
+//               label: "Vehicle Count",
+//               connectNulls: false,
+//               showMark: true,
+//               valueFormatter: (v: number | null) =>
+//                 v !== null ? v.toString() : "No video uploaded"
+//             }
+
+//           ]}
+
+//           height={300}
+
+//         />
+
+//       </Box>
+
+
 //     </Box>
 //   );
 // }
