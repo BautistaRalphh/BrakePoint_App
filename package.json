@@ -32,6 +32,7 @@
     "dayjs": "^1.11.19",
     "eslint": "^9",
     "eslint-config-next": "16.0.0",
+    "recharts": "^3.7.0",
     "typescript": "^5"
   }
 }

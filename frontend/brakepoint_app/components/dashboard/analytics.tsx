@@ -3,7 +3,6 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 import { Box, Grid, Typography, Paper, Stack } from "@mui/material";
-import { styled } from "@mui/material/styles";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
@@ -11,7 +10,9 @@ import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import DirectionsCarFilledOutlinedIcon from "@mui/icons-material/DirectionsCarFilledOutlined";
 import CarCrashOutlinedIcon from "@mui/icons-material/CarCrashOutlined";
 import SpeedOutlinedIcon from "@mui/icons-material/SpeedOutlined";
+
 import AnalyticsCard from "./analyticsCard";
+import CardCarousel from "./cardCarousel";
 
 import dynamic from "next/dynamic";
 const Map = dynamic(() => import("../map/map"), { ssr: false });
@@ -25,6 +26,13 @@ export default function Analytics() {
 
   const [locations, setLocations] = useState<Loc[]>([]);
   const [selectedLoc, setSelectedLoc] = useState<Loc | null>(null);
+
+  const vehicleBreakdown = [
+    { id: 0, value: 420, label: "Cars" },
+    { id: 1, value: 120, label: "Motorcycles" },
+    { id: 2, value: 60, label: "Trucks" },
+    { id: 3, value: 40, label: "Buses" },
+  ];
 
   useEffect(() => {
     getSavedLocationsMock()
@@ -75,49 +83,61 @@ export default function Analytics() {
         </LocalizationProvider>
       </Box>
 
-      <Grid container spacing={4}>
-        <Grid size={3}>
-          <Stack spacing={2} width="100%">
-            <AnalyticsCard headerText="Total vehicle count" icon={<DirectionsCarFilledOutlinedIcon />} variant="text" valueText="500"></AnalyticsCard>
-            <AnalyticsCard headerText="Total ADB count" icon={<CarCrashOutlinedIcon />} variant="text" valueText="500"></AnalyticsCard>
-          </Stack>
-        </Grid>
+      <Box className="analytics-card-container">
+        <Grid container spacing={{ xs: 2, md: 2 }} alignItems="stretch" sx={{ height: "100%" }}>
+          <Grid size={{ xs: 12, md: 3 }} display="flex" sx={{ minWidth: 0 }}>
+            <Stack spacing={2} width="100%" height="100%">
+              <AnalyticsCard
+                headerText="Total vehicle count"
+                icon={<DirectionsCarFilledOutlinedIcon />}
+                variant="text"
+                valueText="500"
+              ></AnalyticsCard>
+              <AnalyticsCard headerText="Total ADB count" icon={<CarCrashOutlinedIcon />} variant="text" valueText="500"></AnalyticsCard>
+            </Stack>
+          </Grid>
 
-        <Grid size={3}>
-          <Stack spacing={2}>
-            <AnalyticsCard
-              headerText="Speeding incidents per 1,000 vehicles"
-              icon={<SpeedOutlinedIcon />}
-              variant="text"
-              valueText="500"
-            ></AnalyticsCard>
-            <AnalyticsCard
-              headerText="Abrupt stopping events per 1,000 vehicles"
-              icon={<SpeedOutlinedIcon />}
-              variant="text"
-              valueText="500"
-            ></AnalyticsCard>
-            <AnalyticsCard
-              headerText="Swerving events per 1,000 vehicles"
-              icon={<SpeedOutlinedIcon />}
-              variant="text"
-              valueText="500"
-            ></AnalyticsCard>
-          </Stack>
-        </Grid>
+          <Grid size={{ xs: 12, md: 3, lg: 3 }} display="flex" sx={{ minWidth: 0 }}>
+            <Stack spacing={2} width="100%" height="100%">
+              <AnalyticsCard
+                compact
+                headerText="Speeding incidents per 1,000 vehicles"
+                icon={<SpeedOutlinedIcon />}
+                variant="text"
+                valueText="500"
+              ></AnalyticsCard>
+              <AnalyticsCard
+                compact
+                headerText="Abrupt stopping events per 1,000 vehicles"
+                icon={<SpeedOutlinedIcon />}
+                variant="text"
+                valueText="500"
+              ></AnalyticsCard>
+              <AnalyticsCard
+                compact
+                headerText="Swerving events per 1,000 vehicles"
+                icon={<SpeedOutlinedIcon />}
+                variant="text"
+                valueText="500"
+              ></AnalyticsCard>
+            </Stack>
+          </Grid>
 
-        <Grid size={6} display="flex" sx={{ minHeight: 420 }}>
-          <Box sx={{ height: "75vh", width: "100%", borderRadius: 2, overflow: "hidden" }}>
-            <Map
-              mode="dashboard"
-              refreshTrigger={0}
-              dashboardMarkers={dashboardMarkers}
-              onDashboardMarkerClick={handleDashboardMarkerClick}
-              goTo={selectedLoc ? [selectedLoc.lng, selectedLoc.lat] : null}
-            />
-          </Box>
+          <Grid size={{ xs: 12, md: 6 }} display="flex" sx={{ minWidth: 0 }}>
+            <Box sx={{ minHeight: { xs: 720, md: "100%" }, width: "100%", borderRadius: 2, overflow: "hidden" }}>
+              <Map
+                mode="dashboard"
+                refreshTrigger={0}
+                dashboardMarkers={dashboardMarkers}
+                onDashboardMarkerClick={handleDashboardMarkerClick}
+                goTo={selectedLoc ? [selectedLoc.lng, selectedLoc.lat] : null}
+              />
+            </Box>
+          </Grid>
         </Grid>
-      </Grid>
+      </Box>
+
+      <CardCarousel locations={locations} />
     </Box>
   );
 }

@@ -2,20 +2,40 @@
   background-color: #ffffff;
   display: flex;
   flex-direction: column;
-  padding: 32;
-  gap: 24;
+  padding: 32px;
+  gap: 24px;
   flex: 1;
   width: 100%;
-  border-radius:16;
+  border-radius: 16px;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .ac-header {
-    display:flex;
-    flex-direction:row;
-    justify-content:space-between;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ac-header > :first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ac-icon {
+  flex: 0 0 auto;
+  width: clamp(32px, 6vw, 48px);
+  height: clamp(32px, 6vw, 48px);
+  display: grid;
+  place-items: center;
+  overflow: hidden; 
 }
 
 .ac-icon .MuiSvgIcon-root {
-    font-size:48px !important;
+  font-size: clamp(24px, 5vw, 40px) !important;
+  max-width: 100%;
+  max-height: 100%;
 }
-

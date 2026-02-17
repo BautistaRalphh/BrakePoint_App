@@ -1,0 +1,23 @@
+.carousel-container {
+  margin-top: 32px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 32px;
+  overflow-x: auto;
+  box-sizing: border-box;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  
+}
+
+.carousel-card-container {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  width: min(320px, 80vw);
+  display: flex;
+  align-items: stretch;
+}

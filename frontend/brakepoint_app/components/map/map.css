@@ -10,26 +10,19 @@
   height: 100%;
 }
 
-.dashboard-marker .dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 9999px;
-  background: #161b4cff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-}
-
 .dash-marker {
   cursor: pointer;
 }
 .dash-marker__pin {
   position: relative;
-  width: 34px;
+  width: auto;
   height: 34px;
+   padding: 0 12px; 
   border-radius: 999px;
   background: #161b4c;
   border: 2px solid #fff;
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
-  display: grid;
+  display: flex;
   place-items: center;
 }
 .dash-marker__pin::after {
@@ -51,9 +44,9 @@
   font-size: 12px;
   line-height: 1;
   padding: 0 6px;
-  max-width: 28px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: none;
+  overflow: visible;
+  text-overflow: unset;
   white-space: nowrap;
 }
 

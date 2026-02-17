@@ -486,22 +486,6 @@ export default function MapPage() {
     setCamerasRefreshTrigger(prev => prev + 1);
   }, [completeProcessing, addNotification]);
 
-  const handleNotificationClick = (event: React.MouseEvent<HTMLElement>) => {
-    setNotificationAnchor(event.currentTarget);
-  };
-
-  const handleNotificationClose = () => {
-    setNotificationAnchor(null);
-  };
-
-  const handleNotificationRead = (id: number) => {
-    markAsRead(id);
-  };
-
-  const handleClearAll = () => {
-    clearAll();
-    setNotificationAnchor(null);
-  };
 
   const handleVideoSelect = useCallback((videoData: any) => {
     if (!videoData) {

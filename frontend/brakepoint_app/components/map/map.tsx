@@ -21,9 +21,7 @@ type DashboardMarker = {
   id: number | string;
   lat: number;
   lng: number;
-  /** Shown on the marker face (e.g., "12", "A1", "HQ") */
   label?: string;
-  /** Optional: title/content shown inside popup if you don't want to render a React card */
   popupTitle?: string;
   popupBody?: string;
 };
@@ -36,11 +34,9 @@ type CompletedPolygon = {
 type MapProps = {
   mode: MapMode;
 
-  /** Dashboard-only markers */
   dashboardMarkers?: DashboardMarker[];
   onDashboardMarkerClick?: (id: DashboardMarker["id"]) => void;
 
-  /** Map (camera/polygon) features */
   onCameraClick?: (cameraId: Camera["id"]) => void;
   onCameraAdd?: (cameraId: Camera["id"], lat: number, lng: number, camera: Camera) => void;
   onVisibleCamerasChange?: (visibleCameraIds: Camera["id"][]) => void;
@@ -136,7 +132,6 @@ export default function MapView({
   >([]);
   const isLoadingCameras = useRef(false);
 
-  // Dashboard marker registry (id -> marker entry)
   const dashboardRegistryRef = useRef<Map<string, DashMarkerEntry>>(new Map());
   const openDashboardPopupRef = useRef<maplibregl.Popup | null>(null);
 
@@ -284,9 +279,6 @@ export default function MapView({
     if (map.getSource("earthquakes")) map.removeSource("earthquakes");
   }, []);
 
-  // -------------------------
-  // Dashboard marker helpers
-  // -------------------------
   const toKey = (id: number | string) => String(id);
 
   const cleanupDashEntry = (entry: DashMarkerEntry) => {
@@ -319,7 +311,6 @@ export default function MapView({
   };
 
   const openDashboardPopup = (map: maplibregl.Map, entry: DashMarkerEntry, m: DashboardMarker) => {
-    // Close any previously open dashboard popup
     openDashboardPopupRef.current?.remove();
     openDashboardPopupRef.current = null;
 
@@ -362,10 +353,6 @@ export default function MapView({
     openDashboardPopupRef.current = popup;
     entry.marker.togglePopup();
   };
-
-  // -------------------------
-  // Map init
-  // -------------------------
   useEffect(() => {
     if (!mapContainer.current) return;
     if (mapRef.current) return;
@@ -380,7 +367,6 @@ export default function MapView({
     });
 
     return () => {
-      // Dashboard markers cleanup
       openDashboardPopupRef.current?.remove();
       openDashboardPopupRef.current = null;
 
@@ -388,7 +374,6 @@ export default function MapView({
       for (const entry of reg.values()) cleanupDashEntry(entry);
       reg.clear();
 
-      // Camera markers cleanup
       camerasRef.current.forEach((c) => c.marker?.remove());
       camerasRef.current = [];
 
@@ -398,7 +383,6 @@ export default function MapView({
     };
   }, [createMap, add3DBuildingsLayer]);
 
-  // Mode switching for heatmap/map edit UI
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -431,7 +415,6 @@ export default function MapView({
     else map.once("load", apply);
   }, [mode, addHeatmapLayers, removeHeatmapLayers]);
 
-  // Fly-to for explore/dashboard
   useEffect(() => {
     if (!goTo) return;
     const map = mapRef.current;
@@ -439,13 +422,12 @@ export default function MapView({
 
     map.flyTo({
       center: goTo,
-      zoom: 14,
+      zoom: 18,
       duration: 1200,
       essential: true,
     });
   }, [goTo]);
 
-  // Cursor for edit tools
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -461,16 +443,12 @@ export default function MapView({
     if (toolMode === "assignCamera") canvas.style.cursor = "pointer";
   }, [toolMode, isEditMode]);
 
-  // -------------------------
-  // Dashboard markers effect
-  // -------------------------
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     const reg = dashboardRegistryRef.current;
 
-    // Leaving dashboard: remove markers/popups
     if (mode !== "dashboard") {
       openDashboardPopupRef.current?.remove();
       openDashboardPopupRef.current = null;
@@ -483,7 +461,6 @@ export default function MapView({
     const markers = dashboardMarkers ?? [];
     const incomingKeys = new Set(markers.map((m) => toKey(m.id)));
 
-    // Add/update
     for (const m of markers) {
       const key = toKey(m.id);
       const existing = reg.get(key);
@@ -498,29 +475,22 @@ export default function MapView({
         const entry: DashMarkerEntry = { marker, el, labelEl };
         reg.set(key, entry);
 
-        // Click handling: callback + popup
         el.addEventListener("click", (e) => {
           e.stopPropagation();
           onDashboardMarkerClick?.(m.id);
           openDashboardPopup(map, entry, m);
         });
       } else {
-        // Move marker
         existing.marker.setLngLat([m.lng, m.lat]);
 
-        // Update label text
         const nextLabel = m.label ?? "";
         if (existing.labelEl.textContent !== nextLabel) {
           existing.labelEl.textContent = nextLabel;
         }
 
-        // If popup is open and you want to re-render its content on updates,
-        // you can close it here or rebuild it (kept simple by closing).
-        // existing.popup?.remove();
       }
     }
 
-    // Remove stale markers
     for (const [key, entry] of reg.entries()) {
       if (!incomingKeys.has(key)) {
         cleanupDashEntry(entry);
@@ -529,9 +499,6 @@ export default function MapView({
     }
   }, [mode, dashboardMarkers, onDashboardMarkerClick]);
 
-  // -------------------------
-  // Camera/polygon logic below (left largely as-is)
-  // -------------------------
   const addCameraFromData = useCallback(
     (cameraLat: number, cameraLng: number, id: number | string) => {
       const map = mapRef.current;
@@ -561,7 +528,6 @@ export default function MapView({
         e.stopPropagation();
 
         if (toolModeRef.current === "removeCamera") {
-          // remove camera logic below (uses removeCamera)
           removeCamera(id);
           return;
         }
@@ -612,7 +578,7 @@ export default function MapView({
   }, [addCameraFromData, onCamerasLoaded]);
 
   useEffect(() => {
-    if (mode !== "map") return; // only load cameras in map mode
+    if (mode !== "map") return;
     loadCamerasFromDatabase();
   }, [mode, loadCamerasFromDatabase]);
 
@@ -665,15 +631,10 @@ export default function MapView({
     } catch {}
   }, []);
 
-  // Keep the rest of your polygon UI intact if needed; omitted here for brevity.
-
   return (
     <div className="map-wrap">
       <div ref={mapContainer} className="map" />
 
-      {/* Your existing edit toolbar + modals can remain unchanged below.
-          For dashboard mode, you probably don't render them anyway unless isEditMode is enabled.
-      */}
       {isEditMode && mode === "map" && (
         <div
           className="edit-toolbar"

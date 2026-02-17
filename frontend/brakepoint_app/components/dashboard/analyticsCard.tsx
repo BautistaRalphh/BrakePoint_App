@@ -1,4 +1,7 @@
 import { Box, Typography } from "@mui/material";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'; 
+import { PieChart } from '@mui/x-charts/PieChart';
+import { LineChart } from '@mui/x-charts/LineChart';
 import "./analyticsCard.css";
 
 type DataView = "pie" | "line" | "text";
@@ -8,9 +11,58 @@ type ACProps = {
   icon?: React.ReactNode;
   variant?: DataView;
   valueText?: React.ReactNode;
-  lineChart?: React.ReactNode;
-  pieChart?: React.ReactNode;
+  data?: ChartData[];
+  compact?: boolean;
 };
+
+export type ChartData = {
+  label: string;
+  value: number;
+};
+
+function DefaultPie({
+  data,
+  compact,
+  pieId = "pie-chart",
+}: {
+  data: ChartData[];
+  compact: boolean;
+  pieId?: string;
+}) {
+
+  const cleaned = useMemo(
+    () =>
+      data
+        .map((d) => ({ ...d, value: Number.isFinite(d.value) ? Math.max(0, d.value) : 0 }))
+        .filter((d) => d.value > 0),
+    [data]
+  );
+
+  if (!cleaned.length) return <Fallback label="No pie data" />;
+
+  return (
+    <PieChart
+      height={compact ? 160 : 220}
+      margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+      series={[
+        {
+          id: pieId,
+          data: cleaned.map((d, i) => ({
+            id: i,
+            label: d.label,
+            value: d.value,
+          })),
+          innerRadius: compact ? 35 : 45,
+          outerRadius: compact ? 70 : 90,
+          paddingAngle: 2,
+          cornerRadius: 0,
+          valueFormatter: (v) => `${v}`,
+        },
+      ]}
+    />
+  );
+}
+
 
 function Fallback({ label }: { label: string }) {
   return (
@@ -30,26 +82,39 @@ function Fallback({ label }: { label: string }) {
   );
 }
 
-export default function AnalyticsCard({ headerText, icon, variant = "text", valueText, lineChart, pieChart }: ACProps) {
+export default function AnalyticsCard({ headerText, icon, variant = "text", valueText, data, compact = false }: ACProps) {
   return (
     <Box className="ac-container">
       <Box className="ac-header">
-        <Typography variant="h6">{headerText}</Typography>
-        <Box className="ac-icon" sx={{ display: "grid", placeItems: "center" }}>{icon ?? null}</Box>
+        <Typography variant={compact ? "body2" : "h6"} fontWeight={600}>
+          {headerText}
+        </Typography>
+        <Box className="ac-icon" sx={{ display: "grid", placeItems: "center" }}>
+          {icon ?? null}
+        </Box>
       </Box>
 
       <Box className="ac-content">
         {variant === "text" && (
           <Box className="ac-text">
-            <Typography variant="h3">{valueText ?? "—"}</Typography>
+            <Typography variant={compact ? "h5" : "h4"} fontWeight={700}>
+              {valueText ?? "—"}
+            </Typography>
           </Box>
         )}
 
-        {variant === "line" && <Box className ="ac-line">{lineChart ?? <Fallback label="No line chart provided" />}</Box>}
+        {variant === "line" && <Box className="ac-line">{lineChart ?? <Fallback label="No line chart provided" />}</Box>}
 
-        {variant === "pie" && <Box className="ac-pie">{pieChart ?? <Fallback label="No pie chart provided" />}</Box>}
+        {variant === "pie" && (
+          <Box className="ac-pie">
+            {data?.length ? (
+              <DefaultPie data={data} compact={compact} pieId={`${headerText}-pie`} />
+            ) : (
+              <Fallback label="No pie chart data provided" />
+            )}
+          </Box>
+        )}
       </Box>
     </Box>
   );
 }
-
