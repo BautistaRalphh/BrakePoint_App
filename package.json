@@ -1,7 +1,7 @@
 {
   "name": "brakepoint-project",
   "scripts": {
-    "backend": "cd backend && conda init && conda activate stable && python manage.py runserver",
+    "backend": "cd backend && conda run -n stable python manage.py runserver",
     "frontend": "cd frontend/brakepoint_app && npm run dev",
     "dev": "concurrently \"npm run backend\" \"npm run frontend\""
   },

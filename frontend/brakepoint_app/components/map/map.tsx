@@ -45,6 +45,8 @@ type MapProps = {
 
   refreshTrigger: number;
   goTo?: [number, number] | null;
+
+  onMapReady?: (map: maplibregl.Map) => void;
 };
 
 function useLatestRef<T>(value: T) {
@@ -96,6 +98,23 @@ type DashMarkerEntry = {
   labelEl: HTMLElement;
 };
 
+type CameraMarkerEntry = {
+  id: number | string;
+  marker: maplibregl.Marker;
+  lat: number;
+  lng: number;
+  element: HTMLElement;
+};
+
+
+function ensureClosedRing(points: [number, number][]) {
+  if (points.length < 3) return points;
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) return points;
+  return [...points, first];
+}
+
 export default function MapView({
   mode,
   dashboardMarkers,
@@ -107,6 +126,7 @@ export default function MapView({
   selectedCameraId,
   refreshTrigger,
   goTo,
+  onMapReady,
 }: MapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -115,11 +135,10 @@ export default function MapView({
   const [toolMode, setToolMode] = useState<ToolMode>("none");
 
   const [showPolygonModal, setShowPolygonModal] = useState(false);
-  const [showSuccessNotification, setShowSuccessNotification] = useState(false);
 
-  const [cameras, setCameras] = useState<any[]>([]);
+  const [cameras, setCameras] = useState<CameraMarkerEntry[]>([]);
   const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
-  const [completedPolygons, setCompletedPolygons] = useState<any[]>([]);
+  const [completedPolygons, setCompletedPolygons] = useState<CompletedPolygon[]>([]);
   const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(null);
 
   const toolModeRef = useLatestRef(toolMode);
@@ -127,14 +146,11 @@ export default function MapView({
   const completedPolygonsRef = useLatestRef(completedPolygons);
   const polygonPointsRef = useLatestRef(polygonPoints);
 
-  const camerasRef = useRef<
-    { id: number | string; marker: maplibregl.Marker; lat: number; lng: number; element: HTMLElement }[]
-  >([]);
+  const camerasRef = useRef<CameraMarkerEntry[]>([]);
   const isLoadingCameras = useRef(false);
 
   const dashboardRegistryRef = useRef<Map<string, DashMarkerEntry>>(new Map());
   const openDashboardPopupRef = useRef<maplibregl.Popup | null>(null);
-
   const editControlRef = useRef<ToggleEditButton | null>(null);
 
   const style = "https://tiles.openfreemap.org/styles/liberty";
@@ -151,45 +167,32 @@ export default function MapView({
     return null;
   };
 
-  const createMap = useCallback(
-    () =>
-      new maplibregl.Map({
-        container: mapContainer.current!,
-        style,
-        center: [lng, lat],
-        zoom,
-        pitch: 45,
-        bearing: 0,
-        maxPitch: 85,
-        hash: false,
-        trackResize: true,
-        refreshExpiredTiles: false,
-        fadeDuration: 0,
-      }),
-    [style, lng, lat, zoom],
-  );
 
   const add3DBuildingsLayer = useCallback((map: maplibregl.Map) => {
     const layers = map.getStyle().layers ?? [];
     const firstSymbolId = layers.find((l) => l.type === "symbol")?.id;
 
-    map.addLayer(
-      {
-        id: "3d-buildings",
-        source: "openmaptiles",
-        "source-layer": "building",
-        filter: ["==", "extrude", "true"],
-        type: "fill-extrusion",
-        minzoom: 15,
-        paint: {
-          "fill-extrusion-color": "#aaa",
-          "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
-          "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
-          "fill-extrusion-opacity": 0.6,
+    if (!map.getSource("openmaptiles")) return;
+
+    if (!map.getLayer("3d-buildings")) {
+      map.addLayer(
+        {
+          id: "3d-buildings",
+          source: "openmaptiles",
+          "source-layer": "building",
+          filter: ["==", "extrude", "true"],
+          type: "fill-extrusion",
+          minzoom: 15,
+          paint: {
+            "fill-extrusion-color": "#aaa",
+            "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
+            "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
+            "fill-extrusion-opacity": 0.6,
+          },
         },
-      },
-      firstSymbolId,
-    );
+        firstSymbolId,
+      );
+    }
   }, []);
 
   const addHeatmapLayers = useCallback((map: maplibregl.Map) => {
@@ -248,23 +251,6 @@ export default function MapView({
             16,
             ["interpolate", ["linear"], ["get", "mag"], 1, 5, 6, 50],
           ],
-          "circle-color": [
-            "interpolate",
-            ["linear"],
-            ["get", "mag"],
-            1,
-            "rgba(33,102,172,0)",
-            2,
-            "rgb(103,169,207)",
-            3,
-            "rgb(209,229,240)",
-            4,
-            "rgb(253,219,199)",
-            5,
-            "rgb(239,138,98)",
-            6,
-            "rgb(178,24,43)",
-          ],
           "circle-stroke-color": "white",
           "circle-stroke-width": 1,
           "circle-opacity": ["interpolate", ["linear"], ["zoom"], 7, 0, 8, 1],
@@ -279,6 +265,7 @@ export default function MapView({
     if (map.getSource("earthquakes")) map.removeSource("earthquakes");
   }, []);
 
+  // --- Dashboard markers (same approach) ---
   const toKey = (id: number | string) => String(id);
 
   const cleanupDashEntry = (entry: DashMarkerEntry) => {
@@ -314,8 +301,6 @@ export default function MapView({
     openDashboardPopupRef.current?.remove();
     openDashboardPopupRef.current = null;
 
-    // If you want a React card, render it here. Otherwise, simple HTML/text is fine.
-    // Example: render a small React popup "card"
     const host = document.createElement("div");
     host.style.width = "320px";
 
@@ -353,13 +338,13 @@ export default function MapView({
     openDashboardPopupRef.current = popup;
     entry.marker.togglePopup();
   };
-  
   useEffect(() => {
     if (!mapContainer.current) return;
     if (mapRef.current) return;
 
     const map = createMap();
     mapRef.current = map;
+    onMapReady?.(map);
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
 
@@ -377,12 +362,16 @@ export default function MapView({
 
       camerasRef.current.forEach((c) => c.marker?.remove());
       camerasRef.current = [];
+      setCameras([]);
 
-      mapRef.current?.remove();
+      try {
+        map.remove();
+      } catch {}
+
       mapRef.current = null;
       editControlRef.current = null;
     };
-  }, [createMap, add3DBuildingsLayer]);
+  }, [createMap, add3DBuildingsLayer, onMapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -409,6 +398,7 @@ export default function MapView({
       if (mode !== "map") {
         setShowPolygonModal(false);
         setSelectedPolygonIndex(null);
+        setPolygonPoints([]);
       }
     };
 
@@ -483,12 +473,8 @@ export default function MapView({
         });
       } else {
         existing.marker.setLngLat([m.lng, m.lat]);
-
         const nextLabel = m.label ?? "";
-        if (existing.labelEl.textContent !== nextLabel) {
-          existing.labelEl.textContent = nextLabel;
-        }
-
+        if (existing.labelEl.textContent !== nextLabel) existing.labelEl.textContent = nextLabel;
       }
     }
 
@@ -499,6 +485,39 @@ export default function MapView({
       }
     }
   }, [mode, dashboardMarkers, onDashboardMarkerClick]);
+
+  const removeCamera = useCallback(async (cameraId: number | string) => {
+    try {
+      const token = getAuthToken();
+      if (!token) return;
+
+      const response = await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      });
+
+      if (!response.ok) return;
+
+      const cam = camerasRef.current.find((c) => String(c.id) === String(cameraId));
+      cam?.marker?.remove();
+
+      camerasRef.current = camerasRef.current.filter((c) => String(c.id) !== String(cameraId));
+      setCameras((prev) => prev.filter((c) => String(c.id) !== String(cameraId)));
+    } catch {}
+  }, []);
+
+  const savePolygonToCamera = useCallback(async (cameraId: number | string, points: [number, number][]) => {
+    const token = getAuthToken();
+    if (!token) return false;
+
+    const res = await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ polygon: points }),
+    });
+
+    return res.ok;
+  }, []);
 
   const addCameraFromData = useCallback(
     (cameraLat: number, cameraLng: number, id: number | string) => {
@@ -523,13 +542,34 @@ export default function MapView({
         .setLngLat([cameraLng, cameraLat])
         .addTo(map);
 
-      const cameraObj = { id, marker, lat: cameraLat, lng: cameraLng, element: el };
+      const cameraObj: CameraMarkerEntry = { id, marker, lat: cameraLat, lng: cameraLng, element: el };
 
-      el.addEventListener("click", (e) => {
+      el.addEventListener("click", async (e) => {
         e.stopPropagation();
 
         if (toolModeRef.current === "removeCamera") {
           removeCamera(id);
+          return;
+        }
+
+        if (toolModeRef.current === "assignCamera") {
+          const polyIdx = selectedPolygonIndexRef.current;
+          if (polyIdx == null) return;
+
+          const poly = completedPolygonsRef.current[polyIdx];
+          if (!poly) return;
+
+          const ok = await savePolygonToCamera(id, poly.points);
+          if (!ok) return;
+
+          setCompletedPolygons((prev) =>
+            prev.map((p, i) => (i === polyIdx ? { ...p, cameraId: id } : p)),
+          );
+
+          setToolMode("none");
+          setShowPolygonModal(false);
+          setSelectedPolygonIndex(null);
+
           return;
         }
 
@@ -539,7 +579,7 @@ export default function MapView({
       camerasRef.current = [...camerasRef.current, cameraObj];
       setCameras((prev) => [...prev, cameraObj]);
     },
-    [onCameraClick],
+    [onCameraClick, removeCamera, savePolygonToCamera, completedPolygonsRef, selectedPolygonIndexRef, toolModeRef],
   );
 
   const loadCamerasFromDatabase = useCallback(async () => {
@@ -612,26 +652,327 @@ export default function MapView({
     [addCameraFromData, onCameraAdd],
   );
 
-  const removeCamera = useCallback(async (cameraId: number | string) => {
-    try {
-      const token = getAuthToken();
-      if (!token) return;
+  const updateVisibleCameras = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const bounds = map.getBounds();
 
-      const response = await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    const visible = camerasRef.current
+      .filter((c) => bounds.contains([c.lng, c.lat]))
+      .map((c) => c.id);
+
+    onVisibleCamerasChange?.(visible);
+  }, [onVisibleCamerasChange]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const onMoveEnd = () => updateVisibleCameras();
+    map.on("moveend", onMoveEnd);
+    map.on("zoomend", onMoveEnd);
+
+    updateVisibleCameras();
+
+    return () => {
+      map.off("moveend", onMoveEnd);
+      map.off("zoomend", onMoveEnd);
+    };
+  }, [updateVisibleCameras]);
+
+  const renderPolygonLayers = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const safeRemoveLayer = (id: string) => {
+      if (map.getLayer(id)) map.removeLayer(id);
+    };
+    const safeRemoveSource = (id: string) => {
+      if (map.getSource(id)) map.removeSource(id);
+    };
+
+    safeRemoveLayer("polygon-guide");
+    safeRemoveSource("polygon-guide");
+
+    safeRemoveLayer("polygon-fill");
+    safeRemoveLayer("polygon-line");
+    safeRemoveSource("polygons");
+
+    safeRemoveLayer("polygon-points");
+    safeRemoveLayer("polygon-points-clickable");
+    safeRemoveSource("polygon-points");
+
+    const polygonFeatures = completedPolygonsRef.current.map((p, idx) => ({
+      type: "Feature" as const,
+      properties: {
+        polygonIndex: idx,
+        cameraId: p.cameraId ?? null,
+      },
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [ensureClosedRing(p.points)],
+      },
+    }));
+
+    map.addSource("polygons", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: polygonFeatures,
+      } as any,
+    });
+
+    map.addLayer({
+      id: "polygon-fill",
+      type: "fill",
+      source: "polygons",
+      paint: {
+        "fill-opacity": 0.22,
+      },
+    });
+
+    map.addLayer({
+      id: "polygon-line",
+      type: "line",
+      source: "polygons",
+      paint: {
+        "line-width": 2,
+      },
+    });
+
+    const pointFeatures: any[] = [];
+
+    polygonPointsRef.current.forEach((pt, i) => {
+      pointFeatures.push({
+        type: "Feature",
+        properties: {
+          index: i,
+          isCompleted: false,
+        },
+        geometry: { type: "Point", coordinates: pt },
       });
+    });
 
-      if (!response.ok) return;
+    completedPolygonsRef.current.forEach((p, polygonIndex) => {
+      p.points.forEach((pt, i) => {
+        pointFeatures.push({
+          type: "Feature",
+          properties: {
+            index: i,
+            polygonIndex,
+            isCompleted: true,
+          },
+          geometry: { type: "Point", coordinates: pt },
+        });
+      });
+    });
 
-      const camera = camerasRef.current.find((c) => c.id == cameraId);
-      camera?.marker?.remove();
+    map.addSource("polygon-points", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: pointFeatures,
+      } as any,
+    });
 
-      camerasRef.current = camerasRef.current.filter((c) => c.id != cameraId);
-      setCameras((prev) => prev.filter((c) => c.id != cameraId));
-    } catch {}
+    map.addLayer({
+      id: "polygon-points",
+      type: "circle",
+      source: "polygon-points",
+      paint: {
+        "circle-radius": 5,
+        "circle-stroke-width": 2,
+        "circle-opacity": 0.95,
+      },
+    });
+
+    map.addLayer({
+      id: "polygon-points-clickable",
+      type: "circle",
+      source: "polygon-points",
+      paint: {
+        "circle-radius": 12,
+        "circle-opacity": 0,
+      },
+    });
+  }, [completedPolygonsRef, polygonPointsRef]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const apply = () => renderPolygonLayers();
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [renderPolygonLayers, completedPolygons, polygonPoints]);
+
+
+  const clearGuideline = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (map.getLayer("polygon-guide")) map.removeLayer("polygon-guide");
+    if (map.getSource("polygon-guide")) map.removeSource("polygon-guide");
   }, []);
 
+  const renderGuideline = useCallback((e: maplibregl.MapMouseEvent) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const pts = polygonPointsRef.current;
+    if (toolModeRef.current !== "addPoint" || pts.length === 0) {
+      clearGuideline();
+      return;
+    }
+
+    const last = pts[pts.length - 1];
+    const cursor: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+
+    const data = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "LineString",
+            coordinates: [last, cursor],
+          },
+        },
+      ],
+    };
+
+    if (!map.getSource("polygon-guide")) {
+      map.addSource("polygon-guide", { type: "geojson", data: data as any });
+      map.addLayer({
+        id: "polygon-guide",
+        type: "line",
+        source: "polygon-guide",
+        paint: {
+          "line-width": 2,
+          "line-dasharray": [2, 2],
+        },
+      });
+    } else {
+      (map.getSource("polygon-guide") as maplibregl.GeoJSONSource).setData(data as any);
+    }
+  }, [polygonPointsRef, toolModeRef, clearGuideline]);
+
+  useEffect(() => {
+    if (toolMode !== "addPoint") clearGuideline();
+  }, [toolMode, clearGuideline]);
+
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const handleMapClick = async (e: maplibregl.MapMouseEvent) => {
+      const activeTool = toolModeRef.current;
+
+      if (activeTool === "none" && !isEditMode && mode === "map") {
+        const features = map.queryRenderedFeatures(e.point, { layers: ["polygon-fill"] });
+        if (features.length > 0) {
+          const idx = Number(features[0].properties?.polygonIndex);
+          if (!Number.isNaN(idx)) {
+            setSelectedPolygonIndex(idx);
+            setShowPolygonModal(true);
+          }
+        }
+        return;
+      }
+
+      if (!isEditMode && activeTool !== "none") return;
+
+      if (activeTool === "addCamera") {
+        await addCamera(e.lngLat.lat, e.lngLat.lng);
+        return;
+      }
+
+      if (activeTool === "addPoint") {
+        if (polygonPointsRef.current.length >= 3) {
+          const hit = map.queryRenderedFeatures(e.point, {
+            layers: ["polygon-points", "polygon-points-clickable"],
+          });
+
+          if (hit.length > 0) {
+            const props: any = hit[0].properties ?? {};
+            const idx = Number(props.index);
+            const isCompleted = props.isCompleted === true || props.isCompleted === "true";
+
+            if (!isCompleted && idx === 0) {
+              const newPoly: CompletedPolygon = {
+                points: [...polygonPointsRef.current],
+                cameraId: null,
+              };
+              setCompletedPolygons((prev) => [...prev, newPoly]);
+              setPolygonPoints([]);
+              clearGuideline();
+              setShowSuccessNotification(true);
+              window.setTimeout(() => setShowSuccessNotification(false), 900);
+              return;
+            }
+          }
+        }
+
+        setPolygonPoints((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]]);
+        return;
+      }
+
+      if (activeTool === "removePoint") {
+        const hit = map.queryRenderedFeatures(e.point, {
+          layers: ["polygon-points", "polygon-points-clickable"],
+        });
+
+        if (hit.length > 0) {
+          const props: any = hit[0].properties ?? {};
+          const idx = Number(props.index);
+          const isCompleted = props.isCompleted === true || props.isCompleted === "true";
+          if (!isCompleted && !Number.isNaN(idx)) {
+            setPolygonPoints((prev) => prev.filter((_, i) => i !== idx));
+          }
+        }
+      }
+    };
+
+    const handleMouseMove = (e: maplibregl.MapMouseEvent) => {
+      if (!isEditMode) return;
+      if (toolModeRef.current === "addPoint") renderGuideline(e);
+    };
+
+    map.on("click", handleMapClick);
+    map.on("mousemove", handleMouseMove);
+
+    return () => {
+      map.off("click", handleMapClick);
+      map.off("mousemove", handleMouseMove);
+    };
+  }, [addCamera, clearGuideline, isEditMode, mode, renderGuideline, toolModeRef, polygonPointsRef]);
+
+
+  useEffect(() => {
+    const selected = selectedCameraId != null ? String(selectedCameraId) : null;
+    for (const c of camerasRef.current) {
+      const isSel = selected != null && String(c.id) === selected;
+      c.element.style.color = isSel ? "#161b4c" : "#999";
+      c.element.style.transform = isSel ? "scale(1.08)" : "scale(1)";
+    }
+  }, [selectedCameraId, cameras]);
+
+  const beginAssignCamera = useCallback(() => {
+    if (selectedPolygonIndexRef.current == null) return;
+    setShowPolygonModal(false);
+    setToolMode("assignCamera");
+  }, [selectedPolygonIndexRef]);
+
+  const cancelPolygonModal = useCallback(() => {
+    setShowPolygonModal(false);
+    setSelectedPolygonIndex(null);
+    setToolMode("none");
+  }, []);
+
+  // ---------------------------
+  // Render
+  // ---------------------------
   return (
     <div className="map-wrap">
       <div ref={mapContainer} className="map" />
@@ -682,30 +1023,36 @@ export default function MapView({
           >
             - Camera
           </button>
-        </div>
-      )}
 
-      {showSuccessNotification && (
-        <div
-          style={{
-            position: "absolute",
-            top: "20px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 2000,
-            backgroundColor: "rgba(76, 175, 80, 0.7)",
-            color: "white",
-            padding: "16px 24px",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            fontSize: "16px",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <span style={{ fontSize: "24px" }}>✓</span>
-          Success!
+          <button
+            onClick={() => setToolMode((cur) => (cur === "addPoint" ? "none" : "addPoint"))}
+            style={{
+              padding: "8px 16px",
+              backgroundColor: toolMode === "addPoint" ? "#4CAF50" : "white",
+              color: toolMode === "addPoint" ? "white" : "black",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontWeight: toolMode === "addPoint" ? "bold" : "normal",
+            }}
+          >
+            + Polygon
+          </button>
+
+          <button
+            onClick={() => setToolMode((cur) => (cur === "removePoint" ? "none" : "removePoint"))}
+            style={{
+              padding: "8px 16px",
+              backgroundColor: toolMode === "removePoint" ? "#f44336" : "white",
+              color: toolMode === "removePoint" ? "white" : "black",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontWeight: toolMode === "removePoint" ? "bold" : "normal",
+            }}
+          >
+            - Point
+          </button>
         </div>
       )}
 
@@ -747,10 +1094,7 @@ export default function MapView({
           <h3 style={{ margin: "0 0 16px 0", fontSize: "18px", fontWeight: "bold" }}>Polygon Options</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             <button
-              onClick={() => {
-                setShowPolygonModal(false);
-                setToolMode("assignCamera");
-              }}
+              onClick={beginAssignCamera}
               style={{
                 padding: "12px",
                 backgroundColor: "#161b4cff",
@@ -766,11 +1110,7 @@ export default function MapView({
             </button>
 
             <button
-              onClick={() => {
-                setShowPolygonModal(false);
-                setSelectedPolygonIndex(null);
-                setToolMode("none");
-              }}
+              onClick={cancelPolygonModal}
               style={{
                 padding: "12px",
                 backgroundColor: "#9e9e9e",
