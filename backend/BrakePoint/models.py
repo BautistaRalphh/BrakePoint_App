@@ -24,6 +24,10 @@ class Camera(models.Model):
     lng = models.FloatField()
     location = models.CharField(max_length=500, blank=True, default='')
     polygon = models.JSONField(default=list, blank=True, null=True)
+    latest_upload = models.DateTimeField(null=True, blank=True)
+    vehicles = models.IntegerField(default=0)
+    occurrences = models.IntegerField(default=0)
+    behaviors = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:

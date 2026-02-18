@@ -49,6 +49,8 @@ class CameraSerializer(serializers.ModelSerializer):
     behaviors = serializers.SerializerMethodField()
     signs = serializers.SerializerMethodField()
     sign_classes = serializers.SerializerMethodField()
+    latest_upload = serializers.DateTimeField(required=False, allow_null=True)
+    polygon = serializers.JSONField(required=False, allow_null=True)
     
     class Meta:
         model = Camera
@@ -57,6 +59,7 @@ class CameraSerializer(serializers.ModelSerializer):
             'latest_upload', 'latest_video', 'total_videos',
             'vehicles', 'occurrences', 'behaviors', 'signs', 'sign_classes'
         ]
+        fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'polygon', 'created_at']
         read_only_fields = ['id', 'created_at']
     
     def get_vehicles(self, obj):

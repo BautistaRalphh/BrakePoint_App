@@ -1,3 +1,5 @@
+"use client";
+
 import { Box, Typography, Button } from "@mui/material";
 
 import MapIcon from "@mui/icons-material/Map";
@@ -5,29 +7,21 @@ import DashboardIcon from "@mui/icons-material/Dashboard";
 import PlaceIcon from "@mui/icons-material/Place";
 import LogoutIcon from "@mui/icons-material/Logout";
 
-import "./menuBar.css";
+import styles from "./menuBar.module.css";
 
 export default function MenuBar() {
   return (
-    <Box className="menu-container">
-      <Typography variant="h3" className="brakepoint">BrakePoint</Typography>
+    <Box className={styles.menuContainer}>
+      <Typography variant="h3" className={styles.brakePoint}>BrakePoint</Typography>
 
-      <Box className="button-container">
-        <Button className="menu-button" startIcon={<DashboardIcon />}>
-          <Typography >Analytics</Typography>
+      <Box className={styles.buttonContainer}>
+        <Button className={styles.menuButton} startIcon={<DashboardIcon />}>
+          Analytics
           
         </Button>
 
-        <Button className="menu-button" startIcon={<PlaceIcon />}>
-          <Typography>Locations</Typography>
-        </Button>
-
-        <Button className="menu-button" startIcon={<MapIcon />}>
-          <Typography>Map Overview</Typography>
-        </Button>
-
-        <Button className="menu-button" startIcon={<LogoutIcon />}>
-          <Typography>Sign Out</Typography>
+        <Button className={styles.menuButton} startIcon={<LogoutIcon />}>
+          Sign Out
         </Button>
       </Box>
     </Box>
