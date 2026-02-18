@@ -89,6 +89,40 @@ def saved_location_detail_api(request, pk: int):
     loc.delete()
     return Response({"success": True})
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def saved_location_behaviors_api(request, pk: int):
+    """Get detailed aggressive behavior stats for a saved location"""
+    try:
+        loc = SavedLocation.objects.get(pk=pk)
+    except SavedLocation.DoesNotExist:
+        return Response({"success": False, "error": "Not found"}, status=404)
+
+    # Get all completed videos linked to this location's cameras
+    videos = Video.objects.filter(
+        camera__saved_location=loc,
+        processing_status='completed'
+    ).order_by('-uploaded_at')
+
+    video_data = VideoSerializer(videos, many=True).data
+    camera_data = CameraSerializer(loc.cameras.all(), many=True).data
+
+    return Response({
+        "success": True,
+        "location": SavedLocationSerializer(loc).data,
+        "cameras": camera_data,
+        "videos": video_data,
+        "summary": {
+            "total_vehicles": loc.total_vehicles,
+            "total_occurrences": loc.total_occurrences,
+            "speeding": loc.total_speeding,
+            "swerving": loc.total_swerving,
+            "abrupt_stopping": loc.total_abrupt_stopping,
+            "behaviors": loc.behavior_summary,
+            "camera_count": loc.camera_count,
+        }
+    })
+
 # ---- Auth (session-based example) ----
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -205,8 +239,32 @@ def cameras_api(request):
     
     ser = CameraSerializer(data=data)
     if ser.is_valid():
-        ser.save(user=user)
-        return Response({"success": True, "camera": ser.data}, status=201)
+        camera = ser.save(user=user)
+        
+        # Auto-link camera to nearest saved location (within ~500m)
+        if not camera.saved_location:
+            from math import radians, cos, sin, asin, sqrt
+            
+            def haversine(lat1, lng1, lat2, lng2):
+                lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
+                dlat = lat2 - lat1
+                dlng = lng2 - lng1
+                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlng/2)**2
+                return 6371000 * 2 * asin(sqrt(a))  # meters
+            
+            nearest = None
+            min_dist = float('inf')
+            for loc in SavedLocation.objects.all():
+                dist = haversine(lat, lng, loc.lat, loc.lng)
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest = loc
+            
+            if nearest and min_dist <= 500:  # within 500 meters
+                camera.saved_location = nearest
+                camera.save()
+        
+        return Response({"success": True, "camera": CameraSerializer(camera).data}, status=201)
     return Response({"success": False, "error": ser.errors}, status=400)
 
 @api_view(['POST'])
@@ -255,6 +313,23 @@ def upload_and_process_video(request):
             reference_distance_meters = float(reference_distance_str)
         except ValueError:
             return Response({'error': 'Invalid reference distance value'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Fall back to camera's saved calibration if not provided in this upload
+    if not calibration_points and camera.is_calibrated:
+        calibration_points = camera.calibration_points
+    if not reference_points and camera.is_calibrated:
+        reference_points = camera.reference_points
+    if reference_distance_meters is None and camera.is_calibrated:
+        reference_distance_meters = camera.reference_distance_meters
+
+    # Save calibration to camera for future reuse (if new calibration was provided)
+    save_calibration = request.POST.get('save_calibration', 'true').lower() == 'true'
+    if save_calibration and calibration_points_json:
+        camera.calibration_points = calibration_points or []
+        camera.reference_points = reference_points or []
+        camera.reference_distance_meters = reference_distance_meters
+        camera.is_calibrated = True
+        camera.save()
 
     video_record = Video.objects.create(
         camera=camera,
@@ -476,6 +551,49 @@ def camera_polygon_api(request, pk: int):
     camera.save()
     
     return Response({"success": True, "polygon": camera.polygon})
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def camera_calibration_api(request, pk: int):
+    """Get, save, or clear calibration data for a camera"""
+    user = request.user
+    
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+    
+    if request.method == 'GET':
+        return Response({
+            "success": True,
+            "is_calibrated": camera.is_calibrated,
+            "calibration_points": camera.calibration_points,
+            "reference_points": camera.reference_points,
+            "reference_distance_meters": camera.reference_distance_meters,
+            "meter_per_pixel": camera.meter_per_pixel,
+        })
+    
+    if request.method == 'PUT':
+        camera.calibration_points = request.data.get('calibration_points', [])
+        camera.reference_points = request.data.get('reference_points', [])
+        camera.reference_distance_meters = request.data.get('reference_distance_meters')
+        camera.meter_per_pixel = request.data.get('meter_per_pixel')
+        camera.is_calibrated = True
+        camera.save()
+        return Response({
+            "success": True,
+            "message": "Calibration saved",
+            "is_calibrated": camera.is_calibrated,
+        })
+    
+    # DELETE — clear calibration
+    camera.calibration_points = []
+    camera.reference_points = []
+    camera.reference_distance_meters = None
+    camera.meter_per_pixel = None
+    camera.is_calibrated = False
+    camera.save()
+    return Response({"success": True, "message": "Calibration cleared"})
 
 @api_view(['PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])

@@ -10,11 +10,13 @@ urlpatterns = [
     # API endpoints
     path('api/saved-locations/', views.saved_locations_api, name='saved_locations_api'),
     path('api/saved-locations/<int:location_id>/', views.saved_location_detail_api, name='saved_location_detail_api'),
+    path('api/saved-locations/<int:pk>/behaviors/', views.saved_location_behaviors_api, name='saved_location_behaviors_api'),
     
     # Camera endpoints
     path('api/cameras/', views.cameras_api, name='cameras_api'),
     path('api/cameras/<int:pk>/', views.camera_delete_api, name='camera_delete_api'),
     path('api/cameras/<int:pk>/polygon/', views.camera_polygon_api, name='camera_polygon_api'),
+    path('api/cameras/<int:pk>/calibration/', views.camera_calibration_api, name='camera_calibration_api'),
     path('api/cameras/<int:pk>/videos/', views.camera_videos_api, name='camera_videos_api'),
     path('api/upload_and_process/', views.upload_and_process_video, name='upload_and_process'),
     

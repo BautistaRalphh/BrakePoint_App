@@ -17,13 +17,78 @@ class SavedLocation(models.Model):
     def __str__(self):
         return f"{self.name} ({self.user.username})"
 
+    @property
+    def total_vehicles(self):
+        """Total unique vehicles detected across all cameras at this location"""
+        return sum(
+            v.vehicles for v in Video.objects.filter(
+                camera__saved_location=self, processing_status='completed'
+            )
+        )
+
+    @property
+    def total_occurrences(self):
+        """Total aggressive driving occurrences across all cameras at this location"""
+        return sum(
+            v.occurrences for v in Video.objects.filter(
+                camera__saved_location=self, processing_status='completed'
+            )
+        )
+
+    @property
+    def total_speeding(self):
+        from django.db.models import Sum
+        return Video.objects.filter(
+            camera__saved_location=self, processing_status='completed'
+        ).aggregate(total=Sum('speeding_count'))['total'] or 0
+
+    @property
+    def total_swerving(self):
+        from django.db.models import Sum
+        return Video.objects.filter(
+            camera__saved_location=self, processing_status='completed'
+        ).aggregate(total=Sum('swerving_count'))['total'] or 0
+
+    @property
+    def total_abrupt_stopping(self):
+        from django.db.models import Sum
+        return Video.objects.filter(
+            camera__saved_location=self, processing_status='completed'
+        ).aggregate(total=Sum('abrupt_stopping_count'))['total'] or 0
+
+    @property
+    def behavior_summary(self):
+        """List of detected aggressive behaviors across all cameras at this location"""
+        behaviors = []
+        if self.total_speeding > 0:
+            behaviors.append('Speeding')
+        if self.total_swerving > 0:
+            behaviors.append('Swerving')
+        if self.total_abrupt_stopping > 0:
+            behaviors.append('Abrupt Stopping')
+        return behaviors if behaviors else ['No Data']
+
+    @property
+    def camera_count(self):
+        """Number of cameras linked to this location"""
+        return self.cameras.count()
+
 class Camera(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='cameras')
+    saved_location = models.ForeignKey(SavedLocation, on_delete=models.SET_NULL, null=True, blank=True, related_name='cameras')
     name = models.CharField(max_length=255, default='New Camera')
     lat = models.FloatField()
     lng = models.FloatField()
     location = models.CharField(max_length=500, blank=True, default='')
     polygon = models.JSONField(default=list, blank=True, null=True)
+    
+    # Saved calibration
+    calibration_points = models.JSONField(default=list, blank=True)
+    reference_points = models.JSONField(default=list, blank=True)
+    reference_distance_meters = models.FloatField(null=True, blank=True)
+    meter_per_pixel = models.FloatField(null=True, blank=True)
+    is_calibrated = models.BooleanField(default=False)
+    
     latest_upload = models.DateTimeField(null=True, blank=True)
     vehicles = models.IntegerField(default=0)
     occurrences = models.IntegerField(default=0)
