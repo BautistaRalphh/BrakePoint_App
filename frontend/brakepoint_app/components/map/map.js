@@ -173,7 +173,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                 return;
             }
             
-            const response = await fetch('http://127.0.0.1:8000/brakepoint/api/cameras/', {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
                 method: 'GET',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -267,7 +267,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                 return;
             }
             
-            const response = await fetch('http://127.0.0.1:8000/brakepoint/api/cameras/', {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -349,7 +349,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                 return;
             }
             
-            const response = await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`, {
                 method: 'DELETE',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -544,7 +544,7 @@ export default function Map({ onCameraClick, onCameraAdd, onVisibleCamerasChange
                 return;
             }
             
-            await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/polygon/`, {
+            await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/polygon/`, {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',

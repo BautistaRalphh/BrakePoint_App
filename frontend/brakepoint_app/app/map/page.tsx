@@ -118,7 +118,7 @@ export default function MapPage() {
           return;
         }
 
-        const response = await fetch(`http://localhost:8000/brakepoint/api/cameras/`, {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -175,7 +175,7 @@ export default function MapPage() {
           return;
         }
 
-        const response = await fetch(`http://localhost:8000/brakepoint/api/cameras/${selectedFeedId}/videos/`, {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${selectedFeedId}/videos/`, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -240,7 +240,7 @@ export default function MapPage() {
 
         // Fetch videos from all visible cameras in parallel
         const videoPromises = visibleCameraIds.map(cameraId =>
-          fetch(`http://localhost:8000/brakepoint/api/cameras/${cameraId}/videos/`, {
+          fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -412,7 +412,7 @@ export default function MapPage() {
     const pollInterval = setInterval(async () => {
       try {
         const token = localStorage.getItem('access_token');
-        const response = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/progress/`, {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/progress/`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         
@@ -427,7 +427,7 @@ export default function MapPage() {
               delete (window as any)[`pollInterval_${videoId}`];
               
               // Fetch full video data
-              const videoResponse = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/`, {
+              const videoResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`, {
                 headers: { 'Authorization': `Bearer ${token}` }
               });
               

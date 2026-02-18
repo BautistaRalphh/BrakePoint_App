@@ -502,7 +502,7 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
 
     // Process in background
     try {
-      const response = await fetch('http://127.0.0.1:8000/brakepoint/api/upload_and_process/', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload_and_process/`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -849,7 +849,7 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
 
       if (cameraId === null && visibleCameraIds.length > 0) {
         const videoPromises = visibleCameraIds.map(camId =>
-          fetch(`http://localhost:8000/brakepoint/api/cameras/${camId}/videos/`, {
+          fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${camId}/videos/`, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -895,7 +895,7 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
         return;
       }
 
-      const response = await fetch(`http://localhost:8000/brakepoint/api/cameras/${cameraId}/videos/`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -960,7 +960,7 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
         return;
       }
 
-      const response = await fetch(`http://localhost:8000/brakepoint/api/videos/${videoId}/`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1003,7 +1003,7 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
       }
 
       const deletePromises = selectedRows.map(row =>
-        fetch(`http://localhost:8000/brakepoint/api/videos/${row.id}/`, {
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${row.id}/`, {
           method: 'DELETE',
           headers: {
             'Authorization': `Bearer ${token}`,
