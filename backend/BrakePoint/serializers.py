@@ -3,9 +3,22 @@ from .models import SavedLocation, Camera, Video
 from django.contrib.auth.models import User
 
 class SavedLocationSerializer(serializers.ModelSerializer):
+    total_vehicles = serializers.ReadOnlyField()
+    total_occurrences = serializers.ReadOnlyField()
+    total_speeding = serializers.ReadOnlyField()
+    total_swerving = serializers.ReadOnlyField()
+    total_abrupt_stopping = serializers.ReadOnlyField()
+    behavior_summary = serializers.ReadOnlyField()
+    camera_count = serializers.ReadOnlyField()
+
     class Meta:
         model = SavedLocation
-        fields = ['id','name','lat','lng','zoom','bearing','pitch']
+        fields = [
+            'id', 'name', 'lat', 'lng', 'zoom', 'bearing', 'pitch',
+            'total_vehicles', 'total_occurrences',
+            'total_speeding', 'total_swerving', 'total_abrupt_stopping',
+            'behavior_summary', 'camera_count'
+        ]
 
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -51,15 +64,19 @@ class CameraSerializer(serializers.ModelSerializer):
     sign_classes = serializers.SerializerMethodField()
     latest_upload = serializers.DateTimeField(required=False, allow_null=True)
     polygon = serializers.JSONField(required=False, allow_null=True)
+    saved_location = serializers.PrimaryKeyRelatedField(
+        queryset=SavedLocation.objects.all(), required=False, allow_null=True
+    )
     
     class Meta:
         model = Camera
         fields = [
             'id', 'name', 'lat', 'lng', 'location', 'polygon', 'created_at',
-            'latest_upload', 'latest_video', 'total_videos',
-            'vehicles', 'occurrences', 'behaviors', 'signs', 'sign_classes'
+            'saved_location', 'latest_upload', 'latest_video', 'total_videos',
+            'vehicles', 'occurrences', 'behaviors', 'signs', 'sign_classes',
+            'calibration_points', 'reference_points', 'reference_distance_meters',
+            'meter_per_pixel', 'is_calibrated'
         ]
-        fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'polygon', 'created_at']
         read_only_fields = ['id', 'created_at']
     
     def get_vehicles(self, obj):

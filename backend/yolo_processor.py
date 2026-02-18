@@ -1,492 +1,985 @@
-import os
+﻿import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import cv2
 from ultralytics import YOLO
 import numpy as np
-from collections import deque
+from collections import defaultdict, deque, Counter
 import math
 
 # --- CONFIGURATION ---
 MODEL_PATH = 'vehicles.pt'
+PRETRAINED_MODEL_PATH = 'yolov8m.pt'
 TRACKER_CONFIG = 'bytetrack.yaml'
-CONFIDENCE_THRESHOLD = 0.5
+CONFIDENCE_THRESHOLD = 0.25
+YOLO_IMGSZ = 1280
 
-HARDCODED_METER_PER_PIXEL = 0.1   
-SPEED_LIMIT_KMH = 80              # km/h - Realistic highway/main road speed limit
-MAX_HISTORY = 15                  
-MIN_HISTORY_FOR_SPEED = 5         
-MIN_HISTORY_FOR_ACCELERATION = 8  
+HARDCODED_METER_PER_PIXEL = 0.1
+SPEED_LIMIT_KMH = 80
 
-# Aggressive behavior thresholds
-LATERAL_ACCEL_MIN = 4.5           # m/s² (~0.46g) - minimum for aggressive swerving
-LATERAL_ACCEL_MAX = 9.0           # m/s² (~0.92g) - maximum for swerving
-LONGITUDINAL_ACCEL_THRESHOLD = -5.5  # m/s² (~0.56g) - for abrupt stopping (negative)
-MIN_SWERVING_DIRECTION_CHANGES = 3   # Require at least 3 direction changes for swerving
+# Speed estimation parameters
+MAX_REALISTIC_SPEED_KMH = 150
+MIN_REALISTIC_SPEED_KMH = 5
+MIN_HISTORY_FOR_SPEED = 15
+MIN_DISTANCE_TRAVELED_METERS = 10
+MAX_FRAME_GAP = 15
+SPEED_CORRECTION_FACTOR = 1.0
+MIN_R_SQUARED = 0.90
+MEAN_ERROR_PERCENT = 3.29
 
-# Sanity check limits
-MAX_REALISTIC_SPEED_KMH = 150     # km/h - anything above is likely a tracking error
-MAX_REALISTIC_ACCEL = 10.0        # m/s² (~1g) - maximum realistic acceleration/deceleration
-MIN_REALISTIC_SPEED_KMH = 5       # km/h - filter out very slow moving objects                   
+# Motorcycle-specific parameters
+MOTORCYCLE_MIN_HISTORY_FOR_SPEED = 8
+MOTORCYCLE_MIN_DISTANCE_METERS = 5
+MOTORCYCLE_MIN_R_SQUARED = 0.80
+MOTORCYCLE_MAX_FRAME_GAP = 25
+MOTORCYCLE_STITCH_GAP_FRAMES = 45
+MOTORCYCLE_STITCH_SPATIAL_DIST = 200
+MOTORCYCLE_KALMAN_PROCESS_NOISE = 0.35
+MOTORCYCLE_KALMAN_MEASUREMENT_NOISE = 0.3
+MOTORCYCLE_IOU_DEDUP = 0.35
+MOTORCYCLE_CONF_THRESHOLD = 0.08
+
+# Behavior detection thresholds
+ABRUPT_STOP_DECEL_THRESHOLD = 8.0
+SWERVE_LATERAL_THRESHOLD = 0.5
+
+# Detection enhancement (only used in hybrid mode)
+FAR_FIELD_BOOST = True
+MID_FIELD_BOOST = True
+
+# Class mappings
+CUSTOM_CLASS_MAPPING = {0: "Bus", 1: "Car", 2: "Jeepney", 3: "Motorcycle", 4: "Truck"}
+YOLO_TO_STANDARD_MAPPING = {"bus": "Bus", "car": "Car", "motorcycle": "Motorcycle", "truck": "Truck"}
+
+
+# ============================================================================
+# Track class with Kalman filtering
+# ============================================================================
 
 class Track:
-    def __init__(self, tid, xy, max_history=MAX_HISTORY):
+    def __init__(self, tid, xy, class_name, max_history=300):
         self.id = int(tid)
-        self.history = deque(maxlen=max_history)  
-        self.history.append(xy)
+        self.class_name = class_name
+        self.class_history = [class_name]
+        self.box_sizes = []
+        self.history = deque(maxlen=max_history)
+        self.history.append((0, xy[0], xy[1]))
+        self.raw_history = deque(maxlen=max_history)
+        self.raw_history.append((0, xy[0], xy[1]))
+        self.ground_history = deque(maxlen=max_history)
+        self.ground_history.append((0, xy[0], xy[1]))
         self.speed_history = deque(maxlen=10)
-        self.lateral_accel_history = deque(maxlen=8)
         self.missed = 0
-        self.is_speeding = False
-        self.speeding_frames = 0  
-        self.is_swerving = False
-        self.is_abrupt_stopping = False
-        self.abrupt_stop_frames = 0 
-        self.aggressive_behaviors = []
-        self.heading_angle = None  
-        self.is_reversing = False 
+        self.last_seen_frame = 0
 
-    def update(self, xy):
-        self.history.append(xy)
-        self.missed = 0
+        # Kalman filter for position smoothing
+        self.kalman = cv2.KalmanFilter(4, 2)
+        self.kalman.measurementMatrix = np.array(
+            [[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+        self.kalman.transitionMatrix = np.array(
+            [[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
 
-    def calculate_instantaneous_speed(self, meter_per_pixel, fps):
-        """Calculate speed between consecutive frames"""
-        if len(self.history) < 2:
-            return None
-        
-        p1 = list(self.history)[-2]
-        p2 = list(self.history)[-1]
-        
-        dx = (p2[0] - p1[0])
-        dy = (p2[1] - p1[1])
-        pixel_dist = math.sqrt(dx * dx + dy * dy)
-        
-        meters = pixel_dist * meter_per_pixel
-        dt = 1.0 / fps if fps > 0 else 1.0
-        
-        return meters / dt
+        is_mc = (class_name == "Motorcycle")
+        pn = MOTORCYCLE_KALMAN_PROCESS_NOISE if is_mc else 0.03
+        mn = MOTORCYCLE_KALMAN_MEASUREMENT_NOISE if is_mc else 2.0
 
-    def speed_m_s(self, meter_per_pixel, fps):
-        """Calculate smoothed speed using multiple methods and averaging"""
-        if len(self.history) < MIN_HISTORY_FOR_SPEED:
-            return None
+        self.kalman.processNoiseCov = np.eye(4, dtype=np.float32) * pn
+        self.kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * mn
+        self.kalman.errorCovPost = np.eye(4, dtype=np.float32)
+        self.kalman.statePost = np.array([[xy[0]], [xy[1]], [0], [0]], np.float32)
 
-        speeds = []
-        
-        # Method 1: Instantaneous speed (frame-to-frame)
-        instant_speed = self.calculate_instantaneous_speed(meter_per_pixel, fps)
-        if instant_speed is not None:
-            speeds.append(instant_speed)
-        
-        # Method 2: Short window average (last 3-5 frames)
-        if len(self.history) >= 3:
-            window_size = min(5, len(self.history))
-            recent_points = list(self.history)[-window_size:]
-            
-            total_distance = 0
-            for i in range(1, len(recent_points)):
-                p1 = recent_points[i-1]
-                p2 = recent_points[i]
-                dx = (p2[0] - p1[0])
-                dy = (p2[1] - p1[1])
-                pixel_dist = math.sqrt(dx * dx + dy * dy)
-                total_distance += pixel_dist
-            
-            meters = total_distance * meter_per_pixel
-            dt = (window_size - 1) / fps if fps > 0 and window_size > 1 else 1.0
-            speeds.append(meters / dt)
-        
-        # Method 3: Longer window for stability (last 7-10 frames)
-        if len(self.history) >= 7:
-            window_size = min(10, len(self.history))
-            p1 = list(self.history)[-window_size]
-            p2 = list(self.history)[-1]
-            
-            dx = (p2[0] - p1[0])
-            dy = (p2[1] - p1[1])
-            pixel_dist = math.sqrt(dx * dx + dy * dy)
-            
-            meters = pixel_dist * meter_per_pixel
-            dt = (window_size - 1) / fps if fps > 0 else 1.0
-            speeds.append(meters / dt)
-        
-        if not speeds:
-            return None
-        
-        # Calculate weighted average (more weight to recent methods)
-        if len(speeds) == 3:
-            current_speed = speeds[0] * 0.3 + speeds[1] * 0.4 + speeds[2] * 0.3
-        elif len(speeds) == 2:
-            current_speed = speeds[0] * 0.4 + speeds[1] * 0.6
+    def is_motorcycle(self):
+        return self.get_majority_class() == "Motorcycle"
+
+    def update(self, frame_id, xy, class_name=None, box_size=None, ground_xy=None):
+        self.raw_history.append((frame_id, xy[0], xy[1]))
+        if ground_xy is not None:
+            self.ground_history.append((frame_id, ground_xy[0], ground_xy[1]))
         else:
-            current_speed = speeds[0]
-        
-        # Add to speed history for temporal smoothing
-        self.speed_history.append(current_speed)
-        
-        if len(self.speed_history) >= 3:
-            sorted_speeds = sorted(self.speed_history)
-            n = len(sorted_speeds)
-            if n >= 5:
-                trim_count = max(1, n // 5)
-                trimmed_speeds = sorted_speeds[trim_count:-trim_count]
+            self.ground_history.append((frame_id, xy[0], xy[1]))
+        self.kalman.predict()
+        self.kalman.correct(np.array([[xy[0]], [xy[1]]], np.float32))
+        state = self.kalman.statePost
+        self.history.append((frame_id, float(state[0][0]), float(state[1][0])))
+        if class_name:
+            self.class_history.append(class_name)
+        if box_size:
+            self.box_sizes.append(box_size)
+        self.last_seen_frame = frame_id
+        self.missed = 0
+
+    def get_majority_class(self):
+        if not self.class_history:
+            return self.class_name
+        return Counter(self.class_history).most_common(1)[0][0]
+
+    def get_corrected_class(self):
+        return self.get_majority_class()
+
+    def is_track_continuous(self, max_gap=None):
+        if len(self.history) < 2:
+            return False
+        if max_gap is None:
+            max_gap = MAX_FRAME_GAP
+        history_list = list(self.history)
+        for i in range(1, len(history_list)):
+            if history_list[i][0] - history_list[i - 1][0] > max_gap:
+                return False
+        return True
+
+    def get_total_distance(self):
+        if len(self.history) < 2:
+            return 0
+        h = list(self.history)
+        dx = h[-1][1] - h[0][1]
+        dy = h[-1][2] - h[0][2]
+        return np.sqrt(dx * dx + dy * dy)
+
+    def get_average_movement_per_frame(self):
+        if len(self.history) < 2:
+            return 0
+        total = 0
+        h = list(self.history)
+        for i in range(1, len(h)):
+            dx = h[i][1] - h[i - 1][1]
+            dy = h[i][2] - h[i - 1][2]
+            total += np.sqrt(dx * dx + dy * dy)
+        return total / (len(h) - 1)
+
+
+# ============================================================================
+# Helper functions
+# ============================================================================
+
+def get_tracking_point(box):
+    """Get center point and box size from xyxy box."""
+    x1, y1, x2, y2 = box
+    return (x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1, y2 - y1)
+
+
+def get_ground_point(box):
+    """Get bottom-center point from xyxy box (ground contact point)."""
+    x1, y1, x2, y2 = box
+    return (x1 + x2) / 2, y2
+
+
+def calculate_iou(box1, box2):
+    """Calculate IoU between two xyxy boxes."""
+    x1_min, y1_min, x1_max, y1_max = box1
+    x2_min, y2_min, x2_max, y2_max = box2
+    ix_min = max(x1_min, x2_min)
+    iy_min = max(y1_min, y2_min)
+    ix_max = min(x1_max, x2_max)
+    iy_max = min(y1_max, y2_max)
+    if ix_max < ix_min or iy_max < iy_min:
+        return 0.0
+    inter = (ix_max - ix_min) * (iy_max - iy_min)
+    union = ((x1_max - x1_min) * (y1_max - y1_min) +
+             (x2_max - x2_min) * (y2_max - y2_min) - inter)
+    return inter / union if union > 0 else 0.0
+
+
+# ============================================================================
+# Vehicle Tracker
+# ============================================================================
+
+class VehicleTracker:
+    def __init__(self, max_frames=300):
+        self.tracks = {}
+        self.max_frames = max_frames
+        self.track_boxes = {}
+
+    def cleanup_stale_tracks(self, current_frame_id, max_age=30):
+        stale = [tid for tid, t in self.tracks.items()
+                 if current_frame_id - t.last_seen_frame > max_age]
+        for tid in stale:
+            del self.tracks[tid]
+            self.track_boxes.pop(tid, None)
+        return len(stale)
+
+    def update(self, frame_id, detections):
+        # Deduplicate overlapping detections
+        filtered = []
+        for det in detections:
+            is_dup = False
+            det_box = det.get('box')
+            det_is_mc = (det.get('class_name') == "Motorcycle")
+            if det_box is not None:
+                for j, other in enumerate(filtered):
+                    other_box = other.get('box')
+                    if other_box is not None:
+                        iou = calculate_iou(det_box, other_box)
+                        other_is_mc = (other.get('class_name') == "Motorcycle")
+                        threshold = MOTORCYCLE_IOU_DEDUP if (det_is_mc or other_is_mc) else 0.5
+                        if iou > threshold:
+                            if det['track_id'] in self.tracks:
+                                filtered[j] = det
+                            is_dup = True
+                            break
+            if not is_dup:
+                filtered.append(det)
+
+        for det in filtered:
+            tid = det['track_id']
+            xy = (det['center_x'], det['center_y'])
+            ground_xy = det.get('ground_xy')
+            cls = det['class_name']
+            bsz = det.get('box_size')
+            if tid not in self.tracks:
+                t = Track(tid, xy, cls, self.max_frames)
+                if t.history:
+                    t.history[0] = (frame_id, xy[0], xy[1])
+                if t.raw_history:
+                    t.raw_history[0] = (frame_id, xy[0], xy[1])
+                if t.ground_history:
+                    gxy = ground_xy if ground_xy else xy
+                    t.ground_history[0] = (frame_id, gxy[0], gxy[1])
+                if bsz:
+                    t.box_sizes.append(bsz)
+                t.last_seen_frame = frame_id
+                self.tracks[tid] = t
             else:
-                trimmed_speeds = sorted_speeds
-            
-            weights = [0.1, 0.15, 0.2, 0.25, 0.3] 
-            smoothed_speed = 0
-            weight_sum = 0
-            
-            for i, speed in enumerate(list(self.speed_history)[-5:]):
-                if i < len(weights):
-                    smoothed_speed += speed * weights[i]
-                    weight_sum += weights[i]
-            
-            if weight_sum > 0:
-                smoothed_speed = smoothed_speed / weight_sum
-                # Sanity check: filter out unrealistic speeds (likely tracking errors)
-                speed_kmh = smoothed_speed * 3.6
-                if speed_kmh > MAX_REALISTIC_SPEED_KMH or speed_kmh < MIN_REALISTIC_SPEED_KMH:
-                    return None  # Invalid speed, ignore this measurement
-                return smoothed_speed
-        
-        # Final sanity check on current_speed
-        speed_kmh = current_speed * 3.6
-        if speed_kmh > MAX_REALISTIC_SPEED_KMH or speed_kmh < MIN_REALISTIC_SPEED_KMH:
-            return None
-        
-        return current_speed
-    
-    def get_velocity_vector(self, meter_per_pixel, fps):
-        """Get velocity as a 2D vector (vx, vy) in m/s"""
-        if len(self.history) < MIN_HISTORY_FOR_SPEED:
-            return None, None
-        
-        window_size = min(5, len(self.history))
-        p1 = list(self.history)[-window_size]
-        p2 = list(self.history)[-1]
-        
-        dx_pixels = p2[0] - p1[0]
-        dy_pixels = p2[1] - p1[1]
-        
-        dx_meters = dx_pixels * meter_per_pixel
-        dy_meters = dy_pixels * meter_per_pixel
-        
-        dt = (window_size - 1) / fps if fps > 0 else 1.0
-        
-        vx = dx_meters / dt
-        vy = dy_meters / dt
-        
-        # Update heading angle (direction of travel)
-        if dx_meters != 0 or dy_meters != 0:
-            self.heading_angle = math.atan2(dy_meters, dx_meters)
-        
-        return vx, vy
-    
-    def get_heading_degrees(self):
-        """Get current heading in degrees (0-360, where 0=East, 90=South, 180=West, 270=North)"""
-        if self.heading_angle is None:
-            return None
-        degrees = math.degrees(self.heading_angle)
-        return (degrees + 360) % 360
-    
-    def is_moving_towards_point(self, target_point, tolerance_degrees=45):
-        """
-        Check if vehicle is moving towards a specific point (e.g., intersection, crossing)
-        
-        Args:
-            target_point: (x, y) tuple of target location
-            tolerance_degrees: How many degrees off-angle is still considered "towards"
-        
-        Returns:
-            Boolean indicating if vehicle is heading towards the point
-        """
-        if self.heading_angle is None or len(self.history) < 2:
-            return False
-        
-        current_pos = list(self.history)[-1]
-        
-        # Calculate angle to target
-        dx = target_point[0] - current_pos[0]
-        dy = target_point[1] - current_pos[1]
-        angle_to_target = math.atan2(dy, dx)
-        
-        # Calculate angular difference
-        angle_diff = abs(self.heading_angle - angle_to_target)
-        # Normalize to 0-180 degrees
-        angle_diff = min(angle_diff, 2 * math.pi - angle_diff)
-        angle_diff_degrees = math.degrees(angle_diff)
-        
-        return angle_diff_degrees <= tolerance_degrees
-    
-    def detect_reversing(self):
-        """
-        Detect if vehicle is moving in reverse by comparing heading consistency
-        Returns True if vehicle appears to be reversing
-        """
-        if len(self.history) < 8:
-            return False
-        
-        history_list = list(self.history)
-        
-        # Check recent movement direction vs longer-term direction
-        # Recent movement (last 3 frames)
-        recent_p1 = history_list[-3]
-        recent_p2 = history_list[-1]
-        recent_angle = math.atan2(recent_p2[1] - recent_p1[1], recent_p2[0] - recent_p1[0])
-        
-        # Longer-term movement (frames 5-8 ago)
-        older_p1 = history_list[-8]
-        older_p2 = history_list[-5]
-        older_angle = math.atan2(older_p2[1] - older_p1[1], older_p2[0] - older_p1[0])
-        
-        # Calculate angular difference
-        angle_diff = abs(recent_angle - older_angle)
-        angle_diff = min(angle_diff, 2 * math.pi - angle_diff)
-        
-        # If direction changed by ~180 degrees, likely reversing
-        is_reversed = math.degrees(angle_diff) > 135
-        
-        if is_reversed:
-            self.is_reversing = True
-        
-        return is_reversed
+                self.tracks[tid].update(frame_id, xy, cls, bsz, ground_xy=ground_xy)
+            if det.get('box') is not None:
+                self.track_boxes[tid] = det['box']
 
-    
-    def calculate_accelerations(self, meter_per_pixel, fps):
-        """Calculate longitudinal and lateral accelerations with direction awareness"""
-        if len(self.history) < MIN_HISTORY_FOR_ACCELERATION:
-            return None, None
-        
-        history_list = list(self.history)
-        n = len(history_list)
-        
-        idx1 = 0
-        idx2 = n // 2
-        idx3 = n - 1
-        
-        p1 = history_list[idx1]
-        p2 = history_list[idx2]
-        p3 = history_list[idx3]
-        
-        dt1 = idx2 / fps if fps > 0 else 1.0
-        dt2 = (idx3 - idx2) / fps if fps > 0 else 1.0
-        
-        dx1 = (p2[0] - p1[0]) * meter_per_pixel
-        dy1 = (p2[1] - p1[1]) * meter_per_pixel
-        vx1 = dx1 / dt1
-        vy1 = dy1 / dt1
-        v1 = math.sqrt(vx1**2 + vy1**2)
-        
-        dx2 = (p3[0] - p2[0]) * meter_per_pixel
-        dy2 = (p3[1] - p2[1]) * meter_per_pixel
-        vx2 = dx2 / dt2
-        vy2 = dy2 / dt2
-        v2 = math.sqrt(vx2**2 + vy2**2)
-        
-        if v2 > 0.5: 
-            heading = math.atan2(dy2, dx2)
-            
-            total_dt = dt1 + dt2
-            longitudinal_accel = (v2 - v1) / total_dt
-            
-            dv_x = vx2 - vx1
-            dv_y = vy2 - vy1
-            
-            perpendicular_x = -math.sin(heading)
-            perpendicular_y = math.cos(heading)
-            lateral_accel = abs((dv_x * perpendicular_x + dv_y * perpendicular_y) / total_dt)
-            
-            # Sanity check: filter out unrealistic acceleration values (likely tracking errors)
-            if abs(longitudinal_accel) > MAX_REALISTIC_ACCEL or abs(lateral_accel) > MAX_REALISTIC_ACCEL:
-                return None, None  # Invalid acceleration, likely tracking error
-            
-            # Check for direction reversal (potential reversing behavior)
-            heading_prev = math.atan2(dy1, dx1)
-            heading_diff = abs(heading - heading_prev)
-            heading_diff = min(heading_diff, 2 * math.pi - heading_diff)
-            
-            # If heading changed significantly, might be reversing
-            if math.degrees(heading_diff) > 135:
-                self.is_reversing = True
-            
-            return longitudinal_accel, lateral_accel
-        
-        return None, None
-    
-    def detect_swerving(self, lateral_accel):
-        """
-        Detect swerving based on rapid changes in lateral acceleration (oscillating pattern)
-        True swerving = erratic side-to-side movement, not just turning
-        
-        Returns True if swerving pattern is detected
-        """
-        if lateral_accel is None:
-            return False
-        
-        # Filter out unrealistic values before adding to history
-        if lateral_accel > MAX_REALISTIC_ACCEL:
-            return False
-        
-        # Add current lateral acceleration to history
-        self.lateral_accel_history.append(lateral_accel)
-        
-        # Need at least 6 samples to detect oscillation pattern
-        if len(self.lateral_accel_history) < 6:
-            return False
-        
-        accel_list = list(self.lateral_accel_history)
-        
-        # Check for oscillating pattern (sign changes in acceleration)
-        direction_changes = 0
-        for i in range(1, len(accel_list)):
-            # Look for changes in direction (positive to negative or vice versa)
-            # Use signed lateral acceleration by checking if perpendicular component changes sign
-            if i >= 2:
-                # Check if middle value is a local extremum (peak or valley)
-                prev_val = accel_list[i-2]
-                curr_val = accel_list[i-1]
-                next_val = accel_list[i]
-                
-                # Peak (turning one way then the other)
-                if (curr_val > prev_val and curr_val > next_val) or \
-                   (curr_val < prev_val and curr_val < next_val):
-                    direction_changes += 1
-        
-        # Swerving detected if multiple direction changes with significant magnitude
-        avg_magnitude = sum(accel_list) / len(accel_list)
-        
-        # Require MORE direction changes and HIGHER magnitude for true swerving
-        if direction_changes >= MIN_SWERVING_DIRECTION_CHANGES and avg_magnitude >= LATERAL_ACCEL_MIN:
-            return True
-        
+
+# ============================================================================
+# Speed Estimation via Linear Fit
+# ============================================================================
+
+def calculate_speed_linear_fit(raw_positions, transformation_matrix, pixels_per_meter, fps,
+                               min_r_squared=None):
+    """
+    Calculate speed using linear regression on perspective-transformed positions.
+    Projects positions onto dominant travel direction and fits a line.
+    Includes iterative outlier removal for robustness.
+    """
+    if min_r_squared is None:
+        min_r_squared = MIN_R_SQUARED
+    n = len(raw_positions)
+    if n < 10:
+        return None
+
+    # Trim edges (start/end often have tracking noise)
+    trim = max(2, n // 10)
+    trimmed = list(raw_positions)[trim:-trim] if (2 * trim) < n else list(raw_positions)
+    if len(trimmed) < 5:
+        return None
+
+    H = transformation_matrix
+    scale = 1.0 / pixels_per_meter
+
+    frames, world_x, world_y = [], [], []
+    for fid, x, y in trimmed:
+        tp = cv2.perspectiveTransform(
+            np.array([[[x, y]]], dtype=np.float32), H)[0][0]
+        frames.append(fid)
+        world_x.append(float(tp[0]) * scale)
+        world_y.append(float(tp[1]) * scale)
+
+    frames = np.array(frames, dtype=np.float64)
+    wx = np.array(world_x, dtype=np.float64)
+    wy = np.array(world_y, dtype=np.float64)
+    times = frames / fps
+
+    # Project onto dominant travel direction
+    direction = np.array([wx[-1] - wx[0], wy[-1] - wy[0]])
+    dir_norm = np.linalg.norm(direction)
+    if dir_norm < 0.5:
+        return None
+    direction = direction / dir_norm
+
+    positions = wx * direction[0] + wy * direction[1]
+
+    # Iterative outlier removal: fit, remove points > 2.5 sigma residual, refit.
+    min_keep = max(5, int(len(positions) * 0.6))
+    mask = np.ones(len(positions), dtype=bool)
+    for _iter in range(2):
+        t_sel = times[mask]
+        p_sel = positions[mask]
+        if len(p_sel) < min_keep:
+            break
+        try:
+            c = np.polyfit(t_sel, p_sel, 1)
+        except (np.linalg.LinAlgError, ValueError):
+            break
+        residuals = np.abs(positions - np.polyval(c, times))
+        sigma = np.std(residuals[mask])
+        if sigma < 1e-6:
+            break
+        new_mask = residuals < 2.5 * sigma
+        if np.sum(new_mask) < min_keep:
+            break
+        if np.array_equal(mask, new_mask):
+            break
+        mask = new_mask
+
+    t_clean = times[mask]
+    p_clean = positions[mask]
+    if len(p_clean) < 5:
+        return None
+
+    try:
+        coefficients = np.polyfit(t_clean, p_clean, 1)
+    except (np.linalg.LinAlgError, ValueError):
+        return None
+
+    velocity_ms = abs(coefficients[0])
+    predicted = np.polyval(coefficients, t_clean)
+    ss_res = np.sum((p_clean - predicted) ** 2)
+    ss_tot = np.sum((p_clean - np.mean(p_clean)) ** 2)
+    r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 1e-9 else 0.0
+
+    if r_squared < min_r_squared:
+        return None
+
+    total_distance_m = dir_norm
+    frame_diff = int(frames[-1] - frames[0])
+
+    path_distance = sum(
+        math.sqrt((wx[i] - wx[i - 1]) ** 2 + (wy[i] - wy[i - 1]) ** 2)
+        for i in range(1, len(wx))
+    )
+    straightness = total_distance_m / path_distance if path_distance > 0 else 0
+
+    speed_kmh = velocity_ms * 3.6 * SPEED_CORRECTION_FACTOR
+    velocity_ms *= SPEED_CORRECTION_FACTOR
+
+    return {
+        'speed_ms': velocity_ms, 'speed_kmh': speed_kmh,
+        'distance_m': total_distance_m, 'path_distance_m': path_distance,
+        'r_squared': r_squared, 'straightness': straightness, 'frames': frame_diff
+    }
+
+
+# ============================================================================
+# Behavior Detection (Post-processing)
+# ============================================================================
+
+def detect_abrupt_stop(raw_positions, transformation_matrix, pixels_per_meter, fps,
+                       decel_threshold=ABRUPT_STOP_DECEL_THRESHOLD):
+    """Detect abrupt stopping by analyzing speed changes across sliding windows."""
+    n = len(raw_positions)
+    if n < 15:
+        return {'abrupt_stop': False, 'max_decel_ms2': 0.0, 'stop_frame': None}
+
+    H = transformation_matrix
+    scale = 1.0 / pixels_per_meter
+
+    world = []
+    for fid, x, y in raw_positions:
+        tp = cv2.perspectiveTransform(
+            np.array([[[x, y]]], dtype=np.float32), H)[0][0]
+        world.append((fid, float(tp[0]) * scale, float(tp[1]) * scale))
+
+    win = max(5, n // 8)
+    window_speeds = []
+    for start in range(0, len(world) - win + 1, max(1, win // 2)):
+        seg = world[start:start + win]
+        dx = seg[-1][1] - seg[0][1]
+        dy = seg[-1][2] - seg[0][2]
+        dist = math.sqrt(dx * dx + dy * dy)
+        dt = (seg[-1][0] - seg[0][0]) / fps
+        if dt > 0:
+            window_speeds.append((seg[win // 2][0], dist / dt))
+
+    if len(window_speeds) < 2:
+        return {'abrupt_stop': False, 'max_decel_ms2': 0.0, 'stop_frame': None}
+
+    max_decel = 0.0
+    stop_frame = None
+    is_abrupt = False
+
+    for i in range(1, len(window_speeds)):
+        dt = (window_speeds[i][0] - window_speeds[i - 1][0]) / fps
+        if dt <= 0:
+            continue
+        speed_before = window_speeds[i - 1][1]
+        speed_after = window_speeds[i][1]
+        decel = (speed_before - speed_after) / dt
+        if decel > max_decel:
+            max_decel = decel
+            stop_frame = int(window_speeds[i][0])
+        if (not is_abrupt and decel >= decel_threshold and
+                speed_before > 1.0 and speed_after < speed_before * 0.50 and speed_after < 5.0):
+            is_abrupt = True
+
+    # Cap unrealistic values (tracking errors)
+    if max_decel > 30.0:
+        is_abrupt = False
+        max_decel = min(max_decel, 30.0)
+
+    return {'abrupt_stop': is_abrupt, 'max_decel_ms2': round(max_decel, 2), 'stop_frame': stop_frame}
+
+
+def detect_swerving(raw_positions, transformation_matrix, pixels_per_meter,
+                    lateral_threshold=SWERVE_LATERAL_THRESHOLD, min_direction_changes=3):
+    """Detect swerving by analyzing heading oscillation and lateral deviation from path."""
+    n = len(raw_positions)
+    if n < 10:
+        return {'swerving': False, 'max_lateral_m': 0.0, 'direction_changes': 0, 'swerve_frame': None}
+
+    H = transformation_matrix
+    scale = 1.0 / pixels_per_meter
+
+    frames, wx, wy = [], [], []
+    for fid, x, y in raw_positions:
+        tp = cv2.perspectiveTransform(
+            np.array([[[x, y]]], dtype=np.float32), H)[0][0]
+        frames.append(fid)
+        wx.append(float(tp[0]) * scale)
+        wy.append(float(tp[1]) * scale)
+
+    wx = np.array(wx, dtype=np.float64)
+    wy = np.array(wy, dtype=np.float64)
+
+    # Compute headings
+    step = max(1, min(3, n // 20))
+    headings, heading_frames = [], []
+    for i in range(step, n):
+        dx = wx[i] - wx[i - step]
+        dy = wy[i] - wy[i - step]
+        if math.sqrt(dx * dx + dy * dy) < 0.15:
+            continue
+        headings.append(math.atan2(dy, dx))
+        heading_frames.append(frames[i])
+
+    if len(headings) < 5:
+        return {'swerving': False, 'max_lateral_m': 0.0, 'direction_changes': 0, 'swerve_frame': None}
+
+    headings = np.array(headings)
+    heading_frames = np.array(heading_frames)
+
+    # Smooth headings (circular moving average)
+    k = max(3, min(7, len(headings) // 8))
+    if k % 2 == 0:
+        k += 1
+    pad = k // 2
+    h_padded = np.pad(headings, pad, mode='edge')
+    sin_s = np.convolve(np.sin(h_padded), np.ones(k) / k, mode='valid')[:len(headings)]
+    cos_s = np.convolve(np.cos(h_padded), np.ones(k) / k, mode='valid')[:len(headings)]
+    headings_smooth = np.arctan2(sin_s, cos_s)
+
+    delta_heading = np.diff(headings_smooth)
+    delta_heading = (delta_heading + np.pi) % (2 * np.pi) - np.pi
+
+    # Count significant direction reversals
+    min_swing_rad = math.radians(10.0)
+    significant_reversals = 0
+    cum_swing = 0.0
+    last_sign = 1 if delta_heading[0] >= 0 else -1
+    worst_frame = heading_frames[0]
+    max_swing = 0.0
+
+    for i in range(len(delta_heading)):
+        cur_sign = 1 if delta_heading[i] >= 0 else -1
+        cum_swing += abs(delta_heading[i])
+        if cur_sign != last_sign:
+            if cum_swing >= min_swing_rad:
+                significant_reversals += 1
+                if cum_swing > max_swing:
+                    max_swing = cum_swing
+                    worst_frame = int(heading_frames[min(i + 1, len(heading_frames) - 1)])
+            cum_swing = 0.0
+            last_sign = cur_sign
+
+    # Compute lateral deviation from smoothed path
+    smooth_k = max(5, n // 5)
+    if smooth_k % 2 == 0:
+        smooth_k += 1
+    sp = smooth_k // 2
+    wx_s = np.convolve(np.pad(wx, sp, mode='edge'),
+                       np.ones(smooth_k) / smooth_k, mode='valid')[:n]
+    wy_s = np.convolve(np.pad(wy, sp, mode='edge'),
+                       np.ones(smooth_k) / smooth_k, mode='valid')[:n]
+    lateral_devs = np.sqrt((wx - wx_s) ** 2 + (wy - wy_s) ** 2)
+    max_lat = float(np.max(lateral_devs))
+    peak_lat_frame = int(frames[int(np.argmax(lateral_devs))])
+
+    swerve_frame = worst_frame if significant_reversals >= min_direction_changes else peak_lat_frame
+
+    # Reject implausibly large lateral deviations (tracking errors)
+    if max_lat > 10.0:
+        max_lat = 0.0
+        significant_reversals = 0
+
+    is_swerving = (significant_reversals >= min_direction_changes and max_lat >= lateral_threshold)
+
+    return {
+        'swerving': is_swerving, 'max_lateral_m': round(max_lat, 3),
+        'direction_changes': significant_reversals, 'swerve_frame': swerve_frame
+    }
+
+
+def detect_speeding(speed_kmh, speed_limit_kmh, error_pct=MEAN_ERROR_PERCENT):
+    """Detect speeding accounting for measurement error margin."""
+    lower_bound = speed_limit_kmh * (1.0 - error_pct / 100.0)
+    over = speed_kmh - speed_limit_kmh
+    within_margin = (speed_kmh >= lower_bound and speed_kmh < speed_limit_kmh)
+    return {
+        'speeding': speed_kmh >= lower_bound,
+        'margin_kmh': round(over, 2),
+        'within_error_margin': within_margin
+    }
+
+
+# ============================================================================
+# Post-processing: Track Merging and Filtering helpers
+# ============================================================================
+
+def _track_direction(raw):
+    """Get the overall direction angle of a track."""
+    if len(raw) < 3:
+        return None
+    n = len(raw)
+    q = max(1, n // 4)
+    x1 = np.mean([p[1] for p in raw[:q]])
+    y1 = np.mean([p[2] for p in raw[:q]])
+    x2 = np.mean([p[1] for p in raw[-q:]])
+    y2 = np.mean([p[2] for p in raw[-q:]])
+    dx, dy = x2 - x1, y2 - y1
+    if math.sqrt(dx * dx + dy * dy) < 5.0:
+        return None
+    return math.atan2(dy, dx)
+
+
+def _directions_compatible(dir_a, dir_b, max_angle_deg=60.0):
+    """Check if two directions are compatible (within max_angle_deg)."""
+    if dir_a is None or dir_b is None:
+        return True
+    diff = abs(dir_a - dir_b)
+    diff = min(diff, 2 * math.pi - diff)
+    return diff <= math.radians(max_angle_deg)
+
+
+def _velocity_at_edge(raw, at_end=True, window=5):
+    """Get velocity vector at the start or end of a track."""
+    if len(raw) < window:
+        return None
+    seg = list(raw)[-window:] if at_end else list(raw)[:window]
+    dt = seg[-1][0] - seg[0][0]
+    if dt <= 0:
+        return None
+    dx = seg[-1][1] - seg[0][1]
+    dy = seg[-1][2] - seg[0][2]
+    return (dx / dt, dy / dt)
+
+
+def _velocities_compatible(vel_a, vel_b, max_speed_ratio=2.5):
+    """Check if two velocity vectors are compatible for merging."""
+    if vel_a is None or vel_b is None:
+        return True
+    sa = math.sqrt(vel_a[0] ** 2 + vel_a[1] ** 2)
+    sb = math.sqrt(vel_b[0] ** 2 + vel_b[1] ** 2)
+    if sa < 0.5 or sb < 0.5:
+        return True
+    ratio = max(sa, sb) / min(sa, sb)
+    if ratio > max_speed_ratio:
         return False
+    dot = vel_a[0] * vel_b[0] + vel_a[1] * vel_b[1]
+    cos_angle = dot / (sa * sb)
+    return cos_angle > 0.5
 
-def calculate_meter_per_pixel(calibration_points, reference_distance_meters, frame_shape, reference_points=None, perspective_matrix=None):
-    """
-    Calculate the meter-per-pixel scale factor based on reference measurements.
-    
-    BEST PRACTICE: Reference points should be selected in the MIDDLE/CENTER of the calibration
-    area to minimize perspective distortion. Avoid selecting points too close or too far from
-    the camera, as they will have different pixel-to-meter ratios due to perspective.
-    
-    Args:
-        calibration_points: List of 4 dictionaries with x, y coordinates (for perspective transform)
-        reference_distance_meters: Real-world distance in meters (e.g., lane width = 3m)
-        frame_shape: Tuple of (height, width) of the frame
-        reference_points: List of 2 dictionaries with x, y coordinates for direct distance measurement
-        perspective_matrix: The cv2 perspective transform matrix (if available)
-    
-    Returns:
-        meter_per_pixel: Scale factor for converting pixels to meters
-    """
-    # Method 1: Two-point reference AFTER perspective transform
-    if reference_points and len(reference_points) == 2 and reference_distance_meters and perspective_matrix is not None:
-        src_pts = np.float32([[reference_points[0]['x'], reference_points[0]['y']],
-                              [reference_points[1]['x'], reference_points[1]['y']]])
-        
-        transformed_pts = cv2.perspectiveTransform(src_pts.reshape(-1, 1, 2), perspective_matrix)
-        
-        p1_transformed = transformed_pts[0][0]
-        p2_transformed = transformed_pts[1][0]
-        
-        dx = p2_transformed[0] - p1_transformed[0]
-        dy = p2_transformed[1] - p1_transformed[1]
-        pixel_distance = math.sqrt(dx * dx + dy * dy)
-        
-        if pixel_distance > 0:
-            meter_per_pixel = reference_distance_meters / pixel_distance
-            
-            print(f"\n[Calibration - Two-Point Method with Perspective Transform]", flush=True)
-            print(f"Reference distance: {reference_distance_meters:.2f} meters", flush=True)
-            print(f"Original points: ({reference_points[0]['x']:.1f}, {reference_points[0]['y']:.1f}) → ({reference_points[1]['x']:.1f}, {reference_points[1]['y']:.1f})", flush=True)
-            print(f"Transformed points: ({p1_transformed[0]:.1f}, {p1_transformed[1]:.1f}) → ({p2_transformed[0]:.1f}, {p2_transformed[1]:.1f})", flush=True)
-            print(f"Pixel distance in bird's eye view: {pixel_distance:.2f} pixels", flush=True)
-            print(f"Calculated scale: {meter_per_pixel:.6f} meters/pixel", flush=True)
-            
-            height, width = frame_shape[:2]
-            real_width = width * meter_per_pixel
-            real_height = height * meter_per_pixel
-            print(f"Frame dimensions in real world: ~{real_width:.2f}m × {real_height:.2f}m\n", flush=True)
-            
-            return meter_per_pixel
-    
-    # Method 2: Four-point calibration area 
-    if calibration_points and len(calibration_points) == 4 and reference_distance_meters:
-        height, width = frame_shape[:2]
-        
-        avg_pixel_distance = height
-        
-        meter_per_pixel = reference_distance_meters / avg_pixel_distance
-        
-        print(f"\n[Calibration - Four-Point Method (Fallback)]", flush=True)
-        print(f"Reference distance: {reference_distance_meters:.2f} meters", flush=True)
-        print(f"Frame dimensions after transform: {width}x{height} pixels", flush=True)
-        print(f"Calculated scale: {meter_per_pixel:.6f} meters/pixel", flush=True)
-        print(f"Frame width in real world: ~{width * meter_per_pixel:.2f} meters\n", flush=True)
-        
-        return meter_per_pixel
-    
-    # Fallback to hardcoded value
-    print(f"\n[Calibration - Using Hardcoded Value]", flush=True)
-    print(f"Scale: {HARDCODED_METER_PER_PIXEL} meters/pixel\n", flush=True)
-    return HARDCODED_METER_PER_PIXEL
 
-def apply_perspective_transform(frame, calibration_points):
-    """
-    Apply perspective transformation to the frame using the 4 calibration points.
-    
-    Args:
-        frame: The input video frame
-        calibration_points: List of 4 dictionaries with x, y coordinates
-                           Order: top-left, top-right, bottom-right, bottom-left
-    
-    Returns:
-        Transformed frame with bird's eye view perspective
-    """
-    if not calibration_points or len(calibration_points) != 4:
-        return frame
-    
-    # Extract source points from calibration
-    src_points = np.float32([
-        [calibration_points[0]['x'], calibration_points[0]['y']],  # top-left
-        [calibration_points[1]['x'], calibration_points[1]['y']],  # top-right
-        [calibration_points[2]['x'], calibration_points[2]['y']],  # bottom-right
-        [calibration_points[3]['x'], calibration_points[3]['y']]   # bottom-left
-    ])
-    
-    # Define destination points for bird's eye view (rectangular)
-    height, width = frame.shape[:2]
-    
-    # TOP-DOWN VIEW (default): Maps the selected area to full frame
-    dst_points = np.float32([
-        [0, 0],                    # top-left
-        [width - 1, 0],            # top-right
-        [width - 1, height - 1],   # bottom-right
-        [0, height - 1]            # bottom-left
-    ])
-    
-    # Calculate perspective transform matrix
-    matrix = cv2.getPerspectiveTransform(src_points, dst_points)
-    
-    # Apply the perspective transformation
-    transformed_frame = cv2.warpPerspective(frame, matrix, (width, height))
-    
-    return transformed_frame
+def _predict_position(raw, dt_frames, at_end=True):
+    """Predict where a track would be after dt_frames using edge velocity."""
+    vel = _velocity_at_edge(raw, at_end=at_end)
+    if vel is None:
+        return None
+    if at_end:
+        last = raw[-1]
+        return (last[1] + vel[0] * dt_frames, last[2] + vel[1] * dt_frames)
+    else:
+        first = raw[0]
+        return (first[1] - vel[0] * dt_frames, first[2] - vel[1] * dt_frames)
 
-def run_detection_on_video(video_path: str, calibration_points=None, reference_distance_meters=None, reference_points=None, progress_callback=None, video_record=None):
+
+def _match_to_existing_track(tracker, cx, cy, class_name, current_frame,
+                              max_dist=120, max_age=15):
+    """Find the closest existing track matching class and proximity."""
+    best_tid, best_dist = None, float('inf')
+    for tid, track in tracker.tracks.items():
+        if track.get_corrected_class() != class_name:
+            continue
+        if current_frame - track.last_seen_frame > max_age:
+            continue
+        if not track.raw_history:
+            continue
+        last = track.raw_history[-1]
+        dx, dy = cx - last[1], cy - last[2]
+        d = math.sqrt(dx * dx + dy * dy)
+        if d < max_dist and d < best_dist:
+            best_dist, best_tid = d, tid
+    return best_tid
+
+
+# ============================================================================
+# Post-processing: Track Merging
+# ============================================================================
+
+def merge_fragmented_tracks(tracker, max_gap_frames=60, max_spatial_dist=200,
+                            overlap_max_dist=80):
+    """Merge fragmented tracks that likely belong to the same vehicle using union-find."""
+    if len(tracker.tracks) < 2:
+        return 0
+
+    fragments = {}
+    for tid, track in tracker.tracks.items():
+        raw = list(track.raw_history)
+        if len(raw) < 2:
+            continue
+        direction = _track_direction(raw)
+        fragments[tid] = {
+            'first_frame': raw[0][0], 'last_frame': raw[-1][0],
+            'start_pos': (raw[0][1], raw[0][2]),
+            'end_pos': (raw[-1][1], raw[-1][2]),
+            'n_frames': len(raw), 'class': track.get_corrected_class(),
+            'direction': direction, 'raw': raw,
+        }
+
+    sorted_tids = sorted(fragments.keys(), key=lambda t: fragments[t]['first_frame'])
+    parent = {tid: tid for tid in sorted_tids}
+    rank = {tid: 0 for tid in sorted_tids}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+
+    for i, tid_a in enumerate(sorted_tids):
+        fa = fragments[tid_a]
+        for j in range(i + 1, len(sorted_tids)):
+            tid_b = sorted_tids[j]
+            fb = fragments[tid_b]
+            if fa['class'] != fb['class']:
+                continue
+            if not _directions_compatible(fa['direction'], fb['direction'],
+                                          max_angle_deg=60.0):
+                continue
+
+            merged = False
+            frame_gap = fb['first_frame'] - fa['last_frame']
+
+            # Gap-based merge
+            if -5 <= frame_gap <= max_gap_frames:
+                dx = fa['end_pos'][0] - fb['start_pos'][0]
+                dy = fa['end_pos'][1] - fb['start_pos'][1]
+                raw_dist = math.sqrt(dx * dx + dy * dy)
+
+                vel_a = _velocity_at_edge(fa['raw'], at_end=True)
+                vel_b = _velocity_at_edge(fb['raw'], at_end=False)
+                if not _velocities_compatible(vel_a, vel_b):
+                    continue
+
+                predicted = _predict_position(fa['raw'], max(0, frame_gap), at_end=True)
+                if predicted is not None:
+                    pdx = predicted[0] - fb['start_pos'][0]
+                    pdy = predicted[1] - fb['start_pos'][1]
+                    pred_dist = math.sqrt(pdx * pdx + pdy * pdy)
+                    use_dist = min(raw_dist, pred_dist)
+                else:
+                    use_dist = raw_dist
+
+                if use_dist <= max_spatial_dist:
+                    union(tid_a, tid_b)
+                    merged = True
+
+            # Overlap-based merge
+            if not merged:
+                ov_start = max(fa['first_frame'], fb['first_frame'])
+                ov_end = min(fa['last_frame'], fb['last_frame'])
+                if ov_end >= ov_start:
+                    raw_a = list(tracker.tracks[tid_a].raw_history)
+                    raw_b = list(tracker.tracks[tid_b].raw_history)
+                    n_close = 0
+                    n_checked = 0
+                    for fa_entry in raw_a:
+                        if fa_entry[0] < ov_start or fa_entry[0] > ov_end:
+                            continue
+                        for fb_entry in raw_b:
+                            if abs(fa_entry[0] - fb_entry[0]) <= 1:
+                                dx = fa_entry[1] - fb_entry[1]
+                                dy = fa_entry[2] - fb_entry[2]
+                                n_checked += 1
+                                if math.sqrt(dx * dx + dy * dy) <= overlap_max_dist:
+                                    n_close += 1
+                                break
+                    if n_checked >= 3 and n_close / n_checked >= 0.6:
+                        union(tid_a, tid_b)
+
+    groups = defaultdict(list)
+    for tid in sorted_tids:
+        groups[find(tid)].append(tid)
+
+    n_removed = 0
+    for root, members in groups.items():
+        if len(members) <= 1:
+            continue
+        if len(members) > 4:
+            print(f"  WARNING: skipping suspicious merge of {len(members)} tracks: "
+                  f"{members}", flush=True)
+            continue
+        primary_tid = max(members, key=lambda t: fragments[t]['n_frames'])
+        primary_track = tracker.tracks[primary_tid]
+        all_raw, all_ground, all_classes = [], [], []
+        for tid in members:
+            trk = tracker.tracks[tid]
+            all_raw.extend(list(trk.raw_history))
+            all_ground.extend(list(trk.ground_history))
+            all_classes.extend(trk.class_history)
+        all_raw.sort(key=lambda x: x[0])
+        all_ground.sort(key=lambda x: x[0])
+        seen, deduped = set(), []
+        for entry in all_raw:
+            if entry[0] not in seen:
+                deduped.append(entry)
+                seen.add(entry[0])
+        seen_g, deduped_g = set(), []
+        for entry in all_ground:
+            if entry[0] not in seen_g:
+                deduped_g.append(entry)
+                seen_g.add(entry[0])
+        primary_track.raw_history = deque(deduped, maxlen=primary_track.raw_history.maxlen)
+        primary_track.history = deque(deduped, maxlen=primary_track.history.maxlen)
+        primary_track.ground_history = deque(deduped_g,
+                                             maxlen=primary_track.ground_history.maxlen)
+        primary_track.class_history = all_classes
+        if deduped:
+            primary_track.last_seen_frame = deduped[-1][0]
+        for tid in members:
+            if tid != primary_tid:
+                tracker.tracks.pop(tid, None)
+                tracker.track_boxes.pop(tid, None)
+                n_removed += 1
+        print(f"  Merged {members} -> Track {primary_tid} ({len(deduped)} pts)",
+              flush=True)
+
+    return n_removed
+
+
+# ============================================================================
+# Post-processing: Direction Filtering and Deduplication
+# ============================================================================
+
+def filter_by_dominant_direction(speeds, tracker, transformation_matrix, pixels_per_meter,
+                                 angle_tolerance_deg=45.0):
+    """Remove tracks going opposite to the dominant traffic direction."""
+    if len(speeds) < 3:
+        return speeds, 0
+
+    H = transformation_matrix
+    track_angles = {}
+    for tid in speeds:
+        track = tracker.tracks.get(tid)
+        if track is None or len(track.raw_history) < 5:
+            continue
+        raw = list(track.raw_history)
+        n = len(raw)
+        q1 = raw[:max(1, n // 4)]
+        q4 = raw[-max(1, n // 4):]
+        x1, y1 = np.mean([p[1] for p in q1]), np.mean([p[2] for p in q1])
+        x2, y2 = np.mean([p[1] for p in q4]), np.mean([p[2] for p in q4])
+        p1 = cv2.perspectiveTransform(
+            np.array([[[x1, y1]]], dtype=np.float32), H)[0][0]
+        p2 = cv2.perspectiveTransform(
+            np.array([[[x2, y2]]], dtype=np.float32), H)[0][0]
+        track_angles[tid] = math.atan2(float(p2[1] - p1[1]), float(p2[0] - p1[0]))
+
+    if len(track_angles) < 3:
+        return speeds, 0
+
+    dominant = math.atan2(
+        sum(math.sin(a) for a in track_angles.values()),
+        sum(math.cos(a) for a in track_angles.values())
+    )
+    tol = math.radians(angle_tolerance_deg)
+    filtered, removed = {}, []
+
+    for tid, data in speeds.items():
+        if tid not in track_angles:
+            filtered[tid] = data
+            continue
+        diff = abs(track_angles[tid] - dominant)
+        diff = min(diff, 2 * math.pi - diff)
+        if diff <= tol:
+            filtered[tid] = data
+        else:
+            removed.append(tid)
+
+    if removed:
+        print(f"Direction filter: removed {len(removed)} opposite-direction tracks",
+              flush=True)
+    return filtered, len(removed)
+
+
+def deduplicate_tracks(speeds, tracker, max_overlap_frames=10, min_spatial_dist=50):
+    """Remove duplicate track measurements for the same vehicle."""
+    if len(speeds) < 2:
+        return speeds, 0
+
+    track_info = {}
+    for tid in speeds:
+        track = tracker.tracks.get(tid)
+        if track is None or len(track.raw_history) < 2:
+            continue
+        raw = list(track.raw_history)
+        track_info[tid] = {
+            'first_frame': raw[0][0], 'last_frame': raw[-1][0],
+            'start_pos': (raw[0][1], raw[0][2]),
+            'end_pos': (raw[-1][1], raw[-1][2]),
+            'n_frames': len(raw), 'speed': speeds[tid]['speed']
+        }
+
+    sorted_ids = sorted(track_info.keys(),
+                        key=lambda t: track_info[t]['first_frame'])
+    to_remove = set()
+
+    for i in range(len(sorted_ids)):
+        if sorted_ids[i] in to_remove:
+            continue
+        for j in range(i + 1, len(sorted_ids)):
+            if sorted_ids[j] in to_remove:
+                continue
+            a, b = sorted_ids[i], sorted_ids[j]
+            ia, ib = track_info[a], track_info[b]
+            gap = ib['first_frame'] - ia['last_frame']
+            if gap > max_overlap_frames:
+                break
+            if gap < -max_overlap_frames:
+                continue
+            dx = ia['end_pos'][0] - ib['start_pos'][0]
+            dy = ia['end_pos'][1] - ib['start_pos'][1]
+            if math.sqrt(dx * dx + dy * dy) > min_spatial_dist:
+                continue
+            avg_spd = (ia['speed'] + ib['speed']) / 2
+            if avg_spd > 0 and abs(ia['speed'] - ib['speed']) / avg_spd > 0.50:
+                continue
+            to_remove.add(b if ia['n_frames'] >= ib['n_frames'] else a)
+
+    if to_remove:
+        print(f"Deduplication: removed {len(to_remove)} tracks", flush=True)
+    return {t: d for t, d in speeds.items() if t not in to_remove}, len(to_remove)
+
+
+def stitch_tracks_for_behavior(tracker, max_gap_frames=30, max_spatial_dist=150,
+                               mc_max_gap_frames=None, mc_max_spatial_dist=None):
+    """Stitch fragmented tracks for behavior analysis across fragments."""
+    if mc_max_gap_frames is None:
+        mc_max_gap_frames = max_gap_frames
+    if mc_max_spatial_dist is None:
+        mc_max_spatial_dist = max_spatial_dist
+
+    fragments = []
+    for tid, track in tracker.tracks.items():
+        if len(track.raw_history) < 5:
+            continue
+        raw = list(track.raw_history)
+        ground = list(track.ground_history)
+        fragments.append({
+            'id': tid, 'class': track.get_corrected_class(),
+            'first_frame': raw[0][0], 'last_frame': raw[-1][0],
+            'start_pos': (raw[0][1], raw[0][2]),
+            'end_pos': (raw[-1][1], raw[-1][2]),
+            'raw_history': raw, 'ground_history': ground,
+        })
+    fragments.sort(key=lambda f: f['first_frame'])
+
+    used = set()
+    stitched = []
+    for frag in fragments:
+        if frag['id'] in used:
+            continue
+        chain = list(frag['raw_history'])
+        ground_chain = list(frag['ground_history'])
+        chain_ids = [frag['id']]
+        cur_end = frag['end_pos']
+        cur_last = frag['last_frame']
+        cur_class = frag['class']
+        used.add(frag['id'])
+
+        changed = True
+        while changed:
+            changed = False
+            best, best_dist = None, float('inf')
+            for c in fragments:
+                if c['id'] in used or c['class'] != cur_class:
+                    continue
+                gap = c['first_frame'] - cur_last
+                is_mc = (cur_class == "Motorcycle")
+                gl = mc_max_gap_frames if is_mc else max_gap_frames
+                dl = mc_max_spatial_dist if is_mc else max_spatial_dist
+                if gap < 0 or gap > gl:
+                    continue
+                dx = c['start_pos'][0] - cur_end[0]
+                dy = c['start_pos'][1] - cur_end[1]
+                d = math.sqrt(dx * dx + dy * dy)
+                if d < dl and d < best_dist:
+                    best, best_dist = c, d
+            if best:
+                chain.extend(best['raw_history'])
+                ground_chain.extend(best['ground_history'])
+                chain_ids.append(best['id'])
+                cur_end = best['end_pos']
+                cur_last = best['last_frame']
+                used.add(best['id'])
+                changed = True
+
+        stitched.append({
+            'ids': chain_ids, 'class': cur_class,
+            'raw_history': chain, 'ground_history': ground_chain,
+            'n_fragments': len(chain_ids)
+        })
+    return stitched
+
+
+# ============================================================================
+# Main Detection Function
+# ============================================================================
+
+def run_detection_on_video(video_path: str, calibration_points=None,
+                           reference_distance_meters=None, reference_points=None,
+                           progress_callback=None, video_record=None,
+                           speed_limit_kmh=None):
     """
-    Run YOLO object detection on video with optional perspective transformation and aggressive behavior detection.
-    
+    Run YOLO object detection on video with perspective-transform speed estimation
+    and post-processing behavior detection.
+
+    Uses linear-fit speed estimation on perspective-transformed track positions,
+    Kalman-filtered tracking, and post-processing for behavior detection
+    (speeding, swerving, abrupt stopping).
+
+    Detection runs on the ORIGINAL frame (not warped) for best YOLO accuracy.
+    The perspective transform is only applied to track points for metric calculation.
+
     Args:
         video_path: Path to the video file
-        calibration_points: List of 4 calibration points for perspective transform
-        reference_distance_meters: Real-world distance in meters for scale calculation
-        reference_points: List of 2 points with known distance (e.g., road marking edges)
-        progress_callback: Optional callback function(progress: int) for progress updates
+        calibration_points: List of 4 dicts with x, y coordinates for perspective transform
+        reference_distance_meters: Real-world distance between reference points in meters
+        reference_points: List of 2 dicts with x, y coordinates for scale calibration
+        progress_callback: Optional callback function(progress: int)
         video_record: Optional Video model instance for database progress updates
+        speed_limit_kmh: Speed limit in km/h (default: SPEED_LIMIT_KMH config value)
+
+    Returns:
+        Dictionary with keys: status, message, total_unique, total_speeding,
+        total_swerving, total_abrupt_stopping, breakdown, meter_per_pixel,
+        jeepney_hotspot
     """
+    if speed_limit_kmh is None:
+        speed_limit_kmh = SPEED_LIMIT_KMH
+
     results_summary = {
         "status": "failed",
         "message": "",
@@ -503,277 +996,497 @@ def run_detection_on_video(video_path: str, calibration_points=None, reference_d
         results_summary["message"] = f"Video not found: {video_path}"
         return results_summary
 
+    # --- Load models ---
     try:
         model = YOLO(MODEL_PATH)
     except Exception as e:
         results_summary["message"] = f"Model load failed: {str(e)}"
         return results_summary
 
+    pretrained_model = None
+    use_hybrid = False
+    if os.path.exists(PRETRAINED_MODEL_PATH):
+        try:
+            pretrained_model = YOLO(PRETRAINED_MODEL_PATH)
+            use_hybrid = True
+            print(f"[YOLO] Hybrid mode: {PRETRAINED_MODEL_PATH} + {MODEL_PATH}",
+                  flush=True)
+        except Exception as e:
+            print(f"[YOLO] Pretrained model load failed, single model: {e}",
+                  flush=True)
+
+    if not use_hybrid:
+        print(f"[YOLO] Single model mode: {MODEL_PATH}", flush=True)
+
+    # --- Open video ---
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         results_summary["message"] = f"Could not open video: {video_path}"
         return results_summary
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps == 0:
-        fps = 30.0 # Default if unknown
-    
-    # Calculate accurate meter_per_pixel if calibration data is provided
+    actual_fps = cap.get(cv2.CAP_PROP_FPS)
+    if actual_fps == 0:
+        actual_fps = 30.0
+    fps = actual_fps
+
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
-    meter_per_pixel = HARDCODED_METER_PER_PIXEL
-    perspective_matrix = None
-    
-    # If we have 4 calibration points, calculate the perspective transform matrix first
-    if calibration_points and len(calibration_points) == 4:
-        src_points = np.float32([
-            [calibration_points[0]['x'], calibration_points[0]['y']],  # top-left
-            [calibration_points[1]['x'], calibration_points[1]['y']],  # top-right
-            [calibration_points[2]['x'], calibration_points[2]['y']],  # bottom-right
-            [calibration_points[3]['x'], calibration_points[3]['y']]   # bottom-left
-        ])
-        
-        dst_points = np.float32([
-            [0, 0],
-            [frame_width - 1, 0],
-            [frame_width - 1, frame_height - 1],
-            [0, frame_height - 1]
-        ])
-        
-        perspective_matrix = cv2.getPerspectiveTransform(src_points, dst_points)
-        print(f"\n[Perspective Transform] Matrix calculated from 4 calibration points", flush=True)
-    
-    # Now calculate meter_per_pixel with the perspective matrix (if available)
-    if reference_points and len(reference_points) == 2 and reference_distance_meters:
-        # Use two-point method with perspective transform
-        meter_per_pixel = calculate_meter_per_pixel(
-            calibration_points,
-            reference_distance_meters,
-            (frame_height, frame_width),
-            reference_points=reference_points,
-            perspective_matrix=perspective_matrix
-        )
-        results_summary["meter_per_pixel"] = meter_per_pixel
-    elif calibration_points and reference_distance_meters:
-        # Use four-point method (fallback - less accurate)
-        meter_per_pixel = calculate_meter_per_pixel(
-            calibration_points, 
-            reference_distance_meters,
-            (frame_height, frame_width),
-            perspective_matrix=perspective_matrix
-        )
-        results_summary["meter_per_pixel"] = meter_per_pixel
-    else:
-        print(f"\n[Warning] Using default scale: {HARDCODED_METER_PER_PIXEL} meters/pixel", flush=True)
-        print("[Warning] For accurate speed detection, provide calibration and reference points\n", flush=True)
-
-    # Map to store the custom track objects
-    active_tracks = {} 
-    
-    # Set to track unique IDs that have appeared for total count
-    unique_track_ids_seen = set()
-    # Sets to track unique IDs with aggressive behaviors
-    speeding_track_ids = set()
-    swerving_track_ids = set()
-    abrupt_stopping_track_ids = set()
-    unique_counts = {}
-
-    # Get total frame count for progress calculation
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    frame_idx = 0
+
+    print(f"Video: {frame_width}x{frame_height} @ {actual_fps:.1f} FPS, "
+          f"{total_frames} frames", flush=True)
+
+    # --- Compute perspective transform and calibration ---
+    transformation_matrix = None
+    pixels_per_meter = 1.0 / HARDCODED_METER_PER_PIXEL
+
+    if calibration_points and len(calibration_points) == 4:
+        # Convert dict points to array
+        src_pts = []
+        for pt in calibration_points:
+            if isinstance(pt, dict):
+                src_pts.append([pt['x'], pt['y']])
+            else:
+                src_pts.append([pt[0], pt[1]])
+        src_arr = np.float32(src_pts)
+
+        # Compute destination rectangle from source point geometry (preserves aspect ratio)
+        rect_width = int(max(
+            np.linalg.norm(src_arr[1] - src_arr[0]),
+            np.linalg.norm(src_arr[2] - src_arr[3])
+        ))
+        rect_height = int(max(
+            np.linalg.norm(src_arr[3] - src_arr[0]),
+            np.linalg.norm(src_arr[2] - src_arr[1])
+        ))
+        rect_width = max(rect_width, 1)
+        rect_height = max(rect_height, 1)
+
+        dst_arr = np.float32([
+            [0, 0],
+            [rect_width, 0],
+            [rect_width, rect_height],
+            [0, rect_height]
+        ])
+
+        transformation_matrix = cv2.getPerspectiveTransform(src_arr, dst_arr)
+        print(f"[Calibration] Perspective transform: {rect_width}x{rect_height} "
+              f"bird's-eye view", flush=True)
+
+        # Compute pixels_per_meter from reference points
+        if (reference_points and len(reference_points) == 2 and
+                reference_distance_meters and reference_distance_meters > 0):
+            ref_pts = []
+            for pt in reference_points:
+                if isinstance(pt, dict):
+                    ref_pts.append([pt['x'], pt['y']])
+                else:
+                    ref_pts.append([pt[0], pt[1]])
+
+            ref_arr = np.float32(ref_pts).reshape(-1, 1, 2)
+            transformed_ref = cv2.perspectiveTransform(ref_arr, transformation_matrix)
+            p1 = transformed_ref[0][0]
+            p2 = transformed_ref[1][0]
+            pixel_dist = np.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
+
+            if pixel_dist > 0:
+                pixels_per_meter = pixel_dist / reference_distance_meters
+                print(f"[Calibration] Reference: {reference_distance_meters:.2f}m = "
+                      f"{pixel_dist:.1f}px -> {pixels_per_meter:.2f} px/m", flush=True)
+            else:
+                pixels_per_meter = rect_width / 10.0
+                print(f"[Calibration] Reference points coincide, fallback: "
+                      f"{pixels_per_meter:.2f} px/m", flush=True)
+        else:
+            pixels_per_meter = rect_width / 10.0
+            print(f"[Calibration] No reference measurement, estimated: "
+                  f"{pixels_per_meter:.2f} px/m", flush=True)
+    else:
+        # No calibration points: use identity transform with default scale
+        transformation_matrix = np.eye(3, dtype=np.float32)
+        pixels_per_meter = 1.0 / HARDCODED_METER_PER_PIXEL
+        print(f"[Calibration] No calibration points, using default: "
+              f"{pixels_per_meter:.2f} px/m", flush=True)
+
+    meter_per_pixel = 1.0 / pixels_per_meter
+    results_summary["meter_per_pixel"] = meter_per_pixel
+
+    # --- Frame processing ---
+    tracker = VehicleTracker()
+    unique_track_ids_seen = set()
+    unique_counts_raw = {}  # Raw class counts from first detection
+
+    frame_id = 0
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame_idx += 1
-        
         # Update progress every 10 frames
-        if total_frames > 0 and frame_idx % 10 == 0:
-            progress = min(int((frame_idx / total_frames) * 100), 100)
+        if total_frames > 0 and frame_id % 10 == 0:
+            progress = min(int((frame_id / total_frames) * 100), 99)
             if video_record:
                 video_record.yolo_progress = progress
                 video_record.processing_stage = 'yolo'
                 video_record.save(update_fields=['yolo_progress', 'processing_stage'])
 
-        # Apply Perspective Transform
-        if calibration_points:
-            frame = apply_perspective_transform(frame, calibration_points)
+        # --- Detection on ORIGINAL frame (not warped) for best accuracy ---
+        detections = []
 
-        # Run YOLO Tracking
-        results = model.track(source=frame, conf=CONFIDENCE_THRESHOLD,
-                              tracker=TRACKER_CONFIG, persist=True, verbose=False)
-        result = results[0]
-        boxes = result.boxes
+        if use_hybrid and pretrained_model is not None:
+            # Pretrained model for standard vehicle classes
+            results = pretrained_model.track(
+                frame, persist=True, conf=CONFIDENCE_THRESHOLD,
+                iou=0.3, verbose=False, imgsz=YOLO_IMGSZ)
+            for r in results:
+                if r.boxes:
+                    boxes = r.boxes.xyxy.cpu().numpy()
+                    tids = (r.boxes.id.cpu().numpy().astype(int)
+                            if r.boxes.id is not None
+                            else np.arange(len(boxes)))
+                    classes = r.boxes.cls.cpu().numpy().astype(int)
+                    for box, tid, cid in zip(boxes, tids, classes):
+                        yc = pretrained_model.names[int(cid)]
+                        if yc in YOLO_TO_STANDARD_MAPPING:
+                            cx, cy, bsz = get_tracking_point(box)
+                            gx, gy = get_ground_point(box)
+                            detections.append({
+                                'track_id': tid,
+                                'class_name': YOLO_TO_STANDARD_MAPPING[yc],
+                                'center_x': cx, 'center_y': cy,
+                                'box': box, 'box_size': bsz,
+                                'ground_xy': (gx, gy)
+                            })
 
-        # Update Tracks and Calculate Speed
-        current_frame_track_ids = set()
-        if boxes.id is not None:
-            track_ids = boxes.id.cpu().numpy().astype(int)
-            xywh = boxes.xywh.cpu().numpy()
-            cls = boxes.cls.cpu().numpy().astype(int)
+            # Custom model for Jeepney detection only
+            results = model.track(
+                frame, persist=True, conf=CONFIDENCE_THRESHOLD,
+                iou=0.3, verbose=False, imgsz=YOLO_IMGSZ)
+            for r in results:
+                if r.boxes:
+                    boxes = r.boxes.xyxy.cpu().numpy()
+                    tids = (r.boxes.id.cpu().numpy().astype(int)
+                            if r.boxes.id is not None
+                            else np.arange(len(boxes)) + 100000)
+                    classes = r.boxes.cls.cpu().numpy().astype(int)
+                    for box, tid, cid in zip(boxes, tids, classes):
+                        if int(cid) == 2:  # Jeepney class in custom model
+                            if any(calculate_iou(box, e['box']) > 0.3
+                                   for e in detections if e.get('box') is not None):
+                                continue
+                            cx, cy, bsz = get_tracking_point(box)
+                            gx, gy = get_ground_point(box)
+                            real_tid = (tid + 100000
+                                        if r.boxes.id is not None else tid)
+                            detections.append({
+                                'track_id': real_tid,
+                                'class_name': 'Jeepney',
+                                'center_x': cx, 'center_y': cy,
+                                'box': box, 'box_size': bsz,
+                                'ground_xy': (gx, gy)
+                            })
 
-            for tid, box_data, class_id in zip(track_ids, xywh, cls):
+            # Far-field boost: upscale top 40% for better far-distance detection
+            if FAR_FIELD_BOOST:
+                hf, wf = frame.shape[:2]
+                far_h = int(hf * 0.4)
+                if far_h > 10 and wf > 10:
+                    far_up = cv2.resize(frame[:far_h, :], (wf * 2, far_h * 2),
+                                        interpolation=cv2.INTER_LINEAR)
+                    for r in pretrained_model.predict(
+                            far_up, conf=CONFIDENCE_THRESHOLD, iou=0.3,
+                            verbose=False, imgsz=YOLO_IMGSZ):
+                        if r.boxes:
+                            for box_f, cls_f in zip(
+                                    r.boxes.xyxy.cpu().numpy(),
+                                    r.boxes.cls.cpu().numpy().astype(int)):
+                                yc = pretrained_model.names[int(cls_f)]
+                                if yc not in YOLO_TO_STANDARD_MAPPING:
+                                    continue
+                                mb = box_f / 2.0  # Scale back to original coords
+                                if any(calculate_iou(mb, e['box']) > 0.3
+                                       for e in detections
+                                       if e.get('box') is not None):
+                                    continue
+                                cx, cy, bsz = get_tracking_point(mb)
+                                sc = YOLO_TO_STANDARD_MAPPING[yc]
+                                mt = _match_to_existing_track(
+                                    tracker, cx, cy, sc, frame_id,
+                                    max_dist=120, max_age=15)
+                                if mt is not None:
+                                    gx, gy = get_ground_point(mb)
+                                    detections.append({
+                                        'track_id': mt, 'class_name': sc,
+                                        'center_x': cx, 'center_y': cy,
+                                        'box': mb, 'box_size': bsz,
+                                        'ground_xy': (gx, gy)
+                                    })
+
+            # Mid-field boost: upscale middle band for motorcycle detection
+            if MID_FIELD_BOOST:
+                hf, wf = frame.shape[:2]
+                mt_top, mt_bot = int(hf * 0.3), int(hf * 0.7)
+                mid_h = mt_bot - mt_top
+                if mid_h > 10 and wf > 10:
+                    mid_up = cv2.resize(
+                        frame[mt_top:mt_bot, :],
+                        (int(wf * 1.5), int(mid_h * 1.5)),
+                        interpolation=cv2.INTER_LINEAR)
+                    for r in pretrained_model.predict(
+                            mid_up, conf=MOTORCYCLE_CONF_THRESHOLD, iou=0.3,
+                            verbose=False, imgsz=YOLO_IMGSZ):
+                        if r.boxes:
+                            for box_m, cls_m in zip(
+                                    r.boxes.xyxy.cpu().numpy(),
+                                    r.boxes.cls.cpu().numpy().astype(int)):
+                                if pretrained_model.names[int(cls_m)] != 'motorcycle':
+                                    continue
+                                mb = box_m / 1.5
+                                mb[1] += mt_top
+                                mb[3] += mt_top
+                                if any(calculate_iou(mb, e['box']) > 0.25
+                                       for e in detections
+                                       if e.get('box') is not None):
+                                    continue
+                                cx, cy, bsz = get_tracking_point(mb)
+                                mt = _match_to_existing_track(
+                                    tracker, cx, cy, 'Motorcycle', frame_id,
+                                    max_dist=100, max_age=15)
+                                if mt is not None:
+                                    gx, gy = get_ground_point(mb)
+                                    detections.append({
+                                        'track_id': mt,
+                                        'class_name': 'Motorcycle',
+                                        'center_x': cx, 'center_y': cy,
+                                        'box': mb, 'box_size': bsz,
+                                        'ground_xy': (gx, gy)
+                                    })
+        else:
+            # Single model mode: custom model detects all classes
+            results = model.track(
+                frame, persist=True, conf=CONFIDENCE_THRESHOLD,
+                tracker=TRACKER_CONFIG, iou=0.3, verbose=False, imgsz=YOLO_IMGSZ)
+            for r in results:
+                if r.boxes and r.boxes.id is not None:
+                    boxes = r.boxes.xyxy.cpu().numpy()
+                    tids = r.boxes.id.cpu().numpy().astype(int)
+                    classes = r.boxes.cls.cpu().numpy().astype(int)
+                    for box, tid, cid in zip(boxes, tids, classes):
+                        class_name = CUSTOM_CLASS_MAPPING.get(
+                            int(cid), model.names.get(int(cid), 'unknown'))
+                        cx, cy, bsz = get_tracking_point(box)
+                        gx, gy = get_ground_point(box)
+                        detections.append({
+                            'track_id': tid,
+                            'class_name': class_name,
+                            'center_x': cx, 'center_y': cy,
+                            'box': box, 'box_size': bsz,
+                            'ground_xy': (gx, gy)
+                        })
+
+        # Track unique IDs and classes for raw breakdown
+        for det in detections:
+            tid = det['track_id']
+            if tid not in unique_track_ids_seen:
                 unique_track_ids_seen.add(tid)
-                current_frame_track_ids.add(tid)
-                
-                # Center point (x, y)
-                x_center, y_center, _, _ = box_data
-                center = (x_center, y_center)
-                class_name = model.names.get(class_id, 'unknown')
+                cls = det['class_name']
+                unique_counts_raw[cls] = unique_counts_raw.get(cls, 0) + 1
 
-                if tid not in active_tracks:
-                    # New track found
-                    active_tracks[tid] = Track(tid, center)
-                    # Count for breakdown only when first seen
-                    unique_counts[class_name] = unique_counts.get(class_name, 0) + 1
-                else:
-                    # Update existing track
-                    active_tracks[tid].update(center)
+        # Update tracker (handles deduplication internally)
+        tracker.update(frame_id, detections)
 
-                # Speed and Acceleration Calculation (only after sufficient history)
-                current_track = active_tracks[tid]
-                
-                # Update velocity vector (which also updates heading angle)
-                vx, vy = current_track.get_velocity_vector(meter_per_pixel, fps)
-                
-                # Calculate speed using calibrated meter_per_pixel
-                speed_m_s = current_track.speed_m_s(meter_per_pixel, fps)
-                behaviors_detected = []
-                
-                if speed_m_s is not None:
-                    speed_kmh = speed_m_s * 3.6
-                    
-                    # Check for speeding - require sustained speeding (multiple frames)
-                    if speed_kmh > SPEED_LIMIT_KMH:
-                        current_track.speeding_frames += 1
-                        # Only flag as speeding if sustained for at least 3 frames
-                        if current_track.speeding_frames >= 3 and not current_track.is_speeding:
-                            current_track.is_speeding = True
-                            speeding_track_ids.add(tid)
-                            if "Speeding" not in current_track.aggressive_behaviors:
-                                current_track.aggressive_behaviors.append("Speeding")
-                        if current_track.is_speeding:
-                            behaviors_detected.append("SPEEDING")
-                    else:
-                        # Reset counter if not speeding
-                        current_track.speeding_frames = max(0, current_track.speeding_frames - 1)
-                
-                # Calculate accelerations using calibrated meter_per_pixel
-                longitudinal_accel, lateral_accel = current_track.calculate_accelerations(
-                    meter_per_pixel, fps
-                )
-                
-                if longitudinal_accel is not None and lateral_accel is not None:
-                    # Check for swerving using oscillation detection instead of simple threshold
-                    if current_track.detect_swerving(lateral_accel):
-                        if not current_track.is_swerving:
-                            current_track.is_swerving = True
-                            swerving_track_ids.add(tid)
-                            if "Swerving" not in current_track.aggressive_behaviors:
-                                current_track.aggressive_behaviors.append("Swerving")
-                        behaviors_detected.append("SWERVING")
-                    
-                    # Check for abrupt stopping (negative longitudinal acceleration below threshold)
-                    # Require sustained hard braking, not just momentary spike
-                    stopping_threshold = LONGITUDINAL_ACCEL_THRESHOLD
-                    if current_track.is_reversing:
-                        # Reversing vehicles have different acceleration profile
-                        stopping_threshold = LONGITUDINAL_ACCEL_THRESHOLD * 1.5
-                    
-                    if longitudinal_accel < stopping_threshold:
-                        current_track.abrupt_stop_frames += 1
-                        # Only flag if sustained for at least 2 frames
-                        if current_track.abrupt_stop_frames >= 2 and not current_track.is_abrupt_stopping:
-                            current_track.is_abrupt_stopping = True
-                            abrupt_stopping_track_ids.add(tid)
-                            if "Abrupt Stopping" not in current_track.aggressive_behaviors:
-                                current_track.aggressive_behaviors.append("Abrupt Stopping")
-                        if current_track.is_abrupt_stopping:
-                            behaviors_detected.append("ABRUPT STOPPING")
-                    else:
-                        # Reset counter if not hard braking
-                        current_track.abrupt_stop_frames = max(0, current_track.abrupt_stop_frames - 1)
-                
-                # Detect reversing behavior
-                if current_track.detect_reversing():
-                    behaviors_detected.append("REVERSING")
-                
-                # Print detection info periodically with direction information
-                if frame_idx % 10 == 0 and (speed_m_s is not None or longitudinal_accel is not None):
-                    status_parts = []
-                    if speed_m_s is not None:
-                        status_parts.append(f"Speed: {speed_kmh:.1f} km/h")
-                    
-                    # Add heading information
-                    heading_deg = current_track.get_heading_degrees()
-                    if heading_deg is not None:
-                        # Convert to cardinal direction
-                        cardinal = ""
-                        if 337.5 <= heading_deg or heading_deg < 22.5:
-                            cardinal = "E"
-                        elif 22.5 <= heading_deg < 67.5:
-                            cardinal = "SE"
-                        elif 67.5 <= heading_deg < 112.5:
-                            cardinal = "S"
-                        elif 112.5 <= heading_deg < 157.5:
-                            cardinal = "SW"
-                        elif 157.5 <= heading_deg < 202.5:
-                            cardinal = "W"
-                        elif 202.5 <= heading_deg < 247.5:
-                            cardinal = "NW"
-                        elif 247.5 <= heading_deg < 292.5:
-                            cardinal = "N"
-                        elif 292.5 <= heading_deg < 337.5:
-                            cardinal = "NE"
-                        status_parts.append(f"Heading: {cardinal} ({heading_deg:.1f}°)")
-                    
-                    if longitudinal_accel is not None:
-                        status_parts.append(f"Long Accel: {longitudinal_accel:.2f} m/s²")
-                    if lateral_accel is not None:
-                        status_parts.append(f"Lat Accel: {lateral_accel:.2f} m/s²")
-                    
-                    behavior_str = " | ".join(behaviors_detected) if behaviors_detected else "Normal"
-                    status_line = f"Frame {frame_idx}: ID {tid} ({class_name}) - {' | '.join(status_parts)} [{behavior_str}]"
-                    print(status_line, flush=True)
-        
+        frame_id += 1
+        if frame_id % 200 == 0:
+            print(f"  Processed {frame_id}/{total_frames} frames, "
+                  f"{len(tracker.tracks)} active tracks", flush=True)
+
     cap.release()
+    print(f"Frame processing complete: {frame_id} frames, "
+          f"{len(tracker.tracks)} tracks", flush=True)
 
-    # Set final progress to 100% when YOLO processing is complete
+    # ========================================================================
+    # POST-PROCESSING
+    # ========================================================================
+
+    # 1. Merge fragmented tracks
+    print(f"\nMerging fragmented tracks...", flush=True)
+    print(f"  Before: {len(tracker.tracks)}", flush=True)
+    n_merged = merge_fragmented_tracks(
+        tracker, max_gap_frames=60, max_spatial_dist=250, overlap_max_dist=120)
+    print(f"  After: {len(tracker.tracks)} ({n_merged} absorbed)", flush=True)
+
+    # Recompute breakdown from merged tracker (more accurate than raw counts)
+    unique_counts = {}
+    for tid, track in tracker.tracks.items():
+        if len(track.raw_history) >= 3:
+            cls = track.get_corrected_class()
+            unique_counts[cls] = unique_counts.get(cls, 0) + 1
+
+    # 2. Calculate speeds using linear fit
+    print(f"\nCalculating speeds... ({len(tracker.tracks)} tracks)", flush=True)
+    speeds = {}
+    for tid, track in tracker.tracks.items():
+        is_mc = track.is_motorcycle()
+        mh = MOTORCYCLE_MIN_HISTORY_FOR_SPEED if is_mc else MIN_HISTORY_FOR_SPEED
+        if len(track.raw_history) < mh:
+            continue
+        mg = MOTORCYCLE_MAX_FRAME_GAP if is_mc else MAX_FRAME_GAP
+        if not track.is_track_continuous(max_gap=mg):
+            continue
+        if track.get_average_movement_per_frame() < (0.5 if is_mc else 1.0):
+            continue
+
+        # Linear fit on raw box-center positions (no Kalman lag)
+        fit = calculate_speed_linear_fit(
+            list(track.raw_history), transformation_matrix, pixels_per_meter, fps,
+            min_r_squared=0.0
+        )
+        if fit is None:
+            continue
+        actual_r2_threshold = MOTORCYCLE_MIN_R_SQUARED if is_mc else MIN_R_SQUARED
+        if fit['r_squared'] < actual_r2_threshold:
+            continue
+        md = MOTORCYCLE_MIN_DISTANCE_METERS if is_mc else MIN_DISTANCE_TRAVELED_METERS
+        if fit['distance_m'] < md:
+            continue
+        if fit['speed_kmh'] > MAX_REALISTIC_SPEED_KMH or fit['speed_kmh'] < MIN_REALISTIC_SPEED_KMH:
+            continue
+
+        # Detect behaviors for this track
+        raw_pos = list(track.raw_history)
+        ground_pos = list(track.ground_history)
+        stop = detect_abrupt_stop(raw_pos, transformation_matrix, pixels_per_meter, fps)
+        swerve = detect_swerving(ground_pos, transformation_matrix, pixels_per_meter)
+        spd_info = detect_speeding(fit['speed_kmh'], speed_limit_kmh)
+
+        speeds[tid] = {
+            'speed': fit['speed_kmh'], 'class_name': track.get_corrected_class(),
+            'distance': fit['distance_m'], 'frames': fit['frames'],
+            'r_squared': fit['r_squared'],
+            'abrupt_stop': stop['abrupt_stop'],
+            'max_decel_ms2': stop['max_decel_ms2'],
+            'swerving': swerve['swerving'],
+            'max_lateral_m': swerve['max_lateral_m'],
+            'direction_changes': swerve['direction_changes'],
+            'speeding': spd_info['speeding'],
+            'speed_margin_kmh': spd_info['margin_kmh'],
+            'within_error_margin': spd_info['within_error_margin'],
+        }
+
+    # 3. Filter and deduplicate
+    print(f"Tracks before post-processing: {len(speeds)}", flush=True)
+    speeds, n_dir = filter_by_dominant_direction(
+        speeds, tracker, transformation_matrix, pixels_per_meter,
+        angle_tolerance_deg=45.0)
+    speeds, n_ded = deduplicate_tracks(
+        speeds, tracker, max_overlap_frames=20, min_spatial_dist=200)
+    print(f"Tracks after post-processing: {len(speeds)} "
+          f"(dir: -{n_dir}, dedup: -{n_ded})", flush=True)
+
+    # 4. Stitch tracks for additional behavior detection
+    stitched_tracks = stitch_tracks_for_behavior(
+        tracker, max_gap_frames=30, max_spatial_dist=120,
+        mc_max_gap_frames=MOTORCYCLE_STITCH_GAP_FRAMES,
+        mc_max_spatial_dist=MOTORCYCLE_STITCH_SPATIAL_DIST)
+
+    for st in stitched_tracks:
+        if st['n_fragments'] == 1 and st['ids'][0] in speeds:
+            continue
+        raw = st['raw_history']
+        if len(raw) < 10:
+            continue
+        sf = calculate_speed_linear_fit(
+            raw, transformation_matrix, pixels_per_meter, fps, min_r_squared=0.70)
+        if sf is None:
+            continue
+        stop = detect_abrupt_stop(raw, transformation_matrix, pixels_per_meter, fps)
+        ground = st.get('ground_history', raw)
+        swerve = detect_swerving(ground, transformation_matrix, pixels_per_meter)
+        has_beh = stop['abrupt_stop'] or swerve['swerving']
+
+        if has_beh or sf is not None:
+            # Update existing speed records with behavior info from stitched tracks
+            for cid in st['ids']:
+                if cid in speeds:
+                    if stop['abrupt_stop']:
+                        speeds[cid]['abrupt_stop'] = True
+                        speeds[cid]['max_decel_ms2'] = max(
+                            speeds[cid].get('max_decel_ms2', 0),
+                            stop['max_decel_ms2'])
+                    if swerve['swerving']:
+                        speeds[cid]['swerving'] = True
+                        speeds[cid]['max_lateral_m'] = max(
+                            speeds[cid].get('max_lateral_m', 0),
+                            swerve['max_lateral_m'])
+                        speeds[cid]['direction_changes'] = max(
+                            speeds[cid].get('direction_changes', 0),
+                            swerve['direction_changes'])
+
+    # Set final progress
     if video_record:
         video_record.yolo_progress = 100
         video_record.processing_stage = 'yolo'
         video_record.save(update_fields=['yolo_progress', 'processing_stage'])
 
-    # Check for jeepney hotspot (>15 jeepneys detected)
-    jeepney_count = unique_counts.get('jeepney', 0)
+    # ========================================================================
+    # BUILD RESULTS
+    # ========================================================================
+    speeding_count = sum(1 for d in speeds.values() if d.get('speeding'))
+    swerving_count = sum(1 for d in speeds.values() if d.get('swerving'))
+    abrupt_stop_count = sum(1 for d in speeds.values() if d.get('abrupt_stop'))
+
+    jeepney_count = unique_counts.get('Jeepney', 0) + unique_counts.get('jeepney', 0)
     is_jeepney_hotspot = jeepney_count > 15
 
     results_summary["status"] = "success"
-    results_summary["total_unique"] = len(unique_track_ids_seen)
-    results_summary["total_speeding"] = len(speeding_track_ids)
-    results_summary["total_swerving"] = len(swerving_track_ids)
-    results_summary["total_abrupt_stopping"] = len(abrupt_stopping_track_ids)
+    results_summary["total_unique"] = sum(unique_counts.values())
+    results_summary["total_speeding"] = speeding_count
+    results_summary["total_swerving"] = swerving_count
+    results_summary["total_abrupt_stopping"] = abrupt_stop_count
     results_summary["breakdown"] = unique_counts
     results_summary["meter_per_pixel"] = meter_per_pixel
     results_summary["jeepney_hotspot"] = is_jeepney_hotspot
-    
-    # Print the summary to the console as requested
-    print("\n" + "="*60, flush=True)
+
+    # Print summary
+    print("\n" + "=" * 60, flush=True)
     print("YOLO VIDEO PROCESSING SUMMARY", flush=True)
-    print("="*60, flush=True)
-    print(f"Scale Factor: {meter_per_pixel:.6f} meters/pixel", flush=True)
-    print(f"Total Unique Objects Tracked: {results_summary['total_unique']}", flush=True)
-    print(f"\nAggressive Behaviors Detected:", flush=True)
-    print(f"  • Speeding (>{SPEED_LIMIT_KMH} km/h): {results_summary['total_speeding']} vehicles", flush=True)
-    print(f"  • Swerving ({LATERAL_ACCEL_MIN}-{LATERAL_ACCEL_MAX} m/s²): {results_summary['total_swerving']} vehicles", flush=True)
-    print(f"  • Abrupt Stopping (<{LONGITUDINAL_ACCEL_THRESHOLD} m/s²): {results_summary['total_abrupt_stopping']} vehicles", flush=True)
-    print(f"\nJeepney Hotspot: {'YES' if is_jeepney_hotspot else 'NO'} ({jeepney_count} jeepneys detected)", flush=True)
+    print("=" * 60, flush=True)
+    print(f"Scale: {pixels_per_meter:.2f} px/m ({meter_per_pixel:.6f} m/px)",
+          flush=True)
+    print(f"Total Unique Vehicles: {results_summary['total_unique']}", flush=True)
+    print(f"Vehicles with valid speed: {len(speeds)}", flush=True)
+    print(f"\nAggressive Behaviors:", flush=True)
+    print(f"  Speeding (>{speed_limit_kmh} km/h): {speeding_count}", flush=True)
+    print(f"  Swerving: {swerving_count}", flush=True)
+    print(f"  Abrupt Stopping: {abrupt_stop_count}", flush=True)
+    print(f"\nJeepney Hotspot: {'YES' if is_jeepney_hotspot else 'NO'} "
+          f"({jeepney_count} jeepneys)", flush=True)
     print(f"\nClass Breakdown:", flush=True)
-    for name, count in results_summary['breakdown'].items():
-        print(f"  • {name}: {count}", flush=True)
-    print("="*60 + "\n", flush=True)
+    for name, count in sorted(unique_counts.items()):
+        print(f"  {name}: {count}", flush=True)
+
+    if speeds:
+        all_spd = [d['speed'] for d in speeds.values()]
+        all_r2 = [d.get('r_squared', 0) for d in speeds.values()]
+        print(f"\nSpeed Stats (km/h):", flush=True)
+        print(f"  Mean: {np.mean(all_spd):.2f}, Median: {np.median(all_spd):.2f}",
+              flush=True)
+        print(f"  Range: {np.min(all_spd):.2f} - {np.max(all_spd):.2f}, "
+              f"Mean R-squared: {np.mean(all_r2):.4f}", flush=True)
+
+        for tid, d in sorted(speeds.items()):
+            flags = []
+            if d.get('abrupt_stop'):
+                flags.append(f"STOP({d['max_decel_ms2']:.1f}m/s2)")
+            if d.get('swerving'):
+                flags.append(f"SWERVE({d['direction_changes']}rev)")
+            if d.get('speeding'):
+                flags.append(f"SPEED({d['speed']:.1f}km/h)")
+            if flags:
+                print(f"  Track {tid} ({d['class_name']}): {'; '.join(flags)}",
+                      flush=True)
+
+    print("=" * 60 + "\n", flush=True)
 
     return results_summary

@@ -6,6 +6,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib import messages
 from django.contrib.auth import authenticate, login
+from django.db.models import Sum
+from django.db.models.functions import TruncDate
 from .models import SavedLocation, Camera, Video
 from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer, VideoSerializer
 import requests
@@ -88,6 +90,40 @@ def saved_location_detail_api(request, pk: int):
     # DELETE
     loc.delete()
     return Response({"success": True})
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def saved_location_behaviors_api(request, pk: int):
+    """Get detailed aggressive behavior stats for a saved location"""
+    try:
+        loc = SavedLocation.objects.get(pk=pk)
+    except SavedLocation.DoesNotExist:
+        return Response({"success": False, "error": "Not found"}, status=404)
+
+    # Get all completed videos linked to this location's cameras
+    videos = Video.objects.filter(
+        camera__saved_location=loc,
+        processing_status='completed'
+    ).order_by('-uploaded_at')
+
+    video_data = VideoSerializer(videos, many=True).data
+    camera_data = CameraSerializer(loc.cameras.all(), many=True).data
+
+    return Response({
+        "success": True,
+        "location": SavedLocationSerializer(loc).data,
+        "cameras": camera_data,
+        "videos": video_data,
+        "summary": {
+            "total_vehicles": loc.total_vehicles,
+            "total_occurrences": loc.total_occurrences,
+            "speeding": loc.total_speeding,
+            "swerving": loc.total_swerving,
+            "abrupt_stopping": loc.total_abrupt_stopping,
+            "behaviors": loc.behavior_summary,
+            "camera_count": loc.camera_count,
+        }
+    })
 
 # ---- Auth (session-based example) ----
 @api_view(['GET'])
@@ -205,8 +241,32 @@ def cameras_api(request):
     
     ser = CameraSerializer(data=data)
     if ser.is_valid():
-        ser.save(user=user)
-        return Response({"success": True, "camera": ser.data}, status=201)
+        camera = ser.save(user=user)
+        
+        # Auto-link camera to nearest saved location (within ~500m)
+        if not camera.saved_location:
+            from math import radians, cos, sin, asin, sqrt
+            
+            def haversine(lat1, lng1, lat2, lng2):
+                lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
+                dlat = lat2 - lat1
+                dlng = lng2 - lng1
+                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlng/2)**2
+                return 6371000 * 2 * asin(sqrt(a))  # meters
+            
+            nearest = None
+            min_dist = float('inf')
+            for loc in SavedLocation.objects.all():
+                dist = haversine(lat, lng, loc.lat, loc.lng)
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest = loc
+            
+            if nearest and min_dist <= 500:  # within 500 meters
+                camera.saved_location = nearest
+                camera.save()
+        
+        return Response({"success": True, "camera": CameraSerializer(camera).data}, status=201)
     return Response({"success": False, "error": ser.errors}, status=400)
 
 @api_view(['POST'])
@@ -255,6 +315,23 @@ def upload_and_process_video(request):
             reference_distance_meters = float(reference_distance_str)
         except ValueError:
             return Response({'error': 'Invalid reference distance value'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Fall back to camera's saved calibration if not provided in this upload
+    if not calibration_points and camera.is_calibrated:
+        calibration_points = camera.calibration_points
+    if not reference_points and camera.is_calibrated:
+        reference_points = camera.reference_points
+    if reference_distance_meters is None and camera.is_calibrated:
+        reference_distance_meters = camera.reference_distance_meters
+
+    # Save calibration to camera for future reuse (if new calibration was provided)
+    save_calibration = request.POST.get('save_calibration', 'true').lower() == 'true'
+    if save_calibration and calibration_points_json:
+        camera.calibration_points = calibration_points or []
+        camera.reference_points = reference_points or []
+        camera.reference_distance_meters = reference_distance_meters
+        camera.is_calibrated = True
+        camera.save()
 
     video_record = Video.objects.create(
         camera=camera,
@@ -477,6 +554,49 @@ def camera_polygon_api(request, pk: int):
     
     return Response({"success": True, "polygon": camera.polygon})
 
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def camera_calibration_api(request, pk: int):
+    """Get, save, or clear calibration data for a camera"""
+    user = request.user
+    
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+    
+    if request.method == 'GET':
+        return Response({
+            "success": True,
+            "is_calibrated": camera.is_calibrated,
+            "calibration_points": camera.calibration_points,
+            "reference_points": camera.reference_points,
+            "reference_distance_meters": camera.reference_distance_meters,
+            "meter_per_pixel": camera.meter_per_pixel,
+        })
+    
+    if request.method == 'PUT':
+        camera.calibration_points = request.data.get('calibration_points', [])
+        camera.reference_points = request.data.get('reference_points', [])
+        camera.reference_distance_meters = request.data.get('reference_distance_meters')
+        camera.meter_per_pixel = request.data.get('meter_per_pixel')
+        camera.is_calibrated = True
+        camera.save()
+        return Response({
+            "success": True,
+            "message": "Calibration saved",
+            "is_calibrated": camera.is_calibrated,
+        })
+    
+    # DELETE — clear calibration
+    camera.calibration_points = []
+    camera.reference_points = []
+    camera.reference_distance_meters = None
+    camera.meter_per_pixel = None
+    camera.is_calibrated = False
+    camera.save()
+    return Response({"success": True, "message": "Calibration cleared"})
+
 @api_view(['PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def video_detail_api(request, pk: int):
@@ -515,3 +635,68 @@ def video_progress_api(request, pk: int):
         })
     except Video.DoesNotExist:
         return Response({"success": False, "error": "Video not found"}, status=404)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def behavior_timeline_api(request):
+    """
+    Aggregate driving-behavior counts by date for one or more cameras.
+    Query params:
+      camera_ids  – comma-separated camera IDs (required)
+      start       – ISO date string, inclusive lower bound (optional)
+      end         – ISO date string, inclusive upper bound  (optional)
+    """
+    user = request.user
+
+    raw_ids = request.query_params.get('camera_ids', '')
+    if not raw_ids:
+        return Response({"success": False, "error": "camera_ids is required"}, status=400)
+
+    try:
+        camera_ids = [int(x) for x in raw_ids.split(',') if x.strip()]
+    except ValueError:
+        return Response({"success": False, "error": "Invalid camera_ids"}, status=400)
+
+    # Only allow cameras owned by this user
+    cameras = Camera.objects.filter(pk__in=camera_ids, user=user)
+    if not cameras.exists():
+        return Response({"success": False, "error": "No matching cameras found"}, status=404)
+
+    qs = Video.objects.filter(
+        camera__in=cameras,
+        processing_status='completed',
+    )
+
+    start = request.query_params.get('start')
+    end = request.query_params.get('end')
+    if start:
+        qs = qs.filter(uploaded_at__date__gte=start)
+    if end:
+        qs = qs.filter(uploaded_at__date__lte=end)
+
+    rows = (
+        qs
+        .annotate(date=TruncDate('uploaded_at'))
+        .values('date')
+        .annotate(
+            speeding=Sum('speeding_count'),
+            swerving=Sum('swerving_count'),
+            abrupt_stopping=Sum('abrupt_stopping_count'),
+            vehicles=Sum('vehicles'),
+        )
+        .order_by('date')
+    )
+
+    data = [
+        {
+            'date': row['date'].isoformat(),
+            'speeding': row['speeding'] or 0,
+            'swerving': row['swerving'] or 0,
+            'abrupt_stopping': row['abrupt_stopping'] or 0,
+            'vehicles': row['vehicles'] or 0,
+        }
+        for row in rows
+    ]
+
+    return Response({"success": True, "timeline": data})

@@ -394,7 +394,10 @@ export default function MapView({
 
       if (mode === "map") {
         if (!editControlRef.current) {
-          editControlRef.current = new ToggleEditButton(setIsEditMode);
+          editControlRef.current = new ToggleEditButton((isEdit) => {
+            setIsEditMode(isEdit);
+            setToolMode("none");
+          });
           map.addControl(editControlRef.current, "bottom-right");
         }
       } else {
@@ -521,7 +524,7 @@ export default function MapView({
     const token = getAuthToken();
     if (!token) return false;
 
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/polygon/`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ polygon: points }),
@@ -702,6 +705,8 @@ export default function MapView({
       if (map.getSource(id)) map.removeSource(id);
     };
 
+    safeRemoveLayer("polygon-guide-fill");
+    safeRemoveLayer("polygon-guide-closing");
     safeRemoveLayer("polygon-guide");
     safeRemoveSource("polygon-guide");
 
@@ -738,6 +743,7 @@ export default function MapView({
       type: "fill",
       source: "polygons",
       paint: {
+        "fill-color": "#1d1f3f",
         "fill-opacity": 0.22,
       },
     });
@@ -747,6 +753,7 @@ export default function MapView({
       type: "line",
       source: "polygons",
       paint: {
+        "line-color": "#1d1f3f",
         "line-width": 2,
       },
     });
@@ -759,6 +766,8 @@ export default function MapView({
         properties: {
           index: i,
           isCompleted: false,
+          isFirst: i === 0,
+          canClose: i === 0 && polygonPointsRef.current.length >= 3,
         },
         geometry: { type: "Point", coordinates: pt },
       });
@@ -791,8 +800,24 @@ export default function MapView({
       type: "circle",
       source: "polygon-points",
       paint: {
-        "circle-radius": 5,
-        "circle-stroke-width": 2,
+        "circle-radius": [
+          "case",
+          ["==", ["get", "canClose"], true], 8,
+          ["==", ["get", "isFirst"], true], 7,
+          5,
+        ],
+        "circle-color": [
+          "case",
+          ["==", ["get", "canClose"], true], "#4CAF50",
+          ["==", ["get", "isCompleted"], false], "#1d1f3f",
+          "#5c6bc0",
+        ],
+        "circle-stroke-width": [
+          "case",
+          ["==", ["get", "canClose"], true], 3,
+          2,
+        ],
+        "circle-stroke-color": "#ffffff",
         "circle-opacity": 0.95,
       },
     });
@@ -817,10 +842,41 @@ export default function MapView({
     else map.once("load", apply);
   }, [renderPolygonLayers, completedPolygons, polygonPoints]);
 
+  // Update polygon opacity based on selected camera
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!map.getLayer("polygon-fill")) return;
+
+    const selected = selectedCameraId != null ? selectedCameraId : null;
+
+    if (selected == null) {
+
+      map.setPaintProperty("polygon-fill", "fill-opacity", 0.08);
+      map.setPaintProperty("polygon-line", "line-opacity", 0.25);
+    } else {
+
+      map.setPaintProperty("polygon-fill", "fill-opacity", [
+        "case",
+        ["==", ["get", "cameraId"], selected],
+        0.35,
+        0.05,
+      ]);
+      map.setPaintProperty("polygon-line", "line-opacity", [
+        "case",
+        ["==", ["get", "cameraId"], selected],
+        1,
+        0.15,
+      ]);
+    }
+  }, [selectedCameraId, completedPolygons]);
+
 
   const clearGuideline = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
+    if (map.getLayer("polygon-guide-fill")) map.removeLayer("polygon-guide-fill");
+    if (map.getLayer("polygon-guide-closing")) map.removeLayer("polygon-guide-closing");
     if (map.getLayer("polygon-guide")) map.removeLayer("polygon-guide");
     if (map.getSource("polygon-guide")) map.removeSource("polygon-guide");
   }, []);
@@ -835,32 +891,79 @@ export default function MapView({
       return;
     }
 
-    const last = pts[pts.length - 1];
     const cursor: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+    const features: any[] = [];
 
-    const data = {
-      type: "FeatureCollection",
-      features: [
-        {
-          type: "Feature",
-          properties: {},
-          geometry: {
-            type: "LineString",
-            coordinates: [last, cursor],
-          },
+    // Main polyline: all placed points → cursor
+    features.push({
+      type: "Feature",
+      properties: { kind: "main" },
+      geometry: {
+        type: "LineString",
+        coordinates: [...pts, cursor],
+      },
+    });
+
+    // Closing preview line: cursor → first point (when ≥ 3 points)
+    if (pts.length >= 3) {
+      features.push({
+        type: "Feature",
+        properties: { kind: "closing" },
+        geometry: {
+          type: "LineString",
+          coordinates: [cursor, pts[0]],
         },
-      ],
-    };
+      });
+    }
+
+    // In-progress fill preview (when ≥ 2 points)
+    if (pts.length >= 2) {
+      const ring = [...pts, cursor, pts[0]];
+      features.push({
+        type: "Feature",
+        properties: { kind: "preview-fill" },
+        geometry: {
+          type: "Polygon",
+          coordinates: [ring],
+        },
+      });
+    }
+
+    const data = { type: "FeatureCollection", features };
 
     if (!map.getSource("polygon-guide")) {
       map.addSource("polygon-guide", { type: "geojson", data: data as any });
       map.addLayer({
+        id: "polygon-guide-fill",
+        type: "fill",
+        source: "polygon-guide",
+        filter: ["==", ["get", "kind"], "preview-fill"],
+        paint: {
+          "fill-color": "#1d1f3f",
+          "fill-opacity": 0.10,
+        },
+      });
+      map.addLayer({
         id: "polygon-guide",
         type: "line",
         source: "polygon-guide",
+        filter: ["==", ["get", "kind"], "main"],
         paint: {
+          "line-color": "#1d1f3f",
+          "line-width": 2.5,
+          "line-dasharray": [3, 2],
+        },
+      });
+      map.addLayer({
+        id: "polygon-guide-closing",
+        type: "line",
+        source: "polygon-guide",
+        filter: ["==", ["get", "kind"], "closing"],
+        paint: {
+          "line-color": "#1d1f3f",
           "line-width": 2,
-          "line-dasharray": [2, 2],
+          "line-dasharray": [2, 3],
+          "line-opacity": 0.45,
         },
       });
     } else {
@@ -919,7 +1022,7 @@ export default function MapView({
               setPolygonPoints([]);
               clearGuideline();
               setShowSuccessNotification(true);
-              window.setTimeout(() => setShowSuccessNotification(false), 900);
+              window.setTimeout(() => setShowSuccessNotification(false), 1500);
               return;
             }
           }
@@ -965,7 +1068,14 @@ export default function MapView({
     for (const c of camerasRef.current) {
       const isSel = selected != null && String(c.id) === selected;
       c.element.style.color = isSel ? "#161b4c" : "#999";
-      c.element.style.transform = isSel ? "scale(1.08)" : "scale(1)";
+      // Apply scale to the inner SVG, not the marker element itself.
+      // MapLibre sets `transform: translate(...)` on the marker element for positioning;
+      // overriding it here would destroy the marker's position on the map.
+      const svg = c.element.querySelector("svg") as SVGSVGElement | null;
+      if (svg) {
+        svg.style.transform = isSel ? "scale(1.08)" : "scale(1)";
+        svg.style.transition = "transform 0.15s ease";
+      }
     }
   }, [selectedCameraId, cameras]);
 
@@ -974,6 +1084,35 @@ export default function MapView({
     setShowPolygonModal(false);
     setToolMode("assignCamera");
   }, [selectedPolygonIndexRef]);
+
+  const deletePolygon = useCallback(async () => {
+    const idx = selectedPolygonIndexRef.current;
+    if (idx == null) return;
+
+    const poly = completedPolygonsRef.current[idx];
+    if (!poly) return;
+
+    if (poly.cameraId != null) {
+      try {
+        const token = getAuthToken();
+        if (token) {
+          await fetch(
+            `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${poly.cameraId}/polygon/`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ polygon: null }),
+            },
+          );
+        }
+      } catch {}
+    }
+
+    setCompletedPolygons((prev) => prev.filter((_, i) => i !== idx));
+    setShowPolygonModal(false);
+    setSelectedPolygonIndex(null);
+    setToolMode("none");
+  }, [selectedPolygonIndexRef, completedPolygonsRef]);
 
   const cancelPolygonModal = useCallback(() => {
     setShowPolygonModal(false);
@@ -989,81 +1128,159 @@ export default function MapView({
       <div ref={mapContainer} className="map" />
 
       {isEditMode && mode === "map" && (
+        <>
+          {/* ── Toolbar ── */}
+          <div
+            className="edit-toolbar"
+            style={{
+              position: "absolute",
+              top: "12px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 1000,
+              display: "flex",
+              gap: "6px",
+              backgroundColor: "#ffffffee",
+              padding: "6px 10px",
+              borderRadius: "12px",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.15)",
+              backdropFilter: "blur(8px)",
+              fontFamily: "Montserrat, sans-serif",
+            }}
+          >
+            {([
+              { key: "addCamera", label: "＋ Camera", color: "#1d1f3f" },
+              { key: "removeCamera", label: "− Camera", color: "#f44336" },
+              { key: "addPoint", label: "＋ Polygon", color: "#1d1f3f" },
+              { key: "removePoint", label: "− Point", color: "#f44336" },
+            ] as const).map(({ key, label, color }) => (
+              <button
+                key={key}
+                onClick={() => setToolMode((cur) => (cur === key ? "none" : key))}
+                style={{
+                  padding: "7px 14px",
+                  backgroundColor: toolMode === key ? color : "transparent",
+                  color: toolMode === key ? "#fff" : "#333",
+                  border: toolMode === key ? "none" : "1px solid #d0d0d0",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: "13px",
+                  fontFamily: "Montserrat, sans-serif",
+                  transition: "all 0.15s ease",
+                  letterSpacing: "0.2px",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+
+            {/* Undo last point — only while drawing */}
+            {toolMode === "addPoint" && polygonPoints.length > 0 && (
+              <>
+                <div style={{ width: "1px", background: "#d0d0d0", margin: "2px 2px" }} />
+                <button
+                  onClick={() => setPolygonPoints((prev) => prev.slice(0, -1))}
+                  style={{
+                    padding: "7px 12px",
+                    backgroundColor: "transparent",
+                    color: "#f57c00",
+                    border: "1px solid #f57c00",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    fontFamily: "Montserrat, sans-serif",
+                    transition: "all 0.15s ease",
+                  }}
+                  title="Undo last point"
+                >
+                  ↩ Undo
+                </button>
+                <button
+                  onClick={() => { setPolygonPoints([]); clearGuideline(); }}
+                  style={{
+                    padding: "7px 12px",
+                    backgroundColor: "transparent",
+                    color: "#f44336",
+                    border: "1px solid #f44336",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    fontFamily: "Montserrat, sans-serif",
+                    transition: "all 0.15s ease",
+                  }}
+                  title="Discard current polygon"
+                >
+                  ✕ Clear
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* ── Contextual hint ── */}
+          {toolMode === "addPoint" && (
+            <div
+              style={{
+                position: "absolute",
+                top: "62px",
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 1000,
+                backgroundColor: "rgba(29,31,63,0.82)",
+                color: "#fff",
+                padding: "8px 18px",
+                borderRadius: "10px",
+                fontSize: "13px",
+                fontFamily: "Montserrat, sans-serif",
+                fontWeight: 500,
+                letterSpacing: "0.3px",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+                backdropFilter: "blur(6px)",
+                pointerEvents: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {polygonPoints.length === 0 && "Click on the map to start drawing a polygon"}
+              {polygonPoints.length === 1 && "Click to add more points"}
+              {polygonPoints.length === 2 && "Click to add at least one more point"}
+              {polygonPoints.length >= 3 && (
+                <>
+                  Click the{" "}
+                  <span style={{ color: "#81c784", fontWeight: 700 }}>green starting point</span>
+                  {" "}to close the polygon
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Success toast ── */}
+      {showSuccessNotification && (
         <div
-          className="edit-toolbar"
           style={{
             position: "absolute",
-            top: "10px",
+            top: "62px",
             left: "50%",
             transform: "translateX(-50%)",
-            zIndex: 1000,
+            zIndex: 2000,
+            backgroundColor: "#4CAF50",
+            color: "#fff",
+            padding: "10px 24px",
+            borderRadius: "10px",
+            fontSize: "14px",
+            fontFamily: "Montserrat, sans-serif",
+            fontWeight: 600,
+            boxShadow: "0 4px 14px rgba(76,175,80,0.35)",
             display: "flex",
+            alignItems: "center",
             gap: "8px",
-            backgroundColor: "white",
-            padding: "8px",
-            borderRadius: "4px",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+            animation: "polygon-toast-in 0.25s ease",
           }}
         >
-          <button
-            onClick={() => setToolMode((cur) => (cur === "addCamera" ? "none" : "addCamera"))}
-            style={{
-              padding: "8px 16px",
-              backgroundColor: toolMode === "addCamera" ? "#4CAF50" : "white",
-              color: toolMode === "addCamera" ? "white" : "black",
-              border: "1px solid #ccc",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: toolMode === "addCamera" ? "bold" : "normal",
-            }}
-          >
-            + Camera
-          </button>
-
-          <button
-            onClick={() => setToolMode((cur) => (cur === "removeCamera" ? "none" : "removeCamera"))}
-            style={{
-              padding: "8px 16px",
-              backgroundColor: toolMode === "removeCamera" ? "#f44336" : "white",
-              color: toolMode === "removeCamera" ? "white" : "black",
-              border: "1px solid #ccc",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: toolMode === "removeCamera" ? "bold" : "normal",
-            }}
-          >
-            - Camera
-          </button>
-
-          <button
-            onClick={() => setToolMode((cur) => (cur === "addPoint" ? "none" : "addPoint"))}
-            style={{
-              padding: "8px 16px",
-              backgroundColor: toolMode === "addPoint" ? "#4CAF50" : "white",
-              color: toolMode === "addPoint" ? "white" : "black",
-              border: "1px solid #ccc",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: toolMode === "addPoint" ? "bold" : "normal",
-            }}
-          >
-            + Polygon
-          </button>
-
-          <button
-            onClick={() => setToolMode((cur) => (cur === "removePoint" ? "none" : "removePoint"))}
-            style={{
-              padding: "8px 16px",
-              backgroundColor: toolMode === "removePoint" ? "#f44336" : "white",
-              color: toolMode === "removePoint" ? "white" : "black",
-              border: "1px solid #ccc",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: toolMode === "removePoint" ? "bold" : "normal",
-            }}
-          >
-            - Point
-          </button>
+          <span style={{ fontSize: "18px" }}>✓</span> Polygon created!
         </div>
       )}
 
@@ -1075,15 +1292,19 @@ export default function MapView({
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 2000,
-            backgroundColor: "rgba(22, 27, 76, 0.7)",
-            color: "white",
-            padding: "16px 24px",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            fontSize: "16px",
+            backgroundColor: "rgba(29,31,63,0.85)",
+            color: "#fff",
+            padding: "14px 24px",
+            borderRadius: "12px",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            fontSize: "14px",
+            fontFamily: "Montserrat, sans-serif",
+            fontWeight: 500,
+            backdropFilter: "blur(6px)",
+            letterSpacing: "0.2px",
           }}
         >
-          Click on the camera you want this polygon to be assigned
+          Click on the camera you want this polygon assigned to
         </div>
       )}
 
@@ -1095,41 +1316,65 @@ export default function MapView({
             left: "50%",
             transform: "translate(-50%, -50%)",
             zIndex: 2000,
-            backgroundColor: "white",
-            padding: "24px",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            minWidth: "300px",
+            backgroundColor: "#fff",
+            padding: "28px",
+            borderRadius: "16px",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+            minWidth: "280px",
+            fontFamily: "Montserrat, sans-serif",
           }}
         >
-          <h3 style={{ margin: "0 0 16px 0", fontSize: "18px", fontWeight: "bold" }}>Polygon Options</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <h3 style={{ margin: "0 0 18px 0", fontSize: "17px", fontWeight: 700, color: "#1d1f3f" }}>
+            Polygon Options
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             <button
               onClick={beginAssignCamera}
               style={{
                 padding: "12px",
-                backgroundColor: "#161b4cff",
-                color: "white",
+                backgroundColor: "#1d1f3f",
+                color: "#fff",
                 border: "none",
-                borderRadius: "4px",
+                borderRadius: "10px",
                 cursor: "pointer",
                 fontSize: "14px",
-                fontWeight: "bold",
+                fontWeight: 600,
+                fontFamily: "Montserrat, sans-serif",
+                transition: "background 0.15s ease",
               }}
             >
               Assign to Camera
             </button>
 
             <button
+              onClick={deletePolygon}
+              style={{
+                padding: "12px",
+                backgroundColor: "#f44336",
+                color: "#fff",
+                border: "none",
+                borderRadius: "10px",
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: 600,
+                fontFamily: "Montserrat, sans-serif",
+                transition: "background 0.15s ease",
+              }}
+            >
+              Delete Polygon
+            </button>
+
+            <button
               onClick={cancelPolygonModal}
               style={{
                 padding: "12px",
-                backgroundColor: "#9e9e9e",
-                color: "white",
-                border: "none",
-                borderRadius: "4px",
+                backgroundColor: "transparent",
+                color: "#666",
+                border: "1px solid #d0d0d0",
+                borderRadius: "10px",
                 cursor: "pointer",
                 fontSize: "14px",
+                fontFamily: "Montserrat, sans-serif",
               }}
             >
               Cancel
