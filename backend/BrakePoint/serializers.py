@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SavedLocation, Camera
+from .models import SavedLocation, Camera, Video
 from django.contrib.auth.models import User
 
 class SavedLocationSerializer(serializers.ModelSerializer):
@@ -20,11 +20,69 @@ class SignupSerializer(serializers.ModelSerializer):
         )
         return user
 
+class VideoSerializer(serializers.ModelSerializer):
+    occurrences = serializers.ReadOnlyField()
+    behaviors = serializers.ReadOnlyField()
+    processing_time_seconds = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = Video
+        fields = [
+            'id', 'camera', 'filename', 'uploaded_at',
+            'duration_seconds', 'fps', 'resolution', 'file_size_mb', 'thumbnail',
+            'calibration_points', 'reference_points', 'reference_distance_meters', 'meter_per_pixel',
+            'vehicles', 'speeding_count', 'swerving_count', 'abrupt_stopping_count', 'vehicle_breakdown', 'jeepney_hotspot',
+            'signs', 'sign_classes', 'sign_breakdown',
+            'processing_started_at', 'processing_completed_at', 'processing_status', 'processing_stage',
+            'yolo_progress', 'maskrcnn_progress', 'error_message',
+            'occurrences', 'behaviors', 'processing_time_seconds'
+        ]
+        read_only_fields = ['id', 'uploaded_at']
+
 class CameraSerializer(serializers.ModelSerializer):
+    latest_upload = serializers.ReadOnlyField()
+    latest_video = VideoSerializer(read_only=True)
+    total_videos = serializers.ReadOnlyField()
+    # For backward compatibility with frontend
+    vehicles = serializers.SerializerMethodField()
+    occurrences = serializers.SerializerMethodField()
+    behaviors = serializers.SerializerMethodField()
+    signs = serializers.SerializerMethodField()
+    sign_classes = serializers.SerializerMethodField()
     latest_upload = serializers.DateTimeField(required=False, allow_null=True)
     polygon = serializers.JSONField(required=False, allow_null=True)
     
     class Meta:
         model = Camera
+        fields = [
+            'id', 'name', 'lat', 'lng', 'location', 'polygon', 'created_at',
+            'latest_upload', 'latest_video', 'total_videos',
+            'vehicles', 'occurrences', 'behaviors', 'signs', 'sign_classes'
+        ]
         fields = ['id', 'name', 'lat', 'lng', 'location', 'latest_upload', 'vehicles', 'occurrences', 'behaviors', 'polygon', 'created_at']
         read_only_fields = ['id', 'created_at']
+    
+    def get_vehicles(self, obj):
+        """Get vehicles from latest video"""
+        video = obj.latest_video
+        return video.vehicles if video else 0
+    
+    def get_occurrences(self, obj):
+        """Get occurrences from latest video"""
+        video = obj.latest_video
+        return video.occurrences if video else 0
+    
+    def get_behaviors(self, obj):
+        """Get behaviors from latest video"""
+        video = obj.latest_video
+        return video.behaviors if video else ['No Data']
+    
+    def get_signs(self, obj):
+        """Get signs from latest video"""
+        video = obj.latest_video
+        return video.signs if video else 0
+    
+    def get_sign_classes(self, obj):
+        """Get sign classes from latest video"""
+        video = obj.latest_video
+        return video.sign_classes if video else []
