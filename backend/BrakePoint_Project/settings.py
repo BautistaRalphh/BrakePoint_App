@@ -10,20 +10,24 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env file
+load_dotenv(BASE_DIR / ".env")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-6#bea&c9zi#hgk1&(eeb!3=r120y@+j!_ok-a9x91e)s4#9l+!"
+SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-fallback-key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "True") == "True"
 
 ALLOWED_HOSTS = []
 
@@ -119,27 +123,29 @@ WSGI_APPLICATION = "BrakePoint_Project.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-    }
-}
-
-# MySQL configuration (commented out for development)
+# SQLite (local development fallback)
 # DATABASES = {
 #     "default": {
-#         "ENGINE": "django.db.backends.mysql",
-#         "NAME": "bp_db",
-#         "USER" : "brakepoint",
-#         "PASSWORD" : "brakepoint_db827",
-#         "HOST" : "127.0.0.1",
-#         "PORT" : "3306",
-#         "OPTIONS": {
-#             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"
-#         }
+#         "ENGINE": "django.db.backends.sqlite3",
+#         "NAME": BASE_DIR / "db.sqlite3",
 #     }
 # }
+
+# Aiven MySQL (shared database)
+DATABASES = {
+    "default": {
+        "ENGINE": os.getenv("DB_ENGINE", "django.db.backends.mysql"),
+        "NAME": os.getenv("DB_NAME", "defaultdb"),
+        "USER": os.getenv("DB_USER", "avnadmin"),
+        "PASSWORD": os.getenv("DB_PASSWORD", ""),
+        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+        "PORT": os.getenv("DB_PORT", "3306"),
+        "OPTIONS": {
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+            "ssl": {"ssl-mode": "REQUIRED"},
+        },
+    }
+}
 
 
 # Password validation
