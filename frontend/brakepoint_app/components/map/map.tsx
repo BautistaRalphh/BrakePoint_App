@@ -140,6 +140,7 @@ export default function MapView({
   const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
   const [completedPolygons, setCompletedPolygons] = useState<CompletedPolygon[]>([]);
   const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(null);
+  const [showSuccessNotification, setShowSuccessNotification] = useState(false);
 
   const toolModeRef = useLatestRef(toolMode);
   const selectedPolygonIndexRef = useLatestRef(selectedPolygonIndex);
@@ -501,7 +502,7 @@ export default function MapView({
       const token = getAuthToken();
       if (!token) return;
 
-      const response = await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       });
@@ -520,7 +521,7 @@ export default function MapView({
     const token = getAuthToken();
     if (!token) return false;
 
-    const res = await fetch(`http://127.0.0.1:8000/brakepoint/api/cameras/${cameraId}/`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ polygon: points }),
@@ -601,7 +602,7 @@ export default function MapView({
       const token = getAuthToken();
       if (!token) return;
 
-      const response = await fetch("http://127.0.0.1:8000/brakepoint/api/cameras/", {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
         method: "GET",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       });
@@ -644,7 +645,7 @@ export default function MapView({
         const token = getAuthToken();
         if (!token) return;
 
-        const response = await fetch("http://127.0.0.1:8000/brakepoint/api/cameras/", {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           body: JSON.stringify({ lat: cameraLat, lng: cameraLng }),

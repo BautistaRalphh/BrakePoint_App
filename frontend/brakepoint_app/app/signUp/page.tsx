@@ -19,7 +19,7 @@ export default function SignUpPage() {
     setSuccess("");
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/brakepoint/api/signup/", {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/signup/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

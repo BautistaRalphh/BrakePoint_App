@@ -1,3 +1,7 @@
+# Environment variables
+.env
+backend/.env
+
 # Local DB
 db.sqlite3
 *.sqlite3
@@ -11,3 +15,5 @@ __pycache__/
 /brakepoint_app/node_modules
 backend/traffic_sign.pth
 backend/yolov8n.pt
+backend/yolov8m.pt
+backend/certs
