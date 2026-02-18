@@ -31,8 +31,8 @@ export default function Explore() {
     setNotificationAnchor(null);
   };
 
-  const handleNotificationRead = (id: number) => {
-    markAsRead(id);
+  const handleNotificationRead = (id: number | string) => {
+    markAsRead(String(id));
   };
 
   const handleClearAll = () => {
