@@ -63,3 +63,25 @@
       12 12,
     pointer !important;
 }
+
+/* ── Polygon creation animations ── */
+@keyframes polygon-toast-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes polygon-point-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
+  }
+}

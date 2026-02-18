@@ -6,6 +6,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib import messages
 from django.contrib.auth import authenticate, login
+from django.db.models import Sum
+from django.db.models.functions import TruncDate
 from .models import SavedLocation, Camera, Video
 from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer, VideoSerializer
 import requests
@@ -633,3 +635,68 @@ def video_progress_api(request, pk: int):
         })
     except Video.DoesNotExist:
         return Response({"success": False, "error": "Video not found"}, status=404)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def behavior_timeline_api(request):
+    """
+    Aggregate driving-behavior counts by date for one or more cameras.
+    Query params:
+      camera_ids  – comma-separated camera IDs (required)
+      start       – ISO date string, inclusive lower bound (optional)
+      end         – ISO date string, inclusive upper bound  (optional)
+    """
+    user = request.user
+
+    raw_ids = request.query_params.get('camera_ids', '')
+    if not raw_ids:
+        return Response({"success": False, "error": "camera_ids is required"}, status=400)
+
+    try:
+        camera_ids = [int(x) for x in raw_ids.split(',') if x.strip()]
+    except ValueError:
+        return Response({"success": False, "error": "Invalid camera_ids"}, status=400)
+
+    # Only allow cameras owned by this user
+    cameras = Camera.objects.filter(pk__in=camera_ids, user=user)
+    if not cameras.exists():
+        return Response({"success": False, "error": "No matching cameras found"}, status=404)
+
+    qs = Video.objects.filter(
+        camera__in=cameras,
+        processing_status='completed',
+    )
+
+    start = request.query_params.get('start')
+    end = request.query_params.get('end')
+    if start:
+        qs = qs.filter(uploaded_at__date__gte=start)
+    if end:
+        qs = qs.filter(uploaded_at__date__lte=end)
+
+    rows = (
+        qs
+        .annotate(date=TruncDate('uploaded_at'))
+        .values('date')
+        .annotate(
+            speeding=Sum('speeding_count'),
+            swerving=Sum('swerving_count'),
+            abrupt_stopping=Sum('abrupt_stopping_count'),
+            vehicles=Sum('vehicles'),
+        )
+        .order_by('date')
+    )
+
+    data = [
+        {
+            'date': row['date'].isoformat(),
+            'speeding': row['speeding'] or 0,
+            'swerving': row['swerving'] or 0,
+            'abrupt_stopping': row['abrupt_stopping'] or 0,
+            'vehicles': row['vehicles'] or 0,
+        }
+        for row in rows
+    ]
+
+    return Response({"success": True, "timeline": data})
