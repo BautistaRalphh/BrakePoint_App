@@ -1,27 +1,24 @@
 "use client";
 
-import { Box, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import LocationCard from "./locationCard";
-import type { Loc } from "@/lib/api/locations";
+import type { CameraSummary } from "./analytics";
 
 import "./cardCarousel.css";
 
-
 type CarouselProps = {
-  locations: Loc[];
-  onSelect?: (loc: Loc) => void;
+  cameras: CameraSummary[];
+  onSelect?: (cam: CameraSummary) => void;
 };
 
-export default function CardCarousel({ locations, onSelect }: CarouselProps) {
+export default function CardCarousel({ cameras, onSelect }: CarouselProps) {
   return (
     <Box className="carousel-container">
-      {locations.map((loc) => {
-        return (
-          <Box className="carousel-card-container" key={loc.id} >
-            <LocationCard loc={loc} onClick={() => onSelect?.(loc)} />
-          </Box>
-        );
-      })}
+      {cameras.map((cam) => (
+        <Box className="carousel-card-container" key={cam.id}>
+          <LocationCard camera={cam} onClick={() => onSelect?.(cam)} />
+        </Box>
+      ))}
     </Box>
   );
 }

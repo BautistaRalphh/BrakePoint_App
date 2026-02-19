@@ -89,6 +89,9 @@ class Camera(models.Model):
     meter_per_pixel = models.FloatField(null=True, blank=True)
     is_calibrated = models.BooleanField(default=False)
     
+    # User-assigned tags (e.g., traffic sign types to investigate, custom labels)
+    tags = models.JSONField(default=list, blank=True)
+    
     latest_upload = models.DateTimeField(null=True, blank=True)
     vehicles = models.IntegerField(default=0)
     occurrences = models.IntegerField(default=0)

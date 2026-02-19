@@ -3,24 +3,23 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import dynamic from 'next/dynamic';
-import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton, Badge, Menu, MenuItem, Snackbar, Alert, LinearProgress } from '@mui/material';
+import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton, LinearProgress, Snackbar, Alert } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import CheckIcon from '@mui/icons-material/Check';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import NotificationsIcon from '@mui/icons-material/Notifications';
-import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { useRouter } from 'next/navigation';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { authFetch } from '@/lib/authFetch';
 
+import Notification from '@components/notifications';
 import ToggleDrawer from '@components/map/toggleDrawer';
 import SideTab from '@components/map/sideTab';
 import Table from '@components/ui/table';
+import CameraTags from '@components/ui/cameraTags';
 
 import './style.css';
 
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
 import CarCrashIcon from '@mui/icons-material/CarCrash';
-import DirectionsIcon from '@mui/icons-material/Directions';
 import LocalTaxiIcon from '@mui/icons-material/LocalTaxi';
 
 const Map = dynamic(() => import('@/components/map/map'), {
@@ -64,7 +63,7 @@ type DrawMode = "none" | "drawPolygon" | "editPolygon" | "deletePolygon";
 
 export default function MapPage() {
   const router = useRouter();
-  const { notifications, addNotification, addProcessingNotification, completeProcessing, removeNotification, markAsRead, clearAll, unreadCount } = useNotifications();
+  const { notifications, addNotification, addProcessingNotification, completeProcessing, hydrated } = useNotifications();
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
@@ -88,14 +87,13 @@ export default function MapPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [camerasRefreshTrigger, setCamerasRefreshTrigger] = useState(0);
 
-  const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
-  const [snackbarOpen, setSnackbarOpen] = useState(false);
-  const [snackbarMessage, setSnackbarMessage] = useState('');
-
   // Mapper-specific state
   const [drawMode, setDrawMode] = useState<DrawMode>("none");
   const [draftPoly, setDraftPoly] = useState<[number, number][]>([]); // [lng, lat]
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
+
+  // Upload toast feedback
+  const [uploadToast, setUploadToast] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'error' }>({ open: false, message: '', severity: 'info' });
 
   const handleMapReady = useCallback((map: maplibregl.Map) => {
     mapInstanceRef.current = map;
@@ -125,19 +123,7 @@ export default function MapPage() {
 
       setLoadingFeedData(true);
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-          console.error('No access token found');
-          setSelectedFeedData(null);
-          return;
-        }
-
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`);
 
         if (response.ok) {
           const data = await response.json();
@@ -183,18 +169,7 @@ export default function MapPage() {
       }
 
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-          console.error('No access token found');
-          return;
-        }
-
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${selectedFeedId}/videos/`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${selectedFeedId}/videos/`);
 
         if (response.ok) {
           const data = await response.json();
@@ -246,20 +221,10 @@ export default function MapPage() {
       }
 
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-          console.error('No access token found');
-          return;
-        }
-
         // Fetch videos from all visible cameras in parallel
         const videoPromises = visibleCameraIds.map(cameraId =>
-          fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          }).then(res => res.json())
+          authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`)
+            .then(res => res.json())
         );
 
         const results = await Promise.all(videoPromises);
@@ -416,19 +381,15 @@ export default function MapPage() {
     setCamerasRefreshTrigger(prev => prev + 1);
   }, []);
 
-  const handleProcessingStart = useCallback((videoName: string, videoId: number) => {
-    const notifId = addProcessingNotification(videoName);
+  // Shared polling logic — starts an interval that checks the backend for
+  // processing completion of a specific video and updates the notification.
+  const startPollingForVideo = useCallback((notifId: string, videoId: number) => {
+    // Don't double-poll the same video
+    if ((window as any)[`pollInterval_${videoId}`]) return;
 
-    setSnackbarMessage(`Processing started for "${videoName}"`);
-    setSnackbarOpen(true);
-
-    // Poll for completion only
     const pollInterval = setInterval(async () => {
       try {
-        const token = localStorage.getItem('access_token');
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/progress/`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/progress/`);
 
         if (response.ok) {
           const data = await response.json();
@@ -441,9 +402,7 @@ export default function MapPage() {
               delete (window as any)[`pollInterval_${videoId}`];
 
               // Fetch full video data
-              const videoResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-              });
+              const videoResponse = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`);
 
               let videoData = data;
               if (videoResponse.ok) {
@@ -471,10 +430,20 @@ export default function MapPage() {
       } catch (error) {
         // Silent
       }
-    }, 2000); // Poll every 2 seconds
+    }, 2000);
 
     (window as any)[`pollInterval_${videoId}`] = pollInterval;
-  }, [addProcessingNotification, completeProcessing, handleVideoUploadComplete]);
+  }, [completeProcessing, handleVideoUploadComplete]);
+
+  const handleUploadStart = useCallback((videoName: string) => {
+    setUploadToast({ open: true, message: `Uploading "${videoName}"…`, severity: 'info' });
+  }, []);
+
+  const handleProcessingStart = useCallback((videoName: string, videoId: number) => {
+    const notifId = addProcessingNotification(videoName, videoId);
+    setUploadToast({ open: true, message: `"${videoName}" uploaded — processing started`, severity: 'info' });
+    startPollingForVideo(notifId, videoId);
+  }, [addProcessingNotification, startPollingForVideo]);
 
   const handleProcessingComplete = useCallback((videoName: string, success: boolean, data?: any) => {
     const processingNotification = notificationsRef.current.find(
@@ -496,9 +465,25 @@ export default function MapPage() {
       addNotification(videoName, success, data);
     }
 
+    if (!success) {
+      const errorMsg = data?.error || 'Processing failed';
+      setUploadToast({ open: true, message: `"${videoName}" — ${errorMsg}`, severity: 'error' });
+    }
+
     setRefreshTrigger(prev => prev + 1);
     setCamerasRefreshTrigger(prev => prev + 1);
   }, [completeProcessing, addNotification]);
+
+  // Resume polling for any processing notifications that survived a page refresh
+  useEffect(() => {
+    if (!hydrated) return;
+    const processingNotifs = notifications.filter(n => n.processing && n.videoId);
+    processingNotifs.forEach(n => {
+      startPollingForVideo(n.id, n.videoId!);
+    });
+    // Only run once after hydration — we don't want to re-trigger on every notification change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
 
 
   const handleVideoSelect = useCallback((videoData: any) => {
@@ -662,6 +647,7 @@ export default function MapPage() {
 
   return (
     <>
+      <Notification />
       <Box sx={{ height: "100vh", width: "100vw", position: "fixed", top: 0, left: 0, zIndex: 0 }}>
         <Map
           mode="map"
@@ -721,12 +707,6 @@ export default function MapPage() {
                         </ListItemAvatar>
                         <ListItemText primary={`${aggregateData.totalOccurrences} Occurrences`}></ListItemText>
                       </ListItem>
-                      <ListItem disableGutters>
-                        <ListItemAvatar>
-                          <DirectionsIcon/>
-                        </ListItemAvatar>
-                        <ListItemText primary={`${aggregateData.totalSigns} Traffic Signs`}></ListItemText>
-                      </ListItem>
                     </List>
                   </Box>
 
@@ -735,16 +715,6 @@ export default function MapPage() {
                       <List>
                         {aggregateData.allBehaviors.map((value: string) => (
                           <ListItemText key={value} primary={value}></ListItemText>
-                        ))}
-                      </List>
-                    </Box>
-                  )}
-
-                  {aggregateData.allSignClasses.length > 0 && (
-                    <Box className="feed-behavior-list">
-                      <List>
-                        {aggregateData.allSignClasses.map((signClass: string, index: number) => (
-                          <ListItemText key={`sign-${index}`} primary={signClass}></ListItemText>
                         ))}
                       </List>
                     </Box>
@@ -883,12 +853,6 @@ export default function MapPage() {
                       </ListItem>
                       <ListItem disableGutters>
                         <ListItemAvatar>
-                          <DirectionsIcon/>
-                        </ListItemAvatar>
-                        <ListItemText primary={`${displayData.signs || 0} Traffic Signs`}></ListItemText>
-                      </ListItem>
-                      <ListItem disableGutters>
-                        <ListItemAvatar>
                           <LocalTaxiIcon sx={{color: displayData.jeepneyHotspot ? '#4CAF50' : '#000000ff'}}/>
                         </ListItemAvatar>
                         <ListItemText
@@ -909,15 +873,7 @@ export default function MapPage() {
                     </Box>
                   )}
 
-                  {displayData.signClasses && displayData.signClasses.length > 0 && (
-                    <Box className="feed-behavior-list">
-                      <List>
-                        {displayData.signClasses.map((signClass: string, index: number) => (
-                          <ListItemText key={`sign-${index}`} primary={signClass}></ListItemText>
-                        ))}
-                      </List>
-                    </Box>
-                  )}
+                  <CameraTags cameraId={selectedFeedId} />
                 </>
               )}
             </Box>
@@ -928,6 +884,7 @@ export default function MapPage() {
               onVideoFileSelect={handleVideoFileSelect}
               cameraId={selectedFeedId}
               onUploadComplete={handleVideoUploadComplete}
+              onUploadStart={handleUploadStart}
               onProcessingStart={handleProcessingStart}
               onProcessingComplete={handleProcessingComplete}
               onVideoSelect={handleVideoSelect}
@@ -940,6 +897,23 @@ export default function MapPage() {
         </>
         )}
       </SideTab>
+
+      {/* Upload feedback toast */}
+      <Snackbar
+        open={uploadToast.open}
+        autoHideDuration={5000}
+        onClose={() => setUploadToast(prev => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setUploadToast(prev => ({ ...prev, open: false }))}
+          severity={uploadToast.severity}
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {uploadToast.message}
+        </Alert>
+      </Snackbar>
     </>
   );
 }

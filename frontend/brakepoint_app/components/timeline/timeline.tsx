@@ -11,6 +11,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
+import { authFetch } from '@/lib/authFetch';
 
 // ===========================================
 // Types
@@ -84,11 +85,6 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
     const ids: (number | string)[] = JSON.parse(cameraIdsKey);
     if (ids.length === 0) { setRows([]); return; }
 
-    const token = typeof window !== 'undefined'
-      ? localStorage.getItem('access_token')
-      : null;
-    if (!token) return;
-
     setLoading(true);
     setError(null);
 
@@ -98,9 +94,8 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
       if (startDate) params.set('start', startDate.format('YYYY-MM-DD'));
       if (endDate) params.set('end', endDate.format('YYYY-MM-DD'));
 
-      const res = await fetch(
+      const res = await authFetch(
         `${process.env.NEXT_PUBLIC_API_URL}/api/behavior-timeline/?${params}`,
-        { headers: { Authorization: `Bearer ${token}` } },
       );
 
       if (!res.ok) throw new Error('Failed to load timeline');

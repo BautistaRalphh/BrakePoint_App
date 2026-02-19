@@ -10,6 +10,65 @@ import EditIcon from '@mui/icons-material/Edit';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 
 import './table.css';
+import { authFetch } from '@/lib/authFetch';
+
+// --- Perspective Transform Helpers ---
+function computeHomography(src: {x:number,y:number}[], dst: {x:number,y:number}[]): number[][] {
+  const A: number[][] = [];
+  const b: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const {x: sx, y: sy} = src[i];
+    const {x: dx, y: dy} = dst[i];
+    A.push([sx, sy, 1, 0, 0, 0, -dx*sx, -dx*sy]);
+    b.push(dx);
+    A.push([0, 0, 0, sx, sy, 1, -dy*sx, -dy*sy]);
+    b.push(dy);
+  }
+  const n = 8;
+  const aug = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let maxVal = Math.abs(aug[col][col]);
+    let maxRow = col;
+    for (let row = col + 1; row < n; row++) {
+      if (Math.abs(aug[row][col]) > maxVal) {
+        maxVal = Math.abs(aug[row][col]);
+        maxRow = row;
+      }
+    }
+    [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
+    const pivot = aug[col][col];
+    if (Math.abs(pivot) < 1e-10) return [[1,0,0],[0,1,0],[0,0,1]];
+    for (let j = col; j <= n; j++) aug[col][j] /= pivot;
+    for (let row = 0; row < n; row++) {
+      if (row !== col) {
+        const factor = aug[row][col];
+        for (let j = col; j <= n; j++) aug[row][j] -= factor * aug[col][j];
+      }
+    }
+  }
+  const h = aug.map(row => row[n]);
+  return [[h[0],h[1],h[2]], [h[3],h[4],h[5]], [h[6],h[7],1]];
+}
+
+function invertMatrix3x3(m: number[][]): number[][] {
+  const [[a,b,c],[d,e,f],[g,h,i]] = m;
+  const det = a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
+  if (Math.abs(det) < 1e-10) return [[1,0,0],[0,1,0],[0,0,1]];
+  const inv = 1/det;
+  return [
+    [(e*i-f*h)*inv, (c*h-b*i)*inv, (b*f-c*e)*inv],
+    [(f*g-d*i)*inv, (a*i-c*g)*inv, (c*d-a*f)*inv],
+    [(d*h-e*g)*inv, (b*g-a*h)*inv, (a*e-b*d)*inv]
+  ];
+}
+
+function transformPoint(H: number[][], p: {x:number,y:number}): {x:number,y:number} {
+  const w = H[2][0]*p.x + H[2][1]*p.y + H[2][2];
+  return {
+    x: (H[0][0]*p.x + H[0][1]*p.y + H[0][2]) / w,
+    y: (H[1][0]*p.x + H[1][1]*p.y + H[1][2]) / w
+  };
+}
 
 interface ToolbarProps {
   title? : string;
@@ -25,6 +84,7 @@ interface TableProps {
   cameraId?: number | null;
   onUploadComplete?: () => void;
   visibleCameraIds?: number[];
+  onUploadStart?: (videoName: string) => void;
   onProcessingStart?: (videoName: string, videoId: number) => void;
   onProcessingComplete?: (videoName: string, success: boolean, data?: any) => void;
   onVideoSelect?: (videoData: any) => void;
@@ -42,11 +102,12 @@ interface AddModalProps {
   onVideoFileSelect: (url: string) => void;
   cameraId?: number | null;
   onUploadComplete?: () => void;
+  onUploadStart?: (videoName: string) => void;
   onProcessingStart?: (videoName: string, videoId: number) => void;
   onProcessingComplete?: (videoName: string, success: boolean, data?: any) => void;
 }
 
-function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUploadComplete, onProcessingStart, onProcessingComplete }: AddModalProps) {
+function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUploadComplete, onUploadStart, onProcessingStart, onProcessingComplete }: AddModalProps) {
   const [video_name, setVideoName] = React.useState('');
   const [file_name, setFile] = React.useState<File | null>(null);
   const [showCalibration, setShowCalibration] = React.useState(false);
@@ -63,9 +124,32 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
   const [panStart, setPanStart] = React.useState({ x: 0, y: 0 });
   const [showWarning, setShowWarning] = React.useState(false);
   const [pendingPoint, setPendingPoint] = React.useState<{ x: number; y: number } | null>(null);
+  const warpedCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const [warpDimensions, setWarpDimensions] = React.useState({ width: 0, height: 0 });
+  const [homographyInv, setHomographyInv] = React.useState<number[][] | null>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
+
+  // Reset all state when dialog closes (cancel should start fresh)
+  React.useEffect(() => {
+    if (!open) {
+      setVideoName('');
+      setFile(null);
+      setShowCalibration(false);
+      setCalibrationPoints([]);
+      setReferencePoints([]);
+      setShowReferenceStep(false);
+      setReferenceDistance(3);
+      setVideoUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+      setWarpDimensions({ width: 0, height: 0 });
+      setHomographyInv(null);
+      warpedCanvasRef.current = null;
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setMousePos(null);
+    }
+  }, [open]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
@@ -112,6 +196,89 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     }
   };
 
+  // Compute perspective warp of video frame using 4 calibration points
+  const computeWarp = (srcPoints: {x:number,y:number}[]) => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) return;
+
+    // Compute destination rectangle (same math as backend)
+    const w = Math.max(
+      Math.hypot(srcPoints[1].x - srcPoints[0].x, srcPoints[1].y - srcPoints[0].y),
+      Math.hypot(srcPoints[2].x - srcPoints[3].x, srcPoints[2].y - srcPoints[3].y)
+    );
+    const h = Math.max(
+      Math.hypot(srcPoints[3].x - srcPoints[0].x, srcPoints[3].y - srcPoints[0].y),
+      Math.hypot(srcPoints[2].x - srcPoints[1].x, srcPoints[2].y - srcPoints[1].y)
+    );
+    const dstW = Math.max(Math.round(w), 1);
+    const dstH = Math.max(Math.round(h), 1);
+
+    const dstPoints = [
+      {x: 0, y: 0}, {x: dstW, y: 0},
+      {x: dstW, y: dstH}, {x: 0, y: dstH}
+    ];
+
+    const H = computeHomography(srcPoints, dstPoints);
+    const H_inv = invertMatrix3x3(H);
+
+    // Get source pixels from video frame
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = video.videoWidth;
+    srcCanvas.height = video.videoHeight;
+    const srcCtx = srcCanvas.getContext('2d')!;
+    srcCtx.drawImage(video, 0, 0);
+    const srcImg = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+    const srcData = srcImg.data;
+    const srcW = srcImg.width;
+    const srcH = srcImg.height;
+
+    // Create warped image via inverse mapping
+    const warpCanvas = document.createElement('canvas');
+    warpCanvas.width = dstW;
+    warpCanvas.height = dstH;
+    const warpCtx = warpCanvas.getContext('2d')!;
+    const warpImg = warpCtx.createImageData(dstW, dstH);
+    const dstData = warpImg.data;
+
+    for (let dy = 0; dy < dstH; dy++) {
+      for (let dx = 0; dx < dstW; dx++) {
+        const wv = H_inv[2][0]*dx + H_inv[2][1]*dy + H_inv[2][2];
+        const sx = (H_inv[0][0]*dx + H_inv[0][1]*dy + H_inv[0][2]) / wv;
+        const sy = (H_inv[1][0]*dx + H_inv[1][1]*dy + H_inv[1][2]) / wv;
+        const sxi = Math.round(sx);
+        const syi = Math.round(sy);
+        if (sxi >= 0 && sxi < srcW && syi >= 0 && syi < srcH) {
+          const si = (syi * srcW + sxi) * 4;
+          const di = (dy * dstW + dx) * 4;
+          dstData[di] = srcData[si];
+          dstData[di+1] = srcData[si+1];
+          dstData[di+2] = srcData[si+2];
+          dstData[di+3] = srcData[si+3];
+        }
+      }
+    }
+    warpCtx.putImageData(warpImg, 0, 0);
+
+    warpedCanvasRef.current = warpCanvas;
+    setWarpDimensions({width: dstW, height: dstH});
+    setHomographyInv(H_inv);
+    setShowReferenceStep(true);
+    setZoom(1);
+    setPan({x: 0, y: 0});
+  };
+
+  // Redraw warped frame when entering reference step
+  React.useEffect(() => {
+    if (showReferenceStep && warpedCanvasRef.current && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(warpedCanvasRef.current, 0, 0, canvas.width, canvas.height);
+      }
+    }
+  }, [showReferenceStep, warpDimensions]);
+
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isPanning) return;
 
@@ -147,9 +314,9 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       setCalibrationPoints(newPoints);
       drawPoints(newPoints, referencePoints);
       
-      // Move to reference point selection after 4 points
+      // Move to reference point selection — show bird's-eye view
       if (newPoints.length === 4) {
-        setTimeout(() => setShowReferenceStep(true), 500);
+        computeWarp(newPoints);
       }
       return;
     }
@@ -168,6 +335,10 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       setCalibrationPoints(newPoints);
       drawPoints(newPoints, referencePoints);
       setPendingPoint(null);
+      // Move to reference point selection if 4th point was extreme
+      if (newPoints.length === 4) {
+        computeWarp(newPoints);
+      }
     }
     setShowWarning(false);
   };
@@ -281,7 +452,12 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
     
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Draw warped bird's-eye view in reference step, original frame otherwise
+    if (showReferenceStep && warpedCanvasRef.current) {
+      ctx.drawImage(warpedCanvasRef.current, 0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
 
     // Draw guide lines and preview connections
     if (cursorPos) {
@@ -302,8 +478,8 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       
       // Preview connection to previous point(s)
       if (!showReferenceStep && fourPoints.length > 0 && fourPoints.length < 4) {
-        ctx.strokeStyle = 'rgba(22, 27, 76, 0.5)';
-        ctx.lineWidth = 2 / zoom;
+        ctx.strokeStyle = 'rgba(22, 27, 76, 0.6)';
+        ctx.lineWidth = 3 / zoom;
         ctx.setLineDash([10 / zoom, 5 / zoom]);
         
         // Draw line from last point to cursor
@@ -325,8 +501,8 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       
       // Preview reference line
       if (showReferenceStep && twoPoints.length === 1) {
-        ctx.strokeStyle = 'rgba(76, 175, 80, 0.5)';
-        ctx.lineWidth = 3 / zoom;
+        ctx.strokeStyle = 'rgba(76, 175, 80, 0.6)';
+        ctx.lineWidth = 4 / zoom;
         ctx.setLineDash([10 / zoom, 5 / zoom]);
         ctx.beginPath();
         ctx.moveTo(twoPoints[0].x, twoPoints[0].y);
@@ -337,8 +513,8 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       ctx.setLineDash([]);
     }
 
-    // Draw 4-point calibration polygon
-    if (fourPoints.length > 0) {
+    // Draw 4-point calibration polygon (only in step 1 — original frame)
+    if (!showReferenceStep && fourPoints.length > 0) {
       if (fourPoints.length === 4) {
         ctx.fillStyle = 'rgba(22, 27, 76, 0.3)';
         ctx.beginPath();
@@ -351,18 +527,32 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       }
 
       fourPoints.forEach((point, index) => {
+        // Outer ring
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3 / zoom;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 14 / zoom, 0, 2 * Math.PI);
+        ctx.stroke();
+        // Inner filled circle
         ctx.fillStyle = '#161b4cff';
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 8 / zoom, 0, 2 * Math.PI);
+        ctx.arc(point.x, point.y, 12 / zoom, 0, 2 * Math.PI);
         ctx.fill();
         
+        // Label with background
+        const label = `${index + 1}`;
+        ctx.font = `bold ${22 / zoom}px Arial`;
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = 'rgba(22, 27, 76, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(point.x + 14 / zoom, point.y - 18 / zoom, tw + 10 / zoom, 26 / zoom, 4 / zoom);
+        ctx.fill();
         ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${16 / zoom}px Arial`;
-        ctx.fillText(`${index + 1}`, point.x - 5 / zoom, point.y + 5 / zoom);
+        ctx.fillText(label, point.x + 19 / zoom, point.y + 3 / zoom);
 
         if (index > 0) {
           ctx.strokeStyle = '#161b4cff';
-          ctx.lineWidth = 2 / zoom;
+          ctx.lineWidth = 3 / zoom;
           ctx.beginPath();
           ctx.moveTo(fourPoints[index - 1].x, fourPoints[index - 1].y);
           ctx.lineTo(point.x, point.y);
@@ -372,7 +562,7 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
 
       if (fourPoints.length === 4) {
         ctx.strokeStyle = '#161b4cff';
-        ctx.lineWidth = 2 / zoom;
+        ctx.lineWidth = 3 / zoom;
         ctx.beginPath();
         ctx.moveTo(fourPoints[3].x, fourPoints[3].y);
         ctx.lineTo(fourPoints[0].x, fourPoints[0].y);
@@ -383,18 +573,32 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     // Draw 2-point reference line (on top of polygon)
     if (twoPoints.length > 0) {
       twoPoints.forEach((point, index) => {
+        // Outer ring
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3 / zoom;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 16 / zoom, 0, 2 * Math.PI);
+        ctx.stroke();
+        // Inner filled circle
         ctx.fillStyle = '#4CAF50';
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 10 / zoom, 0, 2 * Math.PI);
+        ctx.arc(point.x, point.y, 14 / zoom, 0, 2 * Math.PI);
         ctx.fill();
         
+        // Label with background
+        const refLabel = `R${index + 1}`;
+        ctx.font = `bold ${22 / zoom}px Arial`;
+        const rtw = ctx.measureText(refLabel).width;
+        ctx.fillStyle = 'rgba(76, 175, 80, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(point.x + 16 / zoom, point.y - 18 / zoom, rtw + 10 / zoom, 26 / zoom, 4 / zoom);
+        ctx.fill();
         ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${16 / zoom}px Arial`;
-        ctx.fillText(`R${index + 1}`, point.x - 7 / zoom, point.y + 5 / zoom);
+        ctx.fillText(refLabel, point.x + 21 / zoom, point.y + 3 / zoom);
 
         if (index === 1) {
           ctx.strokeStyle = '#4CAF50';
-          ctx.lineWidth = 4 / zoom;
+          ctx.lineWidth = 5 / zoom;
           ctx.beginPath();
           ctx.moveTo(twoPoints[0].x, twoPoints[0].y);
           ctx.lineTo(twoPoints[1].x, twoPoints[1].y);
@@ -402,9 +606,16 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
           
           const midX = (twoPoints[0].x + twoPoints[1].x) / 2;
           const midY = (twoPoints[0].y + twoPoints[1].y) / 2;
-          ctx.fillStyle = '#4CAF50';
-          ctx.font = `bold ${20 / zoom}px Arial`;
-          ctx.fillText(`${referenceDistance}m`, midX, midY - 15 / zoom);
+          // Distance label background
+          const distLabel = `${referenceDistance}m`;
+          ctx.font = `bold ${28 / zoom}px Arial`;
+          const dtw = ctx.measureText(distLabel).width;
+          ctx.fillStyle = 'rgba(76, 175, 80, 0.9)';
+          ctx.beginPath();
+          ctx.roundRect(midX - dtw / 2 - 6 / zoom, midY - 36 / zoom, dtw + 12 / zoom, 34 / zoom, 6 / zoom);
+          ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(distLabel, midX - dtw / 2, midY - 10 / zoom);
         }
       });
     }
@@ -418,7 +629,13 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     setShowReferenceStep(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    warpedCanvasRef.current = null;
+    setWarpDimensions({ width: 0, height: 0 });
+    setHomographyInv(null);
     if (canvasRef.current && videoRef.current) {
+      // Restore canvas to original video dimensions
+      canvasRef.current.width = videoRef.current.videoWidth;
+      canvasRef.current.height = videoRef.current.videoHeight;
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -438,6 +655,11 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     setCalibrationPoints([]);
     setReferencePoints([]);
     setShowReferenceStep(false);
+    setVideoName('');
+    setFile(null);
+    warpedCanvasRef.current = null;
+    setWarpDimensions({ width: 0, height: 0 });
+    setHomographyInv(null);
     if (videoUrl) {
       URL.revokeObjectURL(videoUrl);
       setVideoUrl(null);
@@ -470,26 +692,27 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       return;
     }
   
+    // Convert reference points from warped (bird's-eye) space to original frame space
+    const originalReferencePoints = homographyInv
+      ? referencePoints.map(p => transformPoint(homographyInv, p))
+      : referencePoints;
+
+    // Capture everything we need into local variables BEFORE clearing state.
+    // The File object lives in JS heap and stays valid after the <input> unmounts.
+    const savedFile = file_name;
+    const uploadingVideoName = video_name;
+    const savedCalibrationPoints = [...calibrationPoints];
+    const savedReferenceDistance = referenceDistance;
+    const savedVideoUrl = videoUrl;
+
     const formData = new FormData();
-    formData.append('file', file_name);
-    formData.append('video_name', video_name);
+    formData.append('file', savedFile);
+    formData.append('video_name', uploadingVideoName);
     formData.append('camera_id', cameraId.toString());
     formData.append('calibration_points', JSON.stringify(calibrationPoints));
-    formData.append('reference_points', JSON.stringify(referencePoints));
+    formData.append('reference_points', JSON.stringify(originalReferencePoints));
     formData.append('reference_distance_meters', referenceDistance.toString());
-    
-    // Get auth token
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      alert('Please log in to upload videos');
-      return;
-    }
 
-    // Cleanup and close modal immediately
-    const uploadingVideoName = video_name;
-    if (videoUrl) {
-      URL.revokeObjectURL(videoUrl);
-    }
     setVideoName('');
     setFile(null);
     setShowCalibration(false);
@@ -498,19 +721,48 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     setShowReferenceStep(false);
     setReferenceDistance(3);
     setVideoUrl(null);
+    warpedCanvasRef.current = null;
+    setWarpDimensions({ width: 0, height: 0 });
+    setHomographyInv(null);
     onClose();
+
+    // Notify the user immediately that the upload has started
+    if (onUploadStart) onUploadStart(uploadingVideoName);
 
     // Process in background
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload_and_process/`, {
+      console.log('[upload] Sending upload request...', { videoName: uploadingVideoName, cameraId });
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload_and_process/`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
         body: formData,
       });
+
+      // Revoke the object URL now that fetch has consumed the File
+      if (savedVideoUrl) URL.revokeObjectURL(savedVideoUrl);
       
+      console.log('[upload] Response status:', response.status);
+
+      // The server may return HTML on 500 errors — guard against non-JSON responses
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.error('[upload] Non-JSON response:', response.status, contentType);
+        if (onProcessingComplete) {
+          onProcessingComplete(uploadingVideoName, false, { error: `Server error (${response.status})` });
+        }
+        return;
+      }
+
       const data = await response.json();
+      console.log('[upload] Response data:', data);
+
+      // Handle non-OK responses (400, 401, 500, etc.)
+      if (!response.ok) {
+        console.error('[upload] Upload failed:', response.status, data);
+        if (onProcessingComplete) {
+          onProcessingComplete(uploadingVideoName, false, { error: data.error || data.detail || 'Upload failed' });
+        }
+        return;
+      }
   
       // Start progress polling if we have a video ID
       if (data.video_id && onProcessingStart) {
@@ -519,23 +771,26 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
   
       onSubmit({ 
         video_name: uploadingVideoName, 
-        file_name, 
-        calibration_points: calibrationPoints,
-        reference_distance_meters: referenceDistance
+        file_name: savedFile, 
+        calibration_points: savedCalibrationPoints,
+        reference_distance_meters: savedReferenceDistance
       });
       
       if (onUploadComplete) {
         onUploadComplete();
       }
     } catch (err) {
+      // Revoke on error path too
+      if (savedVideoUrl) URL.revokeObjectURL(savedVideoUrl);
+      console.error('[upload] Upload error caught:', err);
       if (onProcessingComplete) {
-        onProcessingComplete(uploadingVideoName, false, { error: 'Failed to process video' });
+        onProcessingComplete(uploadingVideoName, false, { error: String(err) || 'Failed to process video' });
       }
     }
   };
 
   return (
-    <Dialog className="add-modal" open={open} onClose={onClose} maxWidth="md" fullWidth sx={{zIndex: 500000}}>
+    <Dialog className="add-modal" open={open} onClose={onClose} maxWidth={showCalibration ? false : "md"} fullWidth sx={{zIndex: 500000, ...(showCalibration ? { '& .MuiDialog-paper': { maxWidth: '95vw', width: '95vw', maxHeight: '95vh', height: '95vh' } } : {})}}>
       <DialogTitle>
         {showCalibration ? 'Camera Calibration' : 'Add New Video'}
       </DialogTitle>
@@ -562,31 +817,64 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
           </>
         ) : (
           <>
-            <DialogContentText>
-              <strong>Step 1: Select 4 Corner Points</strong>
-              <br/>Click on the video to select 4 corner points for bird's eye view perspective transformation.
-              <br/>Points should be selected in order: <strong>top-left, top-right, bottom-right, bottom-left</strong>.
-              {showReferenceStep && (
-                <>
-                  <br/><br/>
-                  <strong>Step 2: Set Scale with Reference Points</strong>
-                  <br/>Now click 2 points on a road marking with known width (e.g., lane edges = 3 meters).
-                  <br/>⚠️ <strong>Important:</strong> Select markings in the <strong>middle/center</strong> of your calibration area for best accuracy.
-                  <br/>Avoid markings that are too close or too far from the camera due to perspective distortion.
-                </>
-              )}
-              <br/><strong>Scroll to zoom</strong>, <strong>Right-click + drag</strong> or <strong>Shift + drag</strong> to pan.
-            </DialogContentText>
+            {/* Step indicator banner */}
+            <Box sx={{
+              display: 'flex', alignItems: 'center', gap: 2, p: 2, mb: 1,
+              borderRadius: 2,
+              bgcolor: showReferenceStep ? '#e8f5e9' : '#e3f2fd',
+              border: `2px solid ${showReferenceStep ? '#4caf50' : '#1565c0'}`,
+            }}>
+              <Box sx={{
+                width: 44, height: 44, borderRadius: '50%',
+                bgcolor: showReferenceStep ? '#4caf50' : '#1565c0',
+                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontWeight: 800, fontSize: '1.25rem', flexShrink: 0,
+              }}>
+                {showReferenceStep ? '2' : '1'}
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1.1rem', lineHeight: 1.3 }}>
+                  {showReferenceStep
+                    ? 'Set Scale with Reference Points (Bird\u2019s Eye View)'
+                    : 'Select 4 Corner Points'}
+                </Typography>
+                <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.95rem' }}>
+                  {showReferenceStep
+                    ? 'Click 2 points on a road marking with known width (e.g., lane edges \u2248 3m). Use markings near the center for best accuracy.'
+                    : 'Click on the video frame to mark 4 corners in order: top-left \u2192 top-right \u2192 bottom-right \u2192 bottom-left.'}
+                </Typography>
+              </Box>
+              <Box sx={{ textAlign: 'center', flexShrink: 0, px: 1 }}>
+                <Typography variant="h4" sx={{ fontWeight: 800, color: showReferenceStep ? '#4caf50' : '#1565c0' }}>
+                  {showReferenceStep ? `${referencePoints.length}/2` : `${calibrationPoints.length}/4`}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">points</Typography>
+              </Box>
+            </Box>
 
-            <Box sx={{ mb: 2 }}>
+            {/* Navigation hint */}
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1 }}>
+              <Typography variant="body2" sx={{ bgcolor: '#f5f5f5', px: 1.5, py: 0.5, borderRadius: 1, fontSize: '0.85rem' }}>
+                \uD83D\uDD0D <strong>Scroll</strong> to zoom
+              </Typography>
+              <Typography variant="body2" sx={{ bgcolor: '#f5f5f5', px: 1.5, py: 0.5, borderRadius: 1, fontSize: '0.85rem' }}>
+                \u2195\uFE0F <strong>Right-click + drag</strong> or <strong>Shift + drag</strong> to pan
+              </Typography>
+            </Box>
+
+            <Box sx={{ mb: 1 }}>
               <TextField
                 label="Reference Distance (meters)"
                 type="number"
                 value={referenceDistance}
                 onChange={(e) => setReferenceDistance(parseFloat(e.target.value) || 0)}
                 fullWidth
-                helperText="Enter the real-world distance between your 2 reference points (e.g., lane width = 3m)"
+                helperText="Real-world distance between your 2 reference points (e.g., lane width = 3m)"
                 inputProps={{ min: 0.1, step: 0.5 }}
+                sx={{
+                  '& .MuiInputBase-input': { fontSize: '1.1rem', fontWeight: 600 },
+                  '& .MuiInputLabel-root': { fontSize: '1rem' },
+                }}
               />
             </Box>
 
@@ -602,8 +890,8 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
               />
               <canvas
                 ref={canvasRef}
-                width={videoDimensions.width}
-                height={videoDimensions.height}
+                width={showReferenceStep && warpDimensions.width > 0 ? warpDimensions.width : videoDimensions.width}
+                height={showReferenceStep && warpDimensions.height > 0 ? warpDimensions.height : videoDimensions.height}
                 onClick={handleCanvasClick}
                 onMouseMove={handleCanvasMouseMove}
                 onMouseDown={handleCanvasMouseDown}
@@ -615,17 +903,18 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
                   width: '100%',
                   height: 'auto',
                   cursor: isPanning ? 'grabbing' : 'crosshair',
-                  border: '2px solid #ccc',
-                  minHeight: '400px'
+                  border: '3px solid #1565c0',
+                  borderRadius: '8px',
+                  minHeight: '500px'
                 }}
               />
             </Box>
 
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
-              <Typography variant="body2" color="text.secondary">
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, mt: 1, p: 1.5, bgcolor: '#f5f5f5', borderRadius: 1 }}>
+              <Typography variant="body1" sx={{ fontWeight: 600 }}>
                 {showReferenceStep 
-                  ? `Reference Points: ${referencePoints.length}/2 | Zoom: ${zoom.toFixed(1)}x`
-                  : `Calibration Points: ${calibrationPoints.length}/4 | Zoom: ${zoom.toFixed(1)}x`
+                  ? `\uD83D\uDFE2 Reference Points: ${referencePoints.length}/2 \u2022 Zoom: ${zoom.toFixed(1)}x`
+                  : `\uD83D\uDD35 Calibration Points: ${calibrationPoints.length}/4 \u2022 Zoom: ${zoom.toFixed(1)}x`
                 }
               </Typography>
               <Box sx={{ display: 'flex', gap: 1 }}>
@@ -648,9 +937,9 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
             </Box>
 
             {calibrationPoints.length === 4 && referencePoints.length === 2 && (
-              <Box sx={{ p: 1.5, bgcolor: 'success.light', borderRadius: 1, opacity: 0.7 }}>
-                <Typography variant="body2" sx={{ color: 'white' }}>
-                  ✓ All points selected (4 calibration + 2 reference). You can now proceed with the upload.
+              <Box sx={{ p: 2, bgcolor: '#e8f5e9', borderRadius: 2, border: '2px solid #4caf50' }}>
+                <Typography variant="body1" sx={{ fontWeight: 700, color: '#2e7d32', fontSize: '1rem' }}>
+                  ✅ All points selected (4 calibration + 2 reference). You can now proceed with the upload.
                 </Typography>
               </Box>
             )}
@@ -786,7 +1075,7 @@ function CustomToolbar({ title, onAdd, onEdit, onDelete, hasSelection } : Toolba
   )
 }
 
-export default function Table({ onVideoFileSelect, hideUpload = false, cameraId, onUploadComplete, visibleCameraIds = [], onProcessingStart, onProcessingComplete, onVideoSelect, onMultipleVideoSelect }: TableProps) {
+export default function Table({ onVideoFileSelect, hideUpload = false, cameraId, onUploadComplete, visibleCameraIds = [], onUploadStart, onProcessingStart, onProcessingComplete, onVideoSelect, onMultipleVideoSelect }: TableProps) {
   const [handleOpenAddModal, setAddModalOpen] = useState(false);
   const [selectedRows, setSelectedRows] = useState<any[]>([]);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -805,7 +1094,6 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
       { field: 'video_name', headerName: 'Video Name', flex: 1, minWidth: 150 },
       { field: 'uploaded_time', headerName: 'Uploaded', width: 160 },
       { field: 'vehicles', headerName: 'Vehicles', width: 80, align: 'center', headerAlign: 'center' },
-      { field: 'signs', headerName: 'Signs', width: 70, align: 'center', headerAlign: 'center' },
       { field: 'speeding', headerName: 'Speeding', width: 85, align: 'center', headerAlign: 'center' },
       { field: 'swerving', headerName: 'Swerving', width: 85, align: 'center', headerAlign: 'center' },
       { field: 'abrupt_stop', headerName: 'Abrupt Stop', width: 100, align: 'center', headerAlign: 'center' },
@@ -840,21 +1128,10 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
   const fetchVideos = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        console.error('No access token found');
-        setRows([]);
-        return;
-      }
-
       if (cameraId === null && visibleCameraIds.length > 0) {
         const videoPromises = visibleCameraIds.map(camId =>
-          fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${camId}/videos/`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          }).then(res => res.json())
+          authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${camId}/videos/`)
+            .then(res => res.json())
         );
 
         const results = await Promise.all(videoPromises);
@@ -895,12 +1172,7 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
         return;
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`);
 
       if (response.ok) {
         const data = await response.json();
@@ -954,16 +1226,9 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
 
   const handleEditSubmit = async (videoId: number, newName: string) => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        setSnackbar({ open: true, message: 'Authentication required', severity: 'error' });
-        return;
-      }
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`, {
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ filename: newName }),
@@ -995,19 +1260,9 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
 
   const handleDeleteConfirm = async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        setSnackbar({ open: true, message: 'Authentication required', severity: 'error' });
-        setDeleteDialogOpen(false);
-        return;
-      }
-
       const deletePromises = selectedRows.map(row =>
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${row.id}/`, {
+        authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${row.id}/`, {
           method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
         })
       );
 
@@ -1090,6 +1345,7 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
             onVideoFileSelect={onVideoFileSelect}
             cameraId={cameraId}
             onUploadComplete={onUploadComplete}
+            onUploadStart={onUploadStart}
             onProcessingStart={onProcessingStart}
             onProcessingComplete={onProcessingComplete}
           />

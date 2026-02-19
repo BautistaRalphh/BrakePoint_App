@@ -2,14 +2,17 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
-import { Box, Grid, Typography, Paper, Stack } from "@mui/material";
+import { Box, Grid, Typography, Stack, CircularProgress, Chip } from "@mui/material";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+import dayjs, { Dayjs } from "dayjs";
 
 import DirectionsCarFilledOutlinedIcon from "@mui/icons-material/DirectionsCarFilledOutlined";
-import CarCrashOutlinedIcon from "@mui/icons-material/CarCrashOutlined";
+import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
 import SpeedOutlinedIcon from "@mui/icons-material/SpeedOutlined";
+import SwapCallsIcon from "@mui/icons-material/SwapCalls";
+import PanToolOutlinedIcon from "@mui/icons-material/PanToolOutlined";
 
 import AnalyticsCard from "./analyticsCard";
 import CardCarousel from "./cardCarousel";
@@ -17,57 +20,119 @@ import CardCarousel from "./cardCarousel";
 import dynamic from "next/dynamic";
 const Map = dynamic(() => import("../map/map"), { ssr: false });
 
-import { getSavedLocationsMock, saveLocationsMock, type Loc } from "@/lib/api/locations";
-
 import "./analytics.css";
+import { authFetch } from "@/lib/authFetch";
+
+export type CameraSummary = {
+  id: number;
+  name: string;
+  lat: number;
+  lng: number;
+  location: string;
+  total_videos: number;
+  vehicles: number;
+  speeding: number;
+  swerving: number;
+  abrupt_stopping: number;
+  adb: number;
+  thumbnail: string | null;
+  tags: string[];
+};
+
+type Totals = {
+  vehicles: number;
+  adb: number;
+  speeding: number;
+  swerving: number;
+  abrupt_stopping: number;
+};
+
+type BreakdownEntry = { label: string; value: number };
+
+function fmtRate(count: number, total: number): string {
+  if (total === 0) return "0";
+  return ((count / total) * 1000).toFixed(1);
+}
 
 export default function Analytics() {
   const router = useRouter();
 
-  const [locations, setLocations] = useState<Loc[]>([]);
-  const [selectedLoc, setSelectedLoc] = useState<Loc | null>(null);
+  const [totals, setTotals] = useState<Totals>({ vehicles: 0, adb: 0, speeding: 0, swerving: 0, abrupt_stopping: 0 });
+  const [breakdown, setBreakdown] = useState<BreakdownEntry[]>([]);
+  const [cameras, setCameras] = useState<CameraSummary[]>([]);
+  const [selectedCam, setSelectedCam] = useState<CameraSummary | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const vehicleBreakdown = [
-    { id: 0, value: 420, label: "Cars" },
-    { id: 1, value: 120, label: "Motorcycles" },
-    { id: 2, value: 60, label: "Trucks" },
-    { id: 3, value: 40, label: "Buses" },
-  ];
+  const [startDate, setStartDate] = useState<Dayjs | null>(null);
+  const [endDate, setEndDate] = useState<Dayjs | null>(null);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
-  useEffect(() => {
-    getSavedLocationsMock()
-      .then((data) => {
-        setLocations(data.locations ?? []);
-        setSelectedLoc((prev) => prev ?? data.locations?.[0] ?? null);
-      })
-      .catch(() => {
-        setLocations([]);
-      });
+  // Fetch dashboard summary from real API
+  const fetchSummary = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (startDate) params.set("start", startDate.format("YYYY-MM-DD"));
+      if (endDate) params.set("end", endDate.format("YYYY-MM-DD"));
 
-    router.prefetch("/map");
-  }, [router]);
+      const res = await authFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard-summary/?${params}`,
+      );
+      if (!res.ok) throw new Error("fetch failed");
+      const json = await res.json();
+
+      if (json.success) {
+        setTotals(json.totals);
+        setCameras(json.cameras ?? []);
+        setSelectedCam((prev) => prev ?? json.cameras?.[0] ?? null);
+
+        const bd: BreakdownEntry[] = Object.entries(json.vehicle_breakdown ?? {}).map(
+          ([label, value]) => ({ label, value: value as number }),
+        );
+        setBreakdown(bd);
+      }
+    } catch {
+      /* keep previous state */
+    } finally {
+      setLoading(false);
+    }
+  }, [startDate, endDate]);
+
+  useEffect(() => { fetchSummary(); }, [fetchSummary]);
+  useEffect(() => { router.prefetch("/map"); }, [router]);
+
+  // Collect all unique tags across cameras
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    cameras.forEach((c) => (c.tags ?? []).forEach((t) => tagSet.add(t)));
+    return Array.from(tagSet).sort();
+  }, [cameras]);
+
+  // Filter cameras by selected tags
+  const filteredCameras = useMemo(() => {
+    if (selectedTags.length === 0) return cameras;
+    return cameras.filter((c) =>
+      selectedTags.every((tag) => (c.tags ?? []).includes(tag)),
+    );
+  }, [cameras, selectedTags]);
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  };
 
   const dashboardMarkers = useMemo(
-    () =>
-      locations.map((l) => ({
-        id: l.id,
-        lat: l.lat,
-        lng: l.lng,
-        label: l.name,
-      })),
-    [locations],
+    () => cameras.map((c) => ({ id: c.id, lat: c.lat, lng: c.lng, label: c.name })),
+    [cameras],
   );
 
-  const handleDashboardMarkerClick = (id: number | string) => {
-    const loc = locations.find((l) => String(l.id) === String(id));
-    if (!loc) return;
-    setSelectedLoc(loc);
+  const handleMarkerClick = (id: number | string) => {
+    const cam = cameras.find((c) => String(c.id) === String(id));
+    if (cam) setSelectedCam(cam);
   };
 
-  const persist = async (next: Loc[]) => {
-    setLocations(next);
-    await saveLocationsMock(next);
-  };
+  const v = totals.vehicles;
 
   return (
     <Box className="analytics-container">
@@ -75,69 +140,147 @@ export default function Analytics() {
         <Typography variant="h3">Analytics</Typography>
 
         <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <DatePicker label="Start Date" />
+          <DatePicker
+            label="Start Date"
+            value={startDate}
+            onChange={(d) => { if (d && endDate && d.isAfter(endDate)) return; setStartDate(d); }}
+            slotProps={{ textField: { size: "small", sx: {
+              bgcolor: "transparent",
+              "& .MuiOutlinedInput-root": {
+                borderRadius: "12px",
+                "& fieldset": { borderColor: "#b0b3b0" },
+                "&:hover fieldset": { borderColor: "#1d1f3f" },
+                "&.Mui-focused fieldset": { borderColor: "#1d1f3f" },
+              },
+              "& .MuiInputLabel-root": { color: "#555" },
+            } } }}
+          />
         </LocalizationProvider>
 
         <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <DatePicker label="End Date" />
+          <DatePicker
+            label="End Date"
+            value={endDate}
+            onChange={(d) => { if (d && startDate && d.isBefore(startDate)) return; setEndDate(d); }}
+            slotProps={{ textField: { size: "small", sx: {
+              bgcolor: "transparent",
+              "& .MuiOutlinedInput-root": {
+                borderRadius: "12px",
+                "& fieldset": { borderColor: "#b0b3b0" },
+                "&:hover fieldset": { borderColor: "#1d1f3f" },
+                "&.Mui-focused fieldset": { borderColor: "#1d1f3f" },
+              },
+              "& .MuiInputLabel-root": { color: "#555" },
+            } } }}
+          />
         </LocalizationProvider>
       </Box>
 
-      <Box className="analytics-card-container">
-        <Grid container spacing={{ xs: 2, md: 2 }} alignItems="stretch" sx={{ height: "100%" }}>
-          <Grid size={{ xs: 12, md: 3 }} display="flex" sx={{ minWidth: 0 }}>
-            <Stack spacing={2} width="100%" height="100%">
-              <AnalyticsCard
-                headerText="Total vehicle count"
-                icon={<DirectionsCarFilledOutlinedIcon />}
-                variant="text"
-                valueText="500"
-              ></AnalyticsCard>
-              <AnalyticsCard headerText="Total ADB count" icon={<CarCrashOutlinedIcon />} variant="text" valueText="500"></AnalyticsCard>
-            </Stack>
-          </Grid>
+      {loading ? (
+        <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 400, gap: 2 }}>
+          <CircularProgress size={32} sx={{ color: "#1d1f3f" }} />
+          <Typography color="text.secondary">Loading dashboard…</Typography>
+        </Box>
+      ) : (
+        <>
+          <Box className="analytics-card-container">
+            <Grid container spacing={{ xs: 2, md: 2 }} alignItems="stretch" sx={{ height: "100%" }}>
+              <Grid size={{ xs: 12, md: 3 }} display="flex" sx={{ minWidth: 0 }}>
+                <Stack spacing={2} width="100%" height="100%">
+                  <AnalyticsCard
+                    headerText="Total vehicle count"
+                    icon={<DirectionsCarFilledOutlinedIcon />}
+                    variant={breakdown.length > 0 ? "pie" : "text"}
+                    valueText={v.toLocaleString()}
+                    data={breakdown.length > 0 ? breakdown : undefined}
+                  />
+                  <AnalyticsCard
+                    headerText="Total ADB count"
+                    icon={<ReportProblemOutlinedIcon />}
+                    variant="text"
+                    valueText={totals.adb.toLocaleString()}
+                  />
+                </Stack>
+              </Grid>
 
-          <Grid size={{ xs: 12, md: 3, lg: 3 }} display="flex" sx={{ minWidth: 0 }}>
-            <Stack spacing={2} width="100%" height="100%">
-              <AnalyticsCard
-                compact
-                headerText="Speeding incidents per 1,000 vehicles"
-                icon={<SpeedOutlinedIcon />}
-                variant="text"
-                valueText="500"
-              ></AnalyticsCard>
-              <AnalyticsCard
-                compact
-                headerText="Abrupt stopping events per 1,000 vehicles"
-                icon={<SpeedOutlinedIcon />}
-                variant="text"
-                valueText="500"
-              ></AnalyticsCard>
-              <AnalyticsCard
-                compact
-                headerText="Swerving events per 1,000 vehicles"
-                icon={<SpeedOutlinedIcon />}
-                variant="text"
-                valueText="500"
-              ></AnalyticsCard>
-            </Stack>
-          </Grid>
+              <Grid size={{ xs: 12, md: 3 }} display="flex" sx={{ minWidth: 0 }}>
+                <Stack spacing={2} width="100%" height="100%">
+                  <AnalyticsCard
+                    compact
+                    headerText="Speeding"
+                    icon={<SpeedOutlinedIcon />}
+                    variant="text"
+                    valueText={fmtRate(totals.speeding, v)}
+                  />
+                  <AnalyticsCard
+                    compact
+                    headerText="Swerving"
+                    icon={<SwapCallsIcon />}
+                    variant="text"
+                    valueText={fmtRate(totals.swerving, v)}
+                  />
+                  <AnalyticsCard
+                    compact
+                    headerText="Abrupt stopping"
+                    icon={<PanToolOutlinedIcon />}
+                    variant="text"
+                    valueText={fmtRate(totals.abrupt_stopping, v)}
+                  />
+                </Stack>
+              </Grid>
 
-          <Grid size={{ xs: 12, md: 6 }} display="flex" sx={{ minWidth: 0 }}>
-            <Box sx={{ minHeight: { xs: 720, md: "100%" }, width: "100%", borderRadius: 2, overflow: "hidden" }}>
-              <Map
-                mode="dashboard"
-                refreshTrigger={0}
-                dashboardMarkers={dashboardMarkers}
-                onDashboardMarkerClick={handleDashboardMarkerClick}
-                goTo={selectedLoc ? [selectedLoc.lng, selectedLoc.lat] : null}
-              />
+              <Grid size={{ xs: 12, md: 6 }} display="flex" sx={{ minWidth: 0 }}>
+                <Box sx={{ minHeight: { xs: 720, md: "100%" }, width: "100%", borderRadius: 2, overflow: "hidden" }}>
+                  <Map
+                    mode="dashboard"
+                    refreshTrigger={0}
+                    dashboardMarkers={dashboardMarkers}
+                    onDashboardMarkerClick={handleMarkerClick}
+                    goTo={selectedCam ? [selectedCam.lng, selectedCam.lat] : null}
+                  />
+                </Box>
+              </Grid>
+            </Grid>
+          </Box>
+
+          <CardCarousel cameras={filteredCameras} onSelect={(c) => setSelectedCam(c)} />
+
+          {/* Tag filter chips */}
+          {allTags.length > 0 && (
+            <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.75, alignItems: "center" }}>
+              <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5, fontWeight: 600 }}>
+                Filter by tag:
+              </Typography>
+              {allTags.map((tag) => (
+                <Chip
+                  key={tag}
+                  label={tag}
+                  size="small"
+                  variant={selectedTags.includes(tag) ? "filled" : "outlined"}
+                  onClick={() => toggleTag(tag)}
+                  sx={{
+                    fontSize: "0.75rem",
+                    height: 26,
+                    cursor: "pointer",
+                    ...(selectedTags.includes(tag)
+                      ? { bgcolor: "#1d1f3f", color: "#fff", "&:hover": { bgcolor: "#2a2d5a" } }
+                      : { borderColor: "#999", color: "#555", "&:hover": { bgcolor: "#eee" } }),
+                  }}
+                />
+              ))}
+              {selectedTags.length > 0 && (
+                <Chip
+                  label="Clear"
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setSelectedTags([])}
+                  sx={{ fontSize: "0.7rem", height: 24, borderColor: "#ccc", color: "#999" }}
+                />
+              )}
             </Box>
-          </Grid>
-        </Grid>
-      </Box>
-
-      <CardCarousel locations={locations} />
+          )}
+        </>
+      )}
     </Box>
   );
 }
