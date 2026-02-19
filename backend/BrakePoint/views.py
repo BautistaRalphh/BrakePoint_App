@@ -484,15 +484,25 @@ def _upload_and_process_video(request):
                 
             except Exception as e:
                 print(f"[Error] Video {video_record.id} processing failed: {e}", flush=True)
-                connection.close()
-                try:
-                    video_obj = Video.objects.get(pk=video_record.id)
-                    video_obj.processing_status = 'failed'
-                    video_obj.error_message = str(e)
-                    video_obj.processing_completed_at = timezone.now()
-                    video_obj.save()
-                except Exception as save_error:
-                    print(f"[Error] Could not save error state: {save_error}", flush=True)
+                import traceback
+                traceback.print_exc()
+                # Retry DB connection before saving failure state
+                for _attempt in range(3):
+                    try:
+                        connection.close()
+                        connection.ensure_connection()
+                        video_obj = Video.objects.get(pk=video_record.id)
+                        video_obj.processing_status = 'failed'
+                        video_obj.processing_stage = ''
+                        video_obj.yolo_progress = 0
+                        video_obj.processing_completed_at = timezone.now()
+                        video_obj.save()
+                        print(f"[Error] Saved failure state for video {video_record.id}", flush=True)
+                        break
+                    except Exception as save_error:
+                        print(f"[Error] Save attempt {_attempt+1} failed: {save_error}", flush=True)
+                        import time
+                        time.sleep(2)
             finally:
                 # Clean up temp file
                 if os.path.exists(temp_path):
@@ -709,13 +719,6 @@ def video_progress_api(request, pk: int):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def behavior_timeline_api(request):
-    """
-    Aggregate driving-behavior counts by date for one or more cameras.
-    Query params:
-      camera_ids  – comma-separated camera IDs (required)
-      start       – ISO date string, inclusive lower bound (optional)
-      end         – ISO date string, inclusive upper bound  (optional)
-    """
     user = request.user
 
     raw_ids = request.query_params.get('camera_ids', '')
@@ -774,13 +777,6 @@ def behavior_timeline_api(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def dashboard_summary_api(request):
-    """
-    Aggregate stats for the authenticated user's dashboard:
-      - totals across ALL their cameras
-      - per-camera breakdown
-      - vehicle_breakdown (pie-chart data)
-    Optional query params: start, end (ISO dates)
-    """
     user = request.user
     cameras = Camera.objects.filter(user=user)
 
