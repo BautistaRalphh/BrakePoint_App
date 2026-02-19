@@ -10,6 +10,7 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { useRouter } from 'next/navigation';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { authFetch } from '@/lib/authFetch';
 
 import ToggleDrawer from '@components/map/toggleDrawer';
 import SideTab from '@components/map/sideTab';
@@ -111,19 +112,7 @@ export default function MapPage() {
 
       setLoadingFeedData(true);
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-          console.error('No access token found');
-          setSelectedFeedData(null);
-          return;
-        }
-
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`);
 
         if (response.ok) {
           const data = await response.json();
@@ -169,18 +158,7 @@ export default function MapPage() {
       }
 
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-          console.error('No access token found');
-          return;
-        }
-
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${selectedFeedId}/videos/`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${selectedFeedId}/videos/`);
 
         if (response.ok) {
           const data = await response.json();
@@ -232,20 +210,10 @@ export default function MapPage() {
       }
 
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-          console.error('No access token found');
-          return;
-        }
-
         // Fetch videos from all visible cameras in parallel
         const videoPromises = visibleCameraIds.map(cameraId =>
-          fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          }).then(res => res.json())
+          authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`)
+            .then(res => res.json())
         );
 
         const results = await Promise.all(videoPromises);
@@ -411,10 +379,7 @@ export default function MapPage() {
     // Poll for completion only
     const pollInterval = setInterval(async () => {
       try {
-        const token = localStorage.getItem('access_token');
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/progress/`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/progress/`);
         
         if (response.ok) {
           const data = await response.json();
@@ -427,9 +392,7 @@ export default function MapPage() {
               delete (window as any)[`pollInterval_${videoId}`];
               
               // Fetch full video data
-              const videoResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-              });
+              const videoResponse = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`);
               
               let videoData = data;
               if (videoResponse.ok) {

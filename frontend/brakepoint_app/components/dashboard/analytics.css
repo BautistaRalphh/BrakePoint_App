@@ -38,6 +38,9 @@
 }
 
 .MuiDatePicker-root {
-  background-color: white;
   width: 100%;
+}
+
+.MuiFormControl-root .MuiOutlinedInput-root {
+  background-color: transparent;
 }

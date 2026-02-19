@@ -278,6 +278,15 @@ def upload_and_process_video(request):
     and Mask R-CNN traffic sign detection with calibration.
     Creates a Video record linked to a Camera.
     """
+    print(f"[upload] method={request.method} content_type={request.content_type} FILES={list(request.FILES.keys())} POST={list(request.POST.keys())} user={request.user}", flush=True)
+    try:
+        return _upload_and_process_video(request)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+def _upload_and_process_video(request):
     user = request.user
     video_file = request.FILES.get('file')
     video_name = request.POST.get('video_name', 'Untitled Video')
@@ -297,6 +306,7 @@ def upload_and_process_video(request):
     calibration_points_json = request.POST.get('calibration_points')
     reference_points_json = request.POST.get('reference_points')
     reference_distance_str = request.POST.get('reference_distance_meters')
+    use_sign_detection = request.POST.get('use_sign_detection', 'false').lower() == 'true'
     
     calibration_points = None
     reference_points = None
@@ -343,7 +353,9 @@ def upload_and_process_video(request):
         processing_started_at=timezone.now()
     )
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
+    project_tmp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tmp')
+    os.makedirs(project_tmp, exist_ok=True)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4", dir=project_tmp) as tmp_file:
         for chunk in video_file.chunks():
             tmp_file.write(chunk)
         temp_path = tmp_file.name
@@ -400,7 +412,17 @@ def upload_and_process_video(request):
         
         # Start processing in background thread (after response is sent)
         import threading
+        import re as _re
         
+        # Extract speed limit from camera tags (e.g. "30kph Speed Limit" → 30)
+        _speed_limit = None
+        if isinstance(camera.tags, list):
+            for _tag in camera.tags:
+                _m = _re.match(r'(\d+)\s*kph\s+speed\s+limit', str(_tag), _re.IGNORECASE)
+                if _m:
+                    _speed_limit = int(_m.group(1))
+                    break
+
         def process_video_background():
             """Process video in background thread"""
             # Close any parent thread database connections
@@ -419,16 +441,21 @@ def upload_and_process_video(request):
                     calibration_points, 
                     reference_distance_meters,
                     reference_points,
-                    video_record=video_obj
+                    video_record=video_obj,
+                    speed_limit_kmh=_speed_limit
                 )
                 
                 # Reload Video object for Mask R-CNN
                 video_obj.refresh_from_db()
                 
-                # Run Mask R-CNN traffic sign detection
-                print(f"[views.py] Starting Mask R-CNN for video {video_obj.id}", flush=True)
-                sign_results = run_traffic_sign_detection_on_video(temp_path, video_record=video_obj)
-                print(f"[views.py] Mask R-CNN completed: {sign_results.get('status')}", flush=True)
+                # Run Mask R-CNN traffic sign detection (only if requested)
+                sign_results = {}
+                if use_sign_detection:
+                    print(f"[views.py] Starting Mask R-CNN for video {video_obj.id}", flush=True)
+                    sign_results = run_traffic_sign_detection_on_video(temp_path, video_record=video_obj)
+                    print(f"[views.py] Mask R-CNN completed: {sign_results.get('status')}", flush=True)
+                else:
+                    print(f"[views.py] Skipping Mask R-CNN for video {video_obj.id} (not requested)", flush=True)
 
                 # Reload for final update
                 connection.close()
@@ -597,6 +624,32 @@ def camera_calibration_api(request, pk: int):
     camera.save()
     return Response({"success": True, "message": "Calibration cleared"})
 
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def camera_tags_api(request, pk: int):
+    """Get or update tags for a camera"""
+    user = request.user
+    
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+    
+    if request.method == 'GET':
+        return Response({"success": True, "tags": camera.tags})
+    
+    # PUT — replace all tags
+    tags = request.data.get('tags', [])
+    if not isinstance(tags, list):
+        return Response({"success": False, "error": "Tags must be a list"}, status=400)
+    
+    # Sanitise: deduplicate, strip whitespace, remove empties
+    cleaned = list(dict.fromkeys(t.strip() for t in tags if isinstance(t, str) and t.strip()))
+    camera.tags = cleaned
+    camera.save()
+    
+    return Response({"success": True, "tags": camera.tags})
+
 @api_view(['PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def video_detail_api(request, pk: int):
@@ -700,3 +753,90 @@ def behavior_timeline_api(request):
     ]
 
     return Response({"success": True, "timeline": data})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def dashboard_summary_api(request):
+    """
+    Aggregate stats for the authenticated user's dashboard:
+      - totals across ALL their cameras
+      - per-camera breakdown
+      - vehicle_breakdown (pie-chart data)
+    Optional query params: start, end (ISO dates)
+    """
+    user = request.user
+    cameras = Camera.objects.filter(user=user)
+
+    qs = Video.objects.filter(camera__in=cameras, processing_status='completed')
+
+    start = request.query_params.get('start')
+    end = request.query_params.get('end')
+    if start:
+        qs = qs.filter(uploaded_at__date__gte=start)
+    if end:
+        qs = qs.filter(uploaded_at__date__lte=end)
+
+    totals = qs.aggregate(
+        vehicles=Sum('vehicles'),
+        speeding=Sum('speeding_count'),
+        swerving=Sum('swerving_count'),
+        abrupt_stopping=Sum('abrupt_stopping_count'),
+    )
+
+    total_vehicles = totals['vehicles'] or 0
+    total_speeding = totals['speeding'] or 0
+    total_swerving = totals['swerving'] or 0
+    total_abrupt = totals['abrupt_stopping'] or 0
+    total_adb = total_speeding + total_swerving + total_abrupt
+
+    # Vehicle breakdown (merge dicts from all videos)
+    breakdown: dict[str, int] = {}
+    for vb in qs.values_list('vehicle_breakdown', flat=True):
+        if isinstance(vb, dict):
+            for k, v in vb.items():
+                breakdown[k] = breakdown.get(k, 0) + (v if isinstance(v, int) else 0)
+
+    # Per-camera aggregates
+    per_camera = []
+    for cam in cameras:
+        cam_qs = qs.filter(camera=cam)
+        cam_totals = cam_qs.aggregate(
+            vehicles=Sum('vehicles'),
+            speeding=Sum('speeding_count'),
+            swerving=Sum('swerving_count'),
+            abrupt_stopping=Sum('abrupt_stopping_count'),
+        )
+        # Get thumbnail from most recent completed video
+        latest_vid = cam_qs.order_by('-uploaded_at').values_list('thumbnail', flat=True).first()
+
+        per_camera.append({
+            'id': cam.id,
+            'name': cam.name,
+            'lat': cam.lat,
+            'lng': cam.lng,
+            'location': cam.location,
+            'total_videos': cam_qs.count(),
+            'vehicles': cam_totals['vehicles'] or 0,
+            'speeding': cam_totals['speeding'] or 0,
+            'swerving': cam_totals['swerving'] or 0,
+            'abrupt_stopping': cam_totals['abrupt_stopping'] or 0,
+            'adb': (cam_totals['speeding'] or 0)
+                 + (cam_totals['swerving'] or 0)
+                 + (cam_totals['abrupt_stopping'] or 0),
+            'thumbnail': latest_vid if latest_vid else None,
+            'tags': cam.tags if isinstance(cam.tags, list) else [],
+        })
+
+    return Response({
+        "success": True,
+        "totals": {
+            "vehicles": total_vehicles,
+            "adb": total_adb,
+            "speeding": total_speeding,
+            "swerving": total_swerving,
+            "abrupt_stopping": total_abrupt,
+        },
+        "vehicle_breakdown": breakdown,
+        "cameras": per_camera,
+    })

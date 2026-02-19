@@ -75,7 +75,7 @@ class CameraSerializer(serializers.ModelSerializer):
             'saved_location', 'latest_upload', 'latest_video', 'total_videos',
             'vehicles', 'occurrences', 'behaviors', 'signs', 'sign_classes',
             'calibration_points', 'reference_points', 'reference_distance_meters',
-            'meter_per_pixel', 'is_calibrated'
+            'meter_per_pixel', 'is_calibrated', 'tags'
         ]
         read_only_fields = ['id', 'created_at']
     

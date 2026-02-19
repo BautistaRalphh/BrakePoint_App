@@ -17,6 +17,13 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Redirect all temp files to E: drive (C: drive is full)
+_tmp_dir = str(BASE_DIR / 'tmp')
+os.makedirs(_tmp_dir, exist_ok=True)
+os.environ.setdefault('TMPDIR', _tmp_dir)
+os.environ.setdefault('TEMP', _tmp_dir)
+os.environ.setdefault('TMP', _tmp_dir)
+
 # Load environment variables from .env file
 load_dotenv(BASE_DIR / ".env")
 
@@ -131,18 +138,20 @@ WSGI_APPLICATION = "BrakePoint_Project.wsgi.application"
 #     }
 # }
 
-# Aiven MySQL (shared database)
+# TiDB Cloud Serverless (shared database)
 DATABASES = {
     "default": {
         "ENGINE": os.getenv("DB_ENGINE", "django.db.backends.mysql"),
         "NAME": os.getenv("DB_NAME", "defaultdb"),
-        "USER": os.getenv("DB_USER", "avnadmin"),
+        "USER": os.getenv("DB_USER", ""),
         "PASSWORD": os.getenv("DB_PASSWORD", ""),
         "HOST": os.getenv("DB_HOST", "127.0.0.1"),
-        "PORT": os.getenv("DB_PORT", "3306"),
+        "PORT": os.getenv("DB_PORT", "4000"),
         "OPTIONS": {
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            "ssl": {"ssl-mode": "REQUIRED"},
+            "ssl": {
+                "ca": os.path.join(os.path.dirname(__file__), "..", "certs", "isrg-root-x1.pem"),
+            },
         },
     }
 }
@@ -188,3 +197,9 @@ STATIC_URL = "/static/"
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Unlimited upload size
+DATA_UPLOAD_MAX_MEMORY_SIZE = None  # no limit
+FILE_UPLOAD_MAX_MEMORY_SIZE = 0     # always stream to disk
+
+FILE_UPLOAD_TEMP_DIR = str(BASE_DIR / 'tmp')

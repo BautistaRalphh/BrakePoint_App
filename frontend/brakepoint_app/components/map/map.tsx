@@ -6,6 +6,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./map.css";
 import ModeEditIcon from "@mui/icons-material/ModeEdit";
+import { authFetch } from "@/lib/authFetch";
 
 type MapMode = "explore" | "map" | "heatmap" | "dashboard";
 type ToolMode = "none" | "addCamera" | "removeCamera" | "addPoint" | "removePoint" | "assignCamera";
@@ -148,7 +149,6 @@ export default function MapView({
   const polygonPointsRef = useLatestRef(polygonPoints);
 
   const camerasRef = useRef<CameraMarkerEntry[]>([]);
-  const isLoadingCameras = useRef(false);
 
   const dashboardRegistryRef = useRef<Map<string, DashMarkerEntry>>(new Map());
   const openDashboardPopupRef = useRef<maplibregl.Popup | null>(null);
@@ -160,13 +160,6 @@ export default function MapView({
   const zoom = 10;
 
   const isAssigningCamera = toolMode === "assignCamera";
-
-  const getAuthToken = () => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("access_token");
-    }
-    return null;
-  };
 
 
   const createMap = useCallback(() => {
@@ -502,12 +495,9 @@ export default function MapView({
 
   const removeCamera = useCallback(async (cameraId: number | string) => {
     try {
-      const token = getAuthToken();
-      if (!token) return;
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`, {
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
       });
 
       if (!response.ok) return;
@@ -521,12 +511,9 @@ export default function MapView({
   }, []);
 
   const savePolygonToCamera = useCallback(async (cameraId: number | string, points: [number, number][]) => {
-    const token = getAuthToken();
-    if (!token) return false;
-
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/polygon/`, {
+    const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/polygon/`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ polygon: points }),
     });
 
@@ -596,23 +583,26 @@ export default function MapView({
     [onCameraClick, removeCamera, savePolygonToCamera, completedPolygonsRef, selectedPolygonIndexRef, toolModeRef],
   );
 
+  const loadAbortRef = useRef<AbortController | null>(null);
+
   const loadCamerasFromDatabase = useCallback(async () => {
-    if (isLoadingCameras.current) return;
+    // Abort any in-flight load so the latest call always wins
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
 
     try {
-      isLoadingCameras.current = true;
-
-      const token = getAuthToken();
-      if (!token) return;
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
         method: "GET",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
       });
 
+      if (controller.signal.aborted) return;
       if (!response.ok) return;
 
       const data = await response.json();
+      if (controller.signal.aborted) return;
       if (!data?.success || !data?.cameras) return;
 
       camerasRef.current.forEach((c) => c.marker?.remove());
@@ -627,14 +617,15 @@ export default function MapView({
 
       setCompletedPolygons(polygons);
       onCamerasLoaded?.(data.cameras);
-    } finally {
-      isLoadingCameras.current = false;
+    } catch (err: any) {
+      if (err?.name === "AbortError") return; // expected on cancel
     }
   }, [addCameraFromData, onCamerasLoaded]);
 
   useEffect(() => {
     if (mode !== "map" && mode !== "heatmap") return;
     loadCamerasFromDatabase();
+    return () => { loadAbortRef.current?.abort(); };
   }, [mode, loadCamerasFromDatabase]);
 
   useEffect(() => {
@@ -645,12 +636,9 @@ export default function MapView({
   const addCamera = useCallback(
     async (cameraLat: number, cameraLng: number) => {
       try {
-        const token = getAuthToken();
-        if (!token) return;
-
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ lat: cameraLat, lng: cameraLng }),
         });
 
@@ -838,8 +826,12 @@ export default function MapView({
     if (!map) return;
 
     const apply = () => renderPolygonLayers();
-    if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
+    if (map.isStyleLoaded()) {
+      apply();
+    } else {
+      map.once("load", apply);
+      return () => { map.off("load", apply); };
+    }
   }, [renderPolygonLayers, completedPolygons, polygonPoints]);
 
   // Update polygon opacity based on selected camera
@@ -1094,17 +1086,14 @@ export default function MapView({
 
     if (poly.cameraId != null) {
       try {
-        const token = getAuthToken();
-        if (token) {
-          await fetch(
+        await authFetch(
             `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${poly.cameraId}/polygon/`,
             {
               method: "PATCH",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ polygon: null }),
             },
           );
-        }
       } catch {}
     }
 

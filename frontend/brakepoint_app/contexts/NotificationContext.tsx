@@ -10,6 +10,7 @@ interface Notification {
   read: boolean;
   timestamp: number;
   processing?: boolean;
+  videoId?: number;
 }
 
 interface NotificationContextType {
@@ -17,7 +18,7 @@ interface NotificationContextType {
 
   notifications: Notification[];
   addNotification: (videoName: string, success: boolean, data?: any) => void;
-  addProcessingNotification: (videoName: string) => string;
+  addProcessingNotification: (videoName: string, videoId?: number) => string;
   completeProcessing: (id: string, success: boolean, data?: any) => void;
   removeNotification: (id: string) => void;
   markAsRead: (id: string) => void;
@@ -33,7 +34,7 @@ function safeParseNotifications(raw: string | null): Notification[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((n: any) => n && typeof n === "object" && !n.processing)
+      .filter((n: any) => n && typeof n === "object")
       .map((n: any) => ({
         id: String(n.id ?? crypto.randomUUID()),
         videoName: String(n.videoName ?? ""),
@@ -42,6 +43,7 @@ function safeParseNotifications(raw: string | null): Notification[] {
         read: Boolean(n.read),
         timestamp: typeof n.timestamp === "number" ? n.timestamp : Date.now(),
         processing: Boolean(n.processing),
+        videoId: typeof n.videoId === "number" ? n.videoId : undefined,
       }));
   } catch {
     return [];
@@ -79,7 +81,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     setNotifications((prev) => [newNotification, ...prev]);
   }, []);
 
-  const addProcessingNotification = useCallback((videoName: string) => {
+  const addProcessingNotification = useCallback((videoName: string, videoId?: number) => {
     const now = Date.now();
     const id = crypto.randomUUID();
 
@@ -90,6 +92,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       read: false,
       timestamp: now,
       processing: true,
+      videoId,
     };
 
     setNotifications((prev) => [newNotification, ...prev]);

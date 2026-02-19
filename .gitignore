@@ -17,3 +17,4 @@ backend/traffic_sign.pth
 backend/yolov8n.pt
 backend/yolov8m.pt
 backend/certs
+backend/tmp/
