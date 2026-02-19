@@ -13,33 +13,24 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import environ
+import sys
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Redirect all temp files to E: drive (C: drive is full)
 _tmp_dir = str(BASE_DIR / 'tmp')
 os.makedirs(_tmp_dir, exist_ok=True)
 os.environ.setdefault('TMPDIR', _tmp_dir)
 os.environ.setdefault('TEMP', _tmp_dir)
 os.environ.setdefault('TMP', _tmp_dir)
 
-# Load environment variables from .env file
 load_dotenv(BASE_DIR / ".env")
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-fallback-key")
 
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
 ALLOWED_HOSTS = []
-
-
-# Application definition
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -66,7 +57,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # your Next.js dev server
+    "http://localhost:3000", 
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -75,25 +66,21 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
 ]
 
-# Session settings for cross-origin requests
 SESSION_COOKIE_SAMESITE = None 
 SESSION_COOKIE_SECURE = False  
 SESSION_COOKIE_HTTPONLY = False 
 SESSION_COOKIE_DOMAIN = None  
 
-# CSRF settings for cross-origin requests
 CSRF_COOKIE_SAMESITE = None
 CSRF_COOKIE_SECURE = False
 CSRF_COOKIE_HTTPONLY = False  
 
-# REST Framework settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
 
-# JWT settings
 from datetime import timedelta
 
 SIMPLE_JWT = {
@@ -126,6 +113,40 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "BrakePoint_Project.wsgi.application"
 
+# Determine SSL cert path based on OS
+_ca_cert_path = os.path.join(BASE_DIR, 'certs', 'isrg-root-x1.pem')
+
+if sys.platform == 'darwin':
+    _mac_cert_candidates = [
+        '/etc/ssl/cert.pem',
+        '/opt/homebrew/etc/openssl@3/cert.pem',
+        '/opt/homebrew/etc/openssl/cert.pem',
+        '/usr/local/etc/openssl@3/cert.pem',
+        '/usr/local/etc/openssl/cert.pem',
+    ]
+    _ca_cert_path = None
+    for _candidate in _mac_cert_candidates:
+        if os.path.exists(_candidate):
+            _ca_cert_path = _candidate
+            break
+    if _ca_cert_path is None:
+        try:
+            import certifi
+            _ca_cert_path = certifi.where()
+        except ImportError:
+            _ca_cert_path = None
+elif sys.platform == 'win32':
+    if not os.path.exists(_ca_cert_path):
+        try:
+            import certifi
+            _ca_cert_path = certifi.where()
+        except ImportError:
+            _ca_cert_path = None
+
+if _ca_cert_path and os.path.exists(_ca_cert_path):
+    _ssl_options = {'ssl': {'ca': _ca_cert_path}}
+else:
+    _ssl_options = {'ssl': True}
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
@@ -175,10 +196,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
-# Internationalization
-# https://docs.djangoproject.com/en/5.1/topics/i18n/
-
 LANGUAGE_CODE = "en-us"
 
 TIME_ZONE = "UTC"
@@ -187,18 +204,10 @@ USE_I18N = True
 
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
 STATIC_URL = "/static/"
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Unlimited upload size
 DATA_UPLOAD_MAX_MEMORY_SIZE = None  # no limit
 FILE_UPLOAD_MAX_MEMORY_SIZE = 0     # always stream to disk
 
