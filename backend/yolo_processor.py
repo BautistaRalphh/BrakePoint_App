@@ -1,4 +1,4 @@
-﻿import os
+import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import cv2
@@ -12,12 +12,12 @@ MODEL_PATH = 'vehicles.pt'
 PRETRAINED_MODEL_PATH = 'yolov8m.pt'
 TRACKER_CONFIG = 'bytetrack.yaml'
 CONFIDENCE_THRESHOLD = 0.25
-YOLO_IMGSZ = 1280
+YOLO_IMGSZ = 640           # Reduced from 1280 for 4GB VRAM GPUs (GTX 1650)
 
 # Performance tuning
 FRAME_STRIDE = 2            # Process every Nth frame (1 = all, 2 = skip every other)
 BOOST_INTERVAL = 5          # Run far/mid-field boosts every Nth *processed* frame
-BOOST_IMGSZ = 640           # Smaller imgsz for boost passes (crops are small anyway)
+BOOST_IMGSZ = 480           # Smaller imgsz for boost passes (crops are small anyway)
 USE_HALF_PRECISION = True    # FP16 inference (GPU only, ~40% faster)
 DB_SAVE_INTERVAL = 50       # Save progress to DB every N frames
 
