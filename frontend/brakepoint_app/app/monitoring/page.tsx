@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from "react";
 import { Box, Typography, IconButton, Chip } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import Timeline from "@components/timeline/timeline";
 import Notification from "@components/notifications";
@@ -16,11 +16,21 @@ import dynamic from "next/dynamic";
 const Map = dynamic(() => import("@components/map/map"), { ssr: false });
 
 export default function MonitoringPage() {
+  return (
+    <Suspense fallback={null}>
+      <MonitoringContent />
+    </Suspense>
+  );
+}
+
+function MonitoringContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialCameraId = searchParams.get('cameraId');
 
   const [allFeeds, setAllFeeds] = useState<any[]>([]);
-  const [selectedFeedId, setSelectedFeedId] = useState<number | string | null>(null);
-  const selectedFeedIdRef = useRef<number | string | null>(null);
+  const [selectedFeedId, setSelectedFeedId] = useState<number | string | null>(initialCameraId ? Number(initialCameraId) : null);
+  const selectedFeedIdRef = useRef<number | string | null>(initialCameraId ? Number(initialCameraId) : null);
 
   const [visibleCameraIds, setVisibleCameraIds] = useState<(number | string)[]>([]);
 
@@ -44,6 +54,9 @@ export default function MonitoringPage() {
     setVisibleCameraIds(ids);
   }, []);
 
+  // If a cameraId was passed via query param, set goTo so the map flies to it
+  const [goToTarget, setGoToTarget] = useState<{ lat: number; lng: number; zoom: number } | undefined>(undefined);
+
   const handleCamerasLoaded = useCallback((cameras: any[]) => {
     const formatted = cameras.map((cam: any) => ({
       id: cam.id,
@@ -62,13 +75,21 @@ export default function MonitoringPage() {
 
     setAllFeeds(formatted);
 
+    // If a cameraId was passed via query param, fly to that camera
+    if (initialCameraId) {
+      const target = formatted.find((f) => String(f.id) === String(initialCameraId));
+      if (target) {
+        setGoToTarget({ lat: target.lat, lng: target.lng, zoom: 17 });
+      }
+    }
+
     if (
       selectedFeedIdRef.current != null &&
       !formatted.some((f) => String(f.id) === String(selectedFeedIdRef.current))
     ) {
       setSelectedFeedId(null);
     }
-  }, []);
+  }, [initialCameraId]);
 
   /** Which camera IDs to feed into the timeline */
   const timelineCameraIds = useMemo(() => {
@@ -142,7 +163,7 @@ export default function MonitoringPage() {
 
       {/* ── Floating nav ──────────────────── */}
       <IconButton
-        onClick={() => { setIsNavigating(true); router.back(); }}
+        onClick={() => { setIsNavigating(true); router.push('/dashboard'); }}
         sx={{
           position: 'fixed', top: 16, left: 16, zIndex: 1001,
           bgcolor: '#fff', boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
@@ -163,7 +184,7 @@ export default function MonitoringPage() {
           onCamerasLoaded={handleCamerasLoaded}
           selectedCameraId={selectedFeedId}
           refreshTrigger={camerasRefreshTrigger}
-          goTo={undefined}
+          goTo={goToTarget}
         />
       </Box>
 

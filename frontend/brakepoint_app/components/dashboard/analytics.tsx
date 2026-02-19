@@ -243,7 +243,7 @@ export default function Analytics() {
             </Grid>
           </Box>
 
-          <CardCarousel cameras={filteredCameras} onSelect={(c) => setSelectedCam(c)} />
+          <CardCarousel cameras={filteredCameras} onSelect={(c) => router.push(`/monitoring?cameraId=${c.id}`)} />
 
           {/* Tag filter chips */}
           {allTags.length > 0 && (

@@ -662,13 +662,27 @@ def video_detail_api(request, pk: int):
         return Response({"success": False, "error": "Video not found"}, status=404)
     
     if request.method == 'PATCH':
+        updated = False
+
         filename = request.data.get('filename')
         if filename:
             video.filename = filename
+            updated = True
+
+        for field in ('vehicles', 'speeding_count', 'swerving_count', 'abrupt_stopping_count'):
+            val = request.data.get(field)
+            if val is not None:
+                try:
+                    setattr(video, field, int(val))
+                    updated = True
+                except (ValueError, TypeError):
+                    return Response({"success": False, "error": f"Invalid value for {field}"}, status=400)
+
+        if updated:
             video.save()
             ser = VideoSerializer(video)
             return Response({"success": True, "video": ser.data})
-        return Response({"success": False, "error": "No filename provided"}, status=400)
+        return Response({"success": False, "error": "No valid fields provided"}, status=400)
     
     elif request.method == 'DELETE':
         video.delete()
@@ -684,7 +698,9 @@ def video_progress_api(request, pk: int):
         video = Video.objects.get(pk=pk, camera__user=user)
         return Response({
             "success": True,
-            "processing_status": video.processing_status
+            "processing_status": video.processing_status,
+            "processing_stage": video.processing_stage,
+            "yolo_progress": video.yolo_progress,
         })
     except Video.DoesNotExist:
         return Response({"success": False, "error": "Video not found"}, status=404)

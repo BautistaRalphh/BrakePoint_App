@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton, LinearProgress, Snackbar, Alert } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import CheckIcon from '@mui/icons-material/Check';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useRouter } from 'next/navigation';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { authFetch } from '@/lib/authFetch';
@@ -63,7 +64,7 @@ type DrawMode = "none" | "drawPolygon" | "editPolygon" | "deletePolygon";
 
 export default function MapPage() {
   const router = useRouter();
-  const { notifications, addNotification, addProcessingNotification, completeProcessing, hydrated } = useNotifications();
+  const { notifications, addNotification, addProcessingNotification, completeProcessing, updateProgress, hydrated } = useNotifications();
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
@@ -394,7 +395,16 @@ export default function MapPage() {
         if (response.ok) {
           const data = await response.json();
           if (data.success) {
-            const { processing_status } = data;
+            const { processing_status, processing_stage, yolo_progress } = data;
+
+            // YOLO progress maps directly to 0-100%
+            let overallProgress = 0;
+            if (processing_stage === 'yolo') {
+              overallProgress = Math.min(yolo_progress ?? 0, 99);
+            } else if (processing_stage === 'complete') {
+              overallProgress = 100;
+            }
+            updateProgress(notifId, processing_stage ?? '', overallProgress);
 
             // Complete
             if (processing_status === 'completed') {
@@ -433,7 +443,7 @@ export default function MapPage() {
     }, 2000);
 
     (window as any)[`pollInterval_${videoId}`] = pollInterval;
-  }, [completeProcessing, handleVideoUploadComplete]);
+  }, [completeProcessing, updateProgress, handleVideoUploadComplete]);
 
   const handleUploadStart = useCallback((videoName: string) => {
     setUploadToast({ open: true, message: `Uploading "${videoName}"…`, severity: 'info' });
@@ -474,15 +484,12 @@ export default function MapPage() {
     setCamerasRefreshTrigger(prev => prev + 1);
   }, [completeProcessing, addNotification]);
 
-  // Resume polling for any processing notifications that survived a page refresh
   useEffect(() => {
     if (!hydrated) return;
     const processingNotifs = notifications.filter(n => n.processing && n.videoId);
     processingNotifs.forEach(n => {
       startPollingForVideo(n.id, n.videoId!);
     });
-    // Only run once after hydration — we don't want to re-trigger on every notification change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
 
 
@@ -648,6 +655,17 @@ export default function MapPage() {
   return (
     <>
       <Notification />
+      {/* Back to Dashboard button */}
+      <IconButton
+        onClick={() => router.push('/dashboard')}
+        sx={{
+          position: 'fixed', top: 16, left: 16, zIndex: 1001,
+          bgcolor: '#fff', boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+          '&:hover': { bgcolor: '#f5f5f5' },
+        }}
+      >
+        <ArrowBackIcon />
+      </IconButton>
       <Box sx={{ height: "100vh", width: "100vw", position: "fixed", top: 0, left: 0, zIndex: 0 }}>
         <Map
           mode="map"
