@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { IconButton, Box, Badge, Menu, MenuItem, Snackbar, Alert, Typography } from "@mui/material";
+import { IconButton, Box, Badge, Menu, MenuItem, Snackbar, Alert, Typography, LinearProgress } from "@mui/material";
 
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
@@ -122,9 +122,33 @@ export default function Notification() {
                 </Box>
 
                 {notification.processing ? (
-                  <Typography variant="caption" color="text.secondary">
-                    Processing video<span className="processing-dots">...</span>
-                  </Typography>
+                  <Box sx={{ width: "100%", mt: 0.5 }}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.5 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {notification.processingStage === "yolo"
+                          ? "Detecting vehicles…"
+                          : notification.processingStage === "complete"
+                            ? "Complete"
+                            : "Starting…"}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        {notification.progress ?? 0}%
+                      </Typography>
+                    </Box>
+                    <LinearProgress
+                      variant="determinate"
+                      value={notification.progress ?? 0}
+                      sx={{
+                        height: 6,
+                        borderRadius: 3,
+                        bgcolor: "#e0e0e0",
+                        "& .MuiLinearProgress-bar": {
+                          borderRadius: 3,
+                          bgcolor: "#1d1f3f",
+                        },
+                      }}
+                    />
+                  </Box>
                 ) : (
                   <Typography variant="caption" color="text.secondary">
                     {notification.success ? (

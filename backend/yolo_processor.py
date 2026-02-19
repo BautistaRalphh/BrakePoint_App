@@ -14,6 +14,13 @@ TRACKER_CONFIG = 'bytetrack.yaml'
 CONFIDENCE_THRESHOLD = 0.25
 YOLO_IMGSZ = 1280
 
+# Performance tuning
+FRAME_STRIDE = 2            # Process every Nth frame (1 = all, 2 = skip every other)
+BOOST_INTERVAL = 5          # Run far/mid-field boosts every Nth *processed* frame
+BOOST_IMGSZ = 640           # Smaller imgsz for boost passes (crops are small anyway)
+USE_HALF_PRECISION = True    # FP16 inference (GPU only, ~40% faster)
+DB_SAVE_INTERVAL = 50       # Save progress to DB every N frames
+
 HARDCODED_METER_PER_PIXEL = 0.1
 SPEED_LIMIT_KMH = 80
 
@@ -250,11 +257,6 @@ class VehicleTracker:
 
 def calculate_speed_linear_fit(raw_positions, transformation_matrix, pixels_per_meter, fps,
                                min_r_squared=None):
-    """
-    Calculate speed using linear regression on perspective-transformed positions.
-    Projects positions onto dominant travel direction and fits a line.
-    Includes iterative outlier removal for robustness.
-    """
     if min_r_squared is None:
         min_r_squared = MIN_R_SQUARED
     n = len(raw_positions)
@@ -415,7 +417,6 @@ def detect_abrupt_stop(raw_positions, transformation_matrix, pixels_per_meter, f
 
 def detect_swerving(raw_positions, transformation_matrix, pixels_per_meter,
                     lateral_threshold=SWERVE_LATERAL_THRESHOLD, min_direction_changes=3):
-    """Detect swerving by analyzing heading oscillation and lateral deviation from path."""
     n = len(raw_positions)
     if n < 10:
         return {'swerving': False, 'max_lateral_m': 0.0, 'direction_changes': 0, 'swerve_frame': None}
@@ -952,31 +953,6 @@ def run_detection_on_video(video_path: str, calibration_points=None,
                            reference_distance_meters=None, reference_points=None,
                            progress_callback=None, video_record=None,
                            speed_limit_kmh=None):
-    """
-    Run YOLO object detection on video with perspective-transform speed estimation
-    and post-processing behavior detection.
-
-    Uses linear-fit speed estimation on perspective-transformed track positions,
-    Kalman-filtered tracking, and post-processing for behavior detection
-    (speeding, swerving, abrupt stopping).
-
-    Detection runs on the ORIGINAL frame (not warped) for best YOLO accuracy.
-    The perspective transform is only applied to track points for metric calculation.
-
-    Args:
-        video_path: Path to the video file
-        calibration_points: List of 4 dicts with x, y coordinates for perspective transform
-        reference_distance_meters: Real-world distance between reference points in meters
-        reference_points: List of 2 dicts with x, y coordinates for scale calibration
-        progress_callback: Optional callback function(progress: int)
-        video_record: Optional Video model instance for database progress updates
-        speed_limit_kmh: Speed limit in km/h (default: SPEED_LIMIT_KMH config value)
-
-    Returns:
-        Dictionary with keys: status, message, total_unique, total_speeding,
-        total_swerving, total_abrupt_stopping, breakdown, meter_per_pixel,
-        jeepney_hotspot
-    """
     if speed_limit_kmh is None:
         speed_limit_kmh = SPEED_LIMIT_KMH
 
@@ -1111,20 +1087,36 @@ def run_detection_on_video(video_path: str, calibration_points=None,
     meter_per_pixel = 1.0 / pixels_per_meter
     results_summary["meter_per_pixel"] = meter_per_pixel
 
+    # --- Detect GPU availability for half-precision ---
+    import torch
+    use_half = USE_HALF_PRECISION and torch.cuda.is_available()
+    if use_half:
+        print(f"[YOLO] FP16 half-precision enabled (CUDA)", flush=True)
+    else:
+        print(f"[YOLO] Using FP32 (CPU or half disabled)", flush=True)
+
     # --- Frame processing ---
     tracker = VehicleTracker()
     unique_track_ids_seen = set()
     unique_counts_raw = {}  # Raw class counts from first detection
 
-    frame_id = 0
+    frame_id = 0          # Logical frame counter (increments by FRAME_STRIDE)
+    processed_count = 0   # Number of frames actually processed
+
+    print(f"[YOLO] Frame stride: {FRAME_STRIDE}, boost every {BOOST_INTERVAL} frames", flush=True)
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Update progress every 10 frames
-        if total_frames > 0 and frame_id % 10 == 0:
+        # Skip frames according to stride (frame 0 is always processed)
+        if frame_id % FRAME_STRIDE != 0:
+            frame_id += 1
+            continue
+
+        # Update progress periodically
+        if total_frames > 0 and frame_id % DB_SAVE_INTERVAL == 0:
             progress = min(int((frame_id / total_frames) * 100), 99)
             if video_record:
                 video_record.yolo_progress = progress
@@ -1138,7 +1130,7 @@ def run_detection_on_video(video_path: str, calibration_points=None,
             # Pretrained model for standard vehicle classes
             results = pretrained_model.track(
                 frame, persist=True, conf=CONFIDENCE_THRESHOLD,
-                iou=0.3, verbose=False, imgsz=YOLO_IMGSZ)
+                iou=0.3, verbose=False, imgsz=YOLO_IMGSZ, half=use_half)
             for r in results:
                 if r.boxes:
                     boxes = r.boxes.xyxy.cpu().numpy()
@@ -1162,7 +1154,7 @@ def run_detection_on_video(video_path: str, calibration_points=None,
             # Custom model for Jeepney detection only
             results = model.track(
                 frame, persist=True, conf=CONFIDENCE_THRESHOLD,
-                iou=0.3, verbose=False, imgsz=YOLO_IMGSZ)
+                iou=0.3, verbose=False, imgsz=YOLO_IMGSZ, half=use_half)
             for r in results:
                 if r.boxes:
                     boxes = r.boxes.xyxy.cpu().numpy()
@@ -1188,7 +1180,8 @@ def run_detection_on_video(video_path: str, calibration_points=None,
                             })
 
             # Far-field boost: upscale top 40% for better far-distance detection
-            if FAR_FIELD_BOOST:
+            # Only run every BOOST_INTERVAL processed frames to save time
+            if FAR_FIELD_BOOST and processed_count % BOOST_INTERVAL == 0:
                 hf, wf = frame.shape[:2]
                 far_h = int(hf * 0.4)
                 if far_h > 10 and wf > 10:
@@ -1196,7 +1189,7 @@ def run_detection_on_video(video_path: str, calibration_points=None,
                                         interpolation=cv2.INTER_LINEAR)
                     for r in pretrained_model.predict(
                             far_up, conf=CONFIDENCE_THRESHOLD, iou=0.3,
-                            verbose=False, imgsz=YOLO_IMGSZ):
+                            verbose=False, imgsz=BOOST_IMGSZ, half=use_half):
                         if r.boxes:
                             for box_f, cls_f in zip(
                                     r.boxes.xyxy.cpu().numpy(),
@@ -1224,7 +1217,8 @@ def run_detection_on_video(video_path: str, calibration_points=None,
                                     })
 
             # Mid-field boost: upscale middle band for motorcycle detection
-            if MID_FIELD_BOOST:
+            # Only run every BOOST_INTERVAL processed frames to save time
+            if MID_FIELD_BOOST and processed_count % BOOST_INTERVAL == 0:
                 hf, wf = frame.shape[:2]
                 mt_top, mt_bot = int(hf * 0.3), int(hf * 0.7)
                 mid_h = mt_bot - mt_top
@@ -1235,7 +1229,7 @@ def run_detection_on_video(video_path: str, calibration_points=None,
                         interpolation=cv2.INTER_LINEAR)
                     for r in pretrained_model.predict(
                             mid_up, conf=MOTORCYCLE_CONF_THRESHOLD, iou=0.3,
-                            verbose=False, imgsz=YOLO_IMGSZ):
+                            verbose=False, imgsz=BOOST_IMGSZ, half=use_half):
                         if r.boxes:
                             for box_m, cls_m in zip(
                                     r.boxes.xyxy.cpu().numpy(),
@@ -1266,7 +1260,8 @@ def run_detection_on_video(video_path: str, calibration_points=None,
             # Single model mode: custom model detects all classes
             results = model.track(
                 frame, persist=True, conf=CONFIDENCE_THRESHOLD,
-                tracker=TRACKER_CONFIG, iou=0.3, verbose=False, imgsz=YOLO_IMGSZ)
+                tracker=TRACKER_CONFIG, iou=0.3, verbose=False, imgsz=YOLO_IMGSZ,
+                half=use_half)
             for r in results:
                 if r.boxes and r.boxes.id is not None:
                     boxes = r.boxes.xyxy.cpu().numpy()
@@ -1296,14 +1291,15 @@ def run_detection_on_video(video_path: str, calibration_points=None,
         # Update tracker (handles deduplication internally)
         tracker.update(frame_id, detections)
 
+        processed_count += 1
         frame_id += 1
-        if frame_id % 200 == 0:
-            print(f"  Processed {frame_id}/{total_frames} frames, "
+        if processed_count % 100 == 0:
+            print(f"  Processed {processed_count} frames ({frame_id}/{total_frames} video frames), "
                   f"{len(tracker.tracks)} active tracks", flush=True)
 
     cap.release()
-    print(f"Frame processing complete: {frame_id} frames, "
-          f"{len(tracker.tracks)} tracks", flush=True)
+    print(f"Frame processing complete: {processed_count} processed / {frame_id} total frames, "
+          f"{len(tracker.tracks)} tracks (stride={FRAME_STRIDE})", flush=True)
 
     # ========================================================================
     # POST-PROCESSING
@@ -1316,7 +1312,6 @@ def run_detection_on_video(video_path: str, calibration_points=None,
         tracker, max_gap_frames=60, max_spatial_dist=250, overlap_max_dist=120)
     print(f"  After: {len(tracker.tracks)} ({n_merged} absorbed)", flush=True)
 
-    # Recompute breakdown from merged tracker (more accurate than raw counts)
     unique_counts = {}
     for tid, track in tracker.tracks.items():
         if len(track.raw_history) >= 3:
@@ -1337,7 +1332,7 @@ def run_detection_on_video(video_path: str, calibration_points=None,
         if track.get_average_movement_per_frame() < (0.5 if is_mc else 1.0):
             continue
 
-        # Linear fit on raw box-center positions (no Kalman lag)
+        # Linear fit on raw box-center positions
         fit = calculate_speed_linear_fit(
             list(track.raw_history), transformation_matrix, pixels_per_meter, fps,
             min_r_squared=0.0

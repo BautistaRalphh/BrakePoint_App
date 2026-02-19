@@ -11,6 +11,9 @@ interface Notification {
   timestamp: number;
   processing?: boolean;
   videoId?: number;
+  processingStage?: string;
+  /** 0-100 overall progress */
+  progress?: number;
 }
 
 interface NotificationContextType {
@@ -20,6 +23,7 @@ interface NotificationContextType {
   addNotification: (videoName: string, success: boolean, data?: any) => void;
   addProcessingNotification: (videoName: string, videoId?: number) => string;
   completeProcessing: (id: string, success: boolean, data?: any) => void;
+  updateProgress: (id: string, stage: string, progress: number) => void;
   removeNotification: (id: string) => void;
   markAsRead: (id: string) => void;
   clearAll: () => void;
@@ -44,6 +48,8 @@ function safeParseNotifications(raw: string | null): Notification[] {
         timestamp: typeof n.timestamp === "number" ? n.timestamp : Date.now(),
         processing: Boolean(n.processing),
         videoId: typeof n.videoId === "number" ? n.videoId : undefined,
+        processingStage: typeof n.processingStage === "string" ? n.processingStage : "",
+        progress: typeof n.progress === "number" ? n.progress : 0,
       }));
   } catch {
     return [];
@@ -100,7 +106,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const completeProcessing = useCallback((id: string, success: boolean, data?: any) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, processing: false, success, data } : n)));
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, processing: false, success, data, progress: 100 } : n)));
+  }, []);
+
+  const updateProgress = useCallback((id: string, stage: string, progress: number) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, processingStage: stage, progress } : n)));
   }, []);
 
   const removeNotification = useCallback((id: string) => {
@@ -127,12 +137,13 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       addNotification,
       addProcessingNotification,
       completeProcessing,
+      updateProgress,
       removeNotification,
       markAsRead,
       clearAll,
       unreadCount,
     }),
-    [hydrated, notifications, addNotification, addProcessingNotification, completeProcessing, removeNotification, markAsRead, clearAll, unreadCount],
+    [hydrated, notifications, addNotification, addProcessingNotification, completeProcessing, updateProgress, removeNotification, markAsRead, clearAll, unreadCount],
   );
 
   return (
