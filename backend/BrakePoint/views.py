@@ -291,6 +291,7 @@ def _upload_and_process_video(request):
     video_file = request.FILES.get('file')
     video_name = request.POST.get('video_name', 'Untitled Video')
     camera_id = request.POST.get('camera_id')
+    is_dry_run = request.POST.get('is_dry_run', 'false').lower() == 'true'
     
     if not video_file:
         return Response({'error': 'No video file provided'}, status=status.HTTP_400_BAD_REQUEST)
@@ -423,7 +424,7 @@ def _upload_and_process_video(request):
                     _speed_limit = int(_m.group(1))
                     break
 
-        def process_video_background():
+        def process_video_background(is_dry_run):
             """Process video in background thread"""
             # Close any parent thread database connections
             from django.db import connection
@@ -470,6 +471,16 @@ def _upload_and_process_video(request):
                     video_obj.vehicle_breakdown = yolo_results.get('breakdown', {})
                     video_obj.meter_per_pixel = yolo_results.get('meter_per_pixel', None)
                     video_obj.jeepney_hotspot = yolo_results.get('jeepney_hotspot', False)
+
+                    if is_dry_run:
+                        camera.refresh_from_db()
+
+                        camera.calibration_points = calibration_points or []
+                        camera.reference_points = reference_points or []
+                        camera.reference_distance_meters = reference_distance_meters
+                        camera.meter_per_pixel = yolo_results.get('meter_per_pixel')
+                        camera.is_calibrated = True
+                        camera.save()
                 
                 if sign_results.get('status') == 'success':
                     video_obj.signs = sign_results.get('unique_signs', 0) 
@@ -513,7 +524,7 @@ def _upload_and_process_video(request):
                 connection.close()
         
         # Start background thread
-        thread = threading.Thread(target=process_video_background, daemon=True)
+        thread = threading.Thread(target=process_video_background, args=(is_dry_run,), daemon=True)
         thread.start()
 
     except Exception as e:
@@ -687,6 +698,25 @@ def video_detail_api(request, pk: int):
                     updated = True
                 except (ValueError, TypeError):
                     return Response({"success": False, "error": f"Invalid value for {field}"}, status=400)
+
+        # Handle calibration fields
+        calibration_points = request.data.get('calibration_points')
+        if calibration_points is not None:
+            video.calibration_points = calibration_points
+            updated = True
+
+        reference_points = request.data.get('reference_points')
+        if reference_points is not None:
+            video.reference_points = reference_points
+            updated = True
+
+        reference_distance_meters = request.data.get('reference_distance_meters')
+        if reference_distance_meters is not None:
+            try:
+                video.reference_distance_meters = float(reference_distance_meters) if reference_distance_meters else None
+                updated = True
+            except (ValueError, TypeError):
+                return Response({"success": False, "error": "Invalid value for reference_distance_meters"}, status=400)
 
         if updated:
             video.save()

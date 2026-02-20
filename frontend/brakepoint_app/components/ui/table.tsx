@@ -8,6 +8,7 @@ import FileUploadIcon from '@mui/icons-material/FileUpload';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import TuneIcon from '@mui/icons-material/Tune';
 
 import './table.css';
 import { authFetch } from '@/lib/authFetch';
@@ -74,6 +75,7 @@ interface ToolbarProps {
   title? : string;
   onAdd: () => void;
   onEdit: () => void;
+  onEditCalibration: () => void;
   onDelete: () => void;
   hasSelection: boolean;
 }
@@ -105,13 +107,20 @@ interface AddModalProps {
   onUploadStart?: (videoName: string) => void;
   onProcessingStart?: (videoName: string, videoId: number) => void;
   onProcessingComplete?: (videoName: string, success: boolean, data?: any) => void;
+  initialCalibrationPoints?: { x: number; y: number }[];
+  initialReferencePoints?: { x: number; y: number }[];
+  initialReferenceDistance?: number;
+  editVideoId?: number | null;
+  initialThumbnail?: string | null;
 }
 
-function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUploadComplete, onUploadStart, onProcessingStart, onProcessingComplete }: AddModalProps) {
+function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUploadComplete, onUploadStart, onProcessingStart, onProcessingComplete, initialCalibrationPoints, initialReferencePoints, initialReferenceDistance, editVideoId, initialThumbnail }: AddModalProps) {
   const [video_name, setVideoName] = React.useState('');
   const [file_name, setFile] = React.useState<File | null>(null);
   const [showCalibration, setShowCalibration] = React.useState(false);
+  const isEditMode = editVideoId !== null && editVideoId !== undefined;
   const [videoUrl, setVideoUrl] = React.useState<string | null>(null);
+  const [uploadThumbnail, setUploadThumbnail] = React.useState<string | null>(null);
   const [calibrationPoints, setCalibrationPoints] = React.useState<{ x: number; y: number }[]>([]);
   const [referencePoints, setReferencePoints] = React.useState<{ x: number; y: number }[]>([]);
   const [referenceDistance, setReferenceDistance] = React.useState<number>(3); 
@@ -130,6 +139,7 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const thumbnailImageRef = React.useRef<HTMLImageElement | null>(null);
 
   // Reset all state when dialog closes (cancel should start fresh)
   React.useEffect(() => {
@@ -150,6 +160,45 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       setMousePos(null);
     }
   }, [open]);
+
+  // Load thumbnail when editing (but start with empty points for fresh calibration)
+React.useEffect(() => {
+  if (!open) return;
+
+  // In edit mode, show calibration UI but start with empty points
+  if (isEditMode) {
+    setShowCalibration(true);
+  }
+}, [open, isEditMode]);
+
+// Load thumbnail as frame when editing calibration
+React.useEffect(() => {
+  if (!open) return;
+  if (!editVideoId) return;
+  if (!initialThumbnail) return;
+
+  setShowCalibration(true);
+  setVideoUrl(initialThumbnail);
+
+  // draw thumbnail onto canvas once loaded
+  const img = new Image();
+  img.src = initialThumbnail;
+  img.onload = () => {
+    thumbnailImageRef.current = img;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.width = img.width;
+    canvas.height = img.height;
+
+    setVideoDimensions({ width: img.width, height: img.height });
+
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(img, 0, 0);
+    }
+  };
+}, [open, editVideoId, initialThumbnail]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
@@ -192,14 +241,41 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       
       if (ctx && video.readyState >= 2) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // In upload mode, capture this frame as thumbnail for later use
+        if (!isEditMode) {
+          const thumbnailDataUrl = canvas.toDataURL('image/png');
+          setUploadThumbnail(thumbnailDataUrl);
+          
+          // Load into thumbnailImageRef for calibration display
+          const img = new Image();
+          img.src = thumbnailDataUrl;
+          img.onload = () => {
+            thumbnailImageRef.current = img;
+          };
+        }
       }
     }
   };
 
   // Compute perspective warp of video frame using 4 calibration points
   const computeWarp = (srcPoints: {x:number,y:number}[]) => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) return;
+    let sourceImage: HTMLImageElement | HTMLVideoElement | null = null;
+    let sourceWidth = 0;
+    let sourceHeight = 0;
+
+    // In edit mode, use thumbnail; in upload mode, use video
+    if (isEditMode && thumbnailImageRef.current) {
+      sourceImage = thumbnailImageRef.current;
+      sourceWidth = thumbnailImageRef.current.width;
+      sourceHeight = thumbnailImageRef.current.height;
+    } else {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2) return;
+      sourceImage = video;
+      sourceWidth = video.videoWidth;
+      sourceHeight = video.videoHeight;
+    }
 
     // Compute destination rectangle (same math as backend)
     const w = Math.max(
@@ -221,12 +297,12 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     const H = computeHomography(srcPoints, dstPoints);
     const H_inv = invertMatrix3x3(H);
 
-    // Get source pixels from video frame
+    // Get source pixels from image/video frame
     const srcCanvas = document.createElement('canvas');
-    srcCanvas.width = video.videoWidth;
-    srcCanvas.height = video.videoHeight;
+    srcCanvas.width = sourceWidth;
+    srcCanvas.height = sourceHeight;
     const srcCtx = srcCanvas.getContext('2d')!;
-    srcCtx.drawImage(video, 0, 0);
+    srcCtx.drawImage(sourceImage, 0, 0);
     const srcImg = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
     const srcData = srcImg.data;
     const srcW = srcImg.width;
@@ -440,8 +516,7 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     cursorPos?: { x: number; y: number }
   ) => {
     const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -455,8 +530,15 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     // Draw warped bird's-eye view in reference step, original frame otherwise
     if (showReferenceStep && warpedCanvasRef.current) {
       ctx.drawImage(warpedCanvasRef.current, 0, 0, canvas.width, canvas.height);
+    } else if (thumbnailImageRef.current) {
+      // Use cached thumbnail (both edit and upload modes)
+      ctx.drawImage(thumbnailImageRef.current, 0, 0, canvas.width, canvas.height);
     } else {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Fallback to video frame if thumbnail not yet loaded
+      const video = videoRef.current;
+      if (video) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      }
     }
 
     // Draw guide lines and preview connections
@@ -632,22 +714,33 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     warpedCanvasRef.current = null;
     setWarpDimensions({ width: 0, height: 0 });
     setHomographyInv(null);
-    if (canvasRef.current && videoRef.current) {
-      // Restore canvas to original video dimensions
-      canvasRef.current.width = videoRef.current.videoWidth;
-      canvasRef.current.height = videoRef.current.videoHeight;
-      const ctx = canvasRef.current.getContext('2d');
+    
+    if (canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // In edit mode, redraw thumbnail
+        if (isEditMode && thumbnailImageRef.current) {
+          ctx.drawImage(thumbnailImageRef.current, 0, 0, canvas.width, canvas.height);
+        } else if (videoRef.current && videoRef.current.readyState >= 2) {
+          // In upload mode, redraw video frame
+          canvas.width = videoRef.current.videoWidth;
+          canvas.height = videoRef.current.videoHeight;
+          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        }
       }
     }
+    
+    // Redraw empty state with proper background
+    setTimeout(() => drawPoints([], []), 0);
   };
 
   const resetZoom = () => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    drawPoints(calibrationPoints, referencePoints);
+    setTimeout(() => drawPoints(calibrationPoints, referencePoints), 0);
   };
 
   const handleBackToUpload = () => {
@@ -667,16 +760,7 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
   };
 
   const handleSubmit = async () => {
-    if (!video_name || !file_name) {
-      alert('Please provide a video name and file');
-      return;
-    }
-
-    if (!cameraId) {
-      alert('Please select a camera first');
-      return;
-    }
-
+    // Validation for both modes
     if (calibrationPoints.length !== 4) {
       alert('Please select 4 calibration points for perspective transform');
       return;
@@ -691,14 +775,94 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       alert('Please provide a valid reference distance in meters');
       return;
     }
-  
-    // Convert reference points from warped (bird's-eye) space to original frame space
+
+    // Edit mode: update calibration via PATCH
+    if (isEditMode && editVideoId) {
+      const originalReferencePoints = homographyInv
+        ? referencePoints.map(p => transformPoint(homographyInv, p))
+        : referencePoints;
+
+      const savedVideoUrl = videoUrl;
+
+      setShowCalibration(false);
+      setCalibrationPoints([]);
+      setReferencePoints([]);
+      setShowReferenceStep(false);
+      setReferenceDistance(3);
+      setVideoUrl(null);
+      warpedCanvasRef.current = null;
+      setWarpDimensions({ width: 0, height: 0 });
+      setHomographyInv(null);
+      onClose();
+
+      try {
+        console.log('[calibration-edit] Updating calibration for video', editVideoId);
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${editVideoId}/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            calibration_points: calibrationPoints,
+            reference_points: originalReferencePoints,
+            reference_distance_meters: referenceDistance,
+          }),
+        });
+
+        if (savedVideoUrl) URL.revokeObjectURL(savedVideoUrl);
+
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          console.error('[calibration-edit] Non-JSON response:', response.status, contentType);
+          if (onProcessingComplete) {
+            onProcessingComplete('Calibration Update', false, { error: `Server error (${response.status})` });
+          }
+          return;
+        }
+
+        const data = await response.json();
+        console.log('[calibration-edit] Response data:', data);
+
+        if (!response.ok) {
+          console.error('[calibration-edit] Update failed:', response.status, data);
+          if (onProcessingComplete) {
+            onProcessingComplete('Calibration Update', false, { error: data.error || data.detail || 'Update failed' });
+          }
+          return;
+        }
+
+        if (onProcessingComplete) {
+          onProcessingComplete('Calibration Update', true, { message: 'Calibration updated successfully' });
+        }
+
+        if (onUploadComplete) {
+          onUploadComplete();
+        }
+      } catch (err) {
+        if (savedVideoUrl) URL.revokeObjectURL(savedVideoUrl);
+        console.error('[calibration-edit] Error caught:', err);
+        if (onProcessingComplete) {
+          onProcessingComplete('Calibration Update', false, { error: String(err) || 'Failed to update calibration' });
+        }
+      }
+      return;
+    }
+
+    // New upload mode: POST with file
+    if (!video_name || !file_name) {
+      alert('Please provide a video name and file');
+      return;
+    }
+
+    if (!cameraId) {
+      alert('Please select a camera first');
+      return;
+    }
+
     const originalReferencePoints = homographyInv
       ? referencePoints.map(p => transformPoint(homographyInv, p))
       : referencePoints;
 
-    // Capture everything we need into local variables BEFORE clearing state.
-    // The File object lives in JS heap and stays valid after the <input> unmounts.
     const savedFile = file_name;
     const uploadingVideoName = video_name;
     const savedCalibrationPoints = [...calibrationPoints];
@@ -712,6 +876,9 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     formData.append('calibration_points', JSON.stringify(calibrationPoints));
     formData.append('reference_points', JSON.stringify(originalReferencePoints));
     formData.append('reference_distance_meters', referenceDistance.toString());
+    if (uploadThumbnail) {
+      formData.append('thumbnail', uploadThumbnail);
+    }
 
     setVideoName('');
     setFile(null);
@@ -726,10 +893,8 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
     setHomographyInv(null);
     onClose();
 
-    // Notify the user immediately that the upload has started
     if (onUploadStart) onUploadStart(uploadingVideoName);
 
-    // Process in background
     try {
       console.log('[upload] Sending upload request...', { videoName: uploadingVideoName, cameraId });
       const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload_and_process/`, {
@@ -737,12 +902,10 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
         body: formData,
       });
 
-      // Revoke the object URL now that fetch has consumed the File
       if (savedVideoUrl) URL.revokeObjectURL(savedVideoUrl);
-      
+
       console.log('[upload] Response status:', response.status);
 
-      // The server may return HTML on 500 errors — guard against non-JSON responses
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
         console.error('[upload] Non-JSON response:', response.status, contentType);
@@ -755,7 +918,6 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
       const data = await response.json();
       console.log('[upload] Response data:', data);
 
-      // Handle non-OK responses (400, 401, 500, etc.)
       if (!response.ok) {
         console.error('[upload] Upload failed:', response.status, data);
         if (onProcessingComplete) {
@@ -763,24 +925,22 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
         }
         return;
       }
-  
-      // Start progress polling if we have a video ID
+
       if (data.video_id && onProcessingStart) {
         onProcessingStart(uploadingVideoName, data.video_id);
       }
-  
+
       onSubmit({ 
         video_name: uploadingVideoName, 
         file_name: savedFile, 
         calibration_points: savedCalibrationPoints,
         reference_distance_meters: savedReferenceDistance
       });
-      
+
       if (onUploadComplete) {
         onUploadComplete();
       }
     } catch (err) {
-      // Revoke on error path too
       if (savedVideoUrl) URL.revokeObjectURL(savedVideoUrl);
       console.error('[upload] Upload error caught:', err);
       if (onProcessingComplete) {
@@ -792,7 +952,7 @@ function AddModal({ open, onClose, onSubmit, onVideoFileSelect, cameraId, onUplo
   return (
     <Dialog className="add-modal" open={open} onClose={onClose} maxWidth={showCalibration ? false : "md"} fullWidth sx={{zIndex: 500000, ...(showCalibration ? { '& .MuiDialog-paper': { maxWidth: '95vw', width: '95vw', maxHeight: '95vh', height: '95vh' } } : {})}}>
       <DialogTitle>
-        {showCalibration ? 'Camera Calibration' : 'Add New Video'}
+        {showCalibration ? (isEditMode ? 'Edit Video Calibration' : 'Camera Calibration') : 'Add New Video'}
       </DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1}}>
         {!showCalibration ? (
@@ -1051,7 +1211,7 @@ function EditModal({ open, onClose, onSubmit, videoId, currentName }: EditModalP
   );
 }
 
-function CustomToolbar({ title, onAdd, onEdit, onDelete, hasSelection } : ToolbarProps) {
+function CustomToolbar({ title, onAdd, onEdit, onEditCalibration, onDelete, hasSelection } : ToolbarProps) {
   const [addModalOpen, setAddModalOpen] = useState(false);
 
   return (
@@ -1062,6 +1222,10 @@ function CustomToolbar({ title, onAdd, onEdit, onDelete, hasSelection } : Toolba
       
         <ToolbarButton onClick={onAdd}>
           <FileUploadIcon fontSize="small"/>
+        </ToolbarButton>
+        
+        <ToolbarButton onClick={onEditCalibration} disabled={!hasSelection} title="Edit Calibration">
+          <TuneIcon fontSize="small"/>
         </ToolbarButton>
         
         <ToolbarButton onClick={onDelete} disabled={!hasSelection}>
@@ -1079,6 +1243,14 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
   const [handleOpenAddModal, setAddModalOpen] = useState(false);
   const [selectedRows, setSelectedRows] = useState<any[]>([]);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editCalibrationModalOpen, setEditCalibrationModalOpen] = useState(false);
+  const [editCalibrationVideoId, setEditCalibrationVideoId] = useState<number | null>(null);
+  const [editCalibrationData, setEditCalibrationData] = useState<{
+    calibration_points?: { x: number; y: number }[];
+    reference_points?: { x: number; y: number }[];
+    reference_distance_meters?: number;
+    thumbnail?: string | null;
+  }>({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'warning' }>({
     open: false,
@@ -1160,6 +1332,9 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
           status: video.processing_status || 'pending',
           sign_classes: video.sign_classes || [],
           thumbnail: video.thumbnail || null,
+          calibration_points: video.calibration_points || [],
+          reference_points: video.reference_points || [],
+          reference_distance_meters: video.reference_distance_meters,
         }));
         setRows(transformedRows);
         setLoading(false);
@@ -1191,6 +1366,9 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
             status: video.processing_status || 'pending',
             sign_classes: video.sign_classes || [],
             thumbnail: video.thumbnail || null,
+            calibration_points: video.calibration_points || [],
+            reference_points: video.reference_points || [],
+            reference_distance_meters: video.reference_distance_meters,
           }));
           setRows(transformedRows);
         }
@@ -1258,6 +1436,78 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
     setDeleteDialogOpen(true);
   };
 
+  const handleEditCalibration = () => {
+    if (selectedRows.length !== 1) {
+      alert('Please select exactly one video to edit calibration');
+      return;
+    }
+
+    const video = selectedRows[0];
+    setEditCalibrationVideoId(video.id);
+    setEditCalibrationData({
+      calibration_points: video.calibration_points || [],
+      reference_points: video.reference_points || [],
+      reference_distance_meters: video.reference_distance_meters,
+      thumbnail: video.thumbnail || null,
+    });
+    setEditCalibrationModalOpen(true);
+  };
+
+  const handleEditCalibrationSubmit = async (data: Record<string, unknown>) => {
+    if (!editCalibrationVideoId) {
+      setSnackbar({
+        open: true,
+        message: 'Error: No video selected for calibration edit',
+        severity: 'error',
+      });
+      return;
+    }
+
+    try {
+      const patchData: Record<string, unknown> = {
+        calibration_points: data.calibration_points,
+        reference_points: data.reference_points,
+        reference_distance_meters: data.reference_distance_meters,
+      };
+
+      const response = await authFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/videos/${editCalibrationVideoId}/`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(patchData),
+        }
+      );
+
+      if (response.ok) {
+        setSnackbar({
+          open: true,
+          message: 'Calibration updated successfully',
+          severity: 'success',
+        });
+        setEditCalibrationModalOpen(false);
+        // Refresh the video list
+        fetchVideos();
+      } else {
+        const errorData = await response.json();
+        setSnackbar({
+          open: true,
+          message: `Failed to update calibration: ${errorData.detail || 'Unknown error'}`,
+          severity: 'error',
+        });
+      }
+    } catch (error) {
+      console.error('Error updating calibration:', error);
+      setSnackbar({
+        open: true,
+        message: `Error updating calibration: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        severity: 'error',
+      });
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     try {
       const deletePromises = selectedRows.map(row =>
@@ -1311,6 +1561,7 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
             toolbar: hideUpload ? undefined : () => <CustomToolbar 
               onAdd={() => setAddModalOpen(true)} 
               onEdit={handleEdit}
+              onEditCalibration={handleEditCalibration}
               onDelete={handleDelete}
               hasSelection={selectedRows.length > 0}
             />,
@@ -1355,6 +1606,18 @@ export default function Table({ onVideoFileSelect, hideUpload = false, cameraId,
             onSubmit={handleEditSubmit}
             videoId={selectedRows.length === 1 ? selectedRows[0].id : null}
             currentName={selectedRows.length === 1 ? selectedRows[0].video_name : ''}
+          />
+          <AddModal
+            open={editCalibrationModalOpen}
+            onClose={() => setEditCalibrationModalOpen(false)}
+            onSubmit={handleEditCalibrationSubmit}
+            onVideoFileSelect={onVideoFileSelect}
+            cameraId={cameraId}
+            editVideoId={editCalibrationVideoId}
+            initialCalibrationPoints={editCalibrationData.calibration_points}
+            initialReferencePoints={editCalibrationData.reference_points}
+            initialReferenceDistance={editCalibrationData.reference_distance_meters}
+            initialThumbnail={editCalibrationData.thumbnail}
           />
           <Dialog
             open={deleteDialogOpen}
