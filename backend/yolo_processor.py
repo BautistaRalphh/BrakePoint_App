@@ -1,4 +1,4 @@
-import os
+﻿import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import cv2
@@ -10,7 +10,7 @@ import math
 # --- CONFIGURATION ---
 MODEL_PATH = 'vehicles.pt'
 PRETRAINED_MODEL_PATH = 'yolov8m.pt'
-TRACKER_CONFIG = 'bytetrack.yaml'
+TRACKER_CONFIG = 'botsort.yaml'
 CONFIDENCE_THRESHOLD = 0.25
 YOLO_IMGSZ = 640           # Reduced from 1280 for 4GB VRAM GPUs (GTX 1650)
 
