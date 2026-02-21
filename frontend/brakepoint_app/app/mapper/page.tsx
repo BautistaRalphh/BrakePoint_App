@@ -1,54 +1,69 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import maplibregl from 'maplibre-gl';
-import dynamic from 'next/dynamic';
-import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton, LinearProgress, Snackbar, Alert } from '@mui/material';
-import EditIcon from '@mui/icons-material/Edit';
-import CheckIcon from '@mui/icons-material/Check';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import { useRouter } from 'next/navigation';
-import { useNotifications } from '@/contexts/NotificationContext';
-import { authFetch } from '@/lib/authFetch';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import maplibregl from "maplibre-gl";
+import dynamic from "next/dynamic";
+import {
+  Divider,
+  Box,
+  Typography,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemText,
+  TextField,
+  IconButton,
+} from "@mui/material";
+import EditIcon from "@mui/icons-material/Edit";
+import CheckIcon from "@mui/icons-material/Check";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import { useRouter } from "next/navigation";
+import { useNotifications } from "@/contexts/NotificationContext";
+import { authFetch } from "@/lib/authFetch";
 
-import Notification from '@components/notifications';
-import ToggleDrawer from '@components/map/toggleDrawer';
-import SideTab from '@components/map/sideTab';
-import Table from '@components/ui/table';
-import CameraTags from '@components/ui/cameraTags';
+import ToggleDrawer from "@components/map/toggleDrawer";
+import SideTab from "@components/map/sideTab";
+import Table from "@components/ui/table";
+import CameraTags from "@components/ui/cameraTags";
 
-import './style.css';
+import "./style.css";
 
-import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
-import CarCrashIcon from '@mui/icons-material/CarCrash';
-import LocalTaxiIcon from '@mui/icons-material/LocalTaxi';
+import DirectionsCarIcon from "@mui/icons-material/DirectionsCar";
+import CarCrashIcon from "@mui/icons-material/CarCrash";
+import LocalTaxiIcon from "@mui/icons-material/LocalTaxi";
 
-const Map = dynamic(() => import('@/components/map/map'), {
+const Map = dynamic(() => import("@/components/map/map"), {
   ssr: false,
   loading: () => (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#f5f5f5',
-      zIndex: 9999
-    }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{
-          width: 50,
-          height: 50,
-          border: '4px solid #f3f3f3',
-          borderTop: '4px solid #161b4cff',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite',
-          margin: '0 auto 16px'
-        }}></div>
-        <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading...</Typography>
+    <div
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#f5f5f5",
+        zIndex: 9999,
+      }}
+    >
+      <div style={{ textAlign: "center" }}>
+        <div
+          style={{
+            width: 50,
+            height: 50,
+            border: "4px solid #f3f3f3",
+            borderTop: "4px solid #161b4cff",
+            borderRadius: "50%",
+            animation: "spin 1s linear infinite",
+            margin: "0 auto 16px",
+          }}
+        ></div>
+        <Typography variant="h6" style={{ color: "#161b4cff" }}>
+          Loading...
+        </Typography>
       </div>
       <style>{`
         @keyframes spin {
@@ -57,19 +72,18 @@ const Map = dynamic(() => import('@/components/map/map'), {
         }
       `}</style>
     </div>
-  )
+  ),
 });
 
 type DrawMode = "none" | "drawPolygon" | "editPolygon" | "deletePolygon";
 
 export default function MapPage() {
   const router = useRouter();
-  const { notifications, addNotification, addProcessingNotification, completeProcessing, updateProgress, hydrated } = useNotifications();
+  const { trackVideoProcessing, showToast } = useNotifications();
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
-  const notificationsRef = useRef(notifications);
 
   const [allFeeds, setAllFeeds] = useState<any[]>([]);
 
@@ -77,7 +91,7 @@ export default function MapPage() {
   const selectedFeedIdRef = useRef<number | null>(null);
 
   const [isEditingName, setIsEditingName] = useState(false);
-  const [newFeedName, setNewFeedName] = useState('');
+  const [newFeedName, setNewFeedName] = useState("");
 
   const [visibleCameraIds, setVisibleCameraIds] = useState<number[]>([]);
   const [camerasLoaded, setCamerasLoaded] = useState(false);
@@ -88,32 +102,20 @@ export default function MapPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [camerasRefreshTrigger, setCamerasRefreshTrigger] = useState(0);
 
-  // Mapper-specific state
   const [drawMode, setDrawMode] = useState<DrawMode>("none");
-  const [draftPoly, setDraftPoly] = useState<[number, number][]>([]); // [lng, lat]
+  const [draftPoly, setDraftPoly] = useState<[number, number][]>([]); 
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
-
-  // Upload toast feedback
-  const [uploadToast, setUploadToast] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'error' }>({ open: false, message: '', severity: 'info' });
 
   const handleMapReady = useCallback((map: maplibregl.Map) => {
     mapInstanceRef.current = map;
-    // Force resize after the container has settled its layout
     setTimeout(() => map.resize(), 0);
   }, []);
-
-  useEffect(() => {
-    notificationsRef.current = notifications;
-  }, [notifications]);
 
   useEffect(() => {
     selectedFeedIdRef.current = selectedFeedId;
   }, [selectedFeedId]);
 
-  const selectedFeed = useMemo(() =>
-    allFeeds.find(feed => feed.id === selectedFeedId),
-    [allFeeds, selectedFeedId]
-  );
+  const selectedFeed = useMemo(() => allFeeds.find((feed) => feed.id === selectedFeedId), [allFeeds, selectedFeedId]);
 
   useEffect(() => {
     const fetchCameraData = async () => {
@@ -137,22 +139,22 @@ export default function MapPage() {
                 lat: camera.lat,
                 lng: camera.lng,
                 location: camera.location,
-                latestUpload: camera.latest_upload || 'No uploads yet',
+                latestUpload: camera.latest_upload || "No uploads yet",
                 vehicles: camera.vehicles || 0,
                 occurrences: camera.occurrences || 0,
-                behaviors: camera.behaviors && camera.behaviors.length > 0 ? camera.behaviors : ['No Data'],
+                behaviors: camera.behaviors && camera.behaviors.length > 0 ? camera.behaviors : ["No Data"],
                 signs: camera.signs || 0,
                 signClasses: camera.sign_classes || [],
-                jeepneyHotspot: camera.latest_video?.jeepney_hotspot || false
+                jeepneyHotspot: camera.latest_video?.jeepney_hotspot || false,
               });
             }
           }
         } else {
-          console.error('Failed to fetch camera data:', response.statusText);
+          console.error("Failed to fetch camera data:", response.statusText);
           setSelectedFeedData(null);
         }
       } catch (error) {
-        console.error('Error fetching camera data:', error);
+        console.error("Error fetching camera data:", error);
         setSelectedFeedData(null);
       } finally {
         setLoadingFeedData(false);
@@ -180,7 +182,7 @@ export default function MapPage() {
             setSelectedVideoData({
               vehicles: latestVideo.vehicles || 0,
               occurrences: occurrences,
-              behaviors: latestVideo.behaviors || ['No Data'],
+              behaviors: latestVideo.behaviors || ["No Data"],
               signs: latestVideo.signs || 0,
               signClasses: latestVideo.sign_classes || [],
               jeepneyHotspot: latestVideo.jeepney_hotspot || false,
@@ -188,13 +190,12 @@ export default function MapPage() {
               swerving: latestVideo.swerving_count || 0,
               abruptStop: latestVideo.abrupt_stopping_count || 0,
               duration: latestVideo.duration_seconds || 0,
-              videoName: latestVideo.filename || 'Unknown'
+              videoName: latestVideo.filename || "Unknown",
             });
 
-            // Set thumbnail from latest video
             if (latestVideo.thumbnail) {
               setVideoThumbnail(latestVideo.thumbnail);
-              setVideoSrc('placeholder');
+              setVideoSrc("placeholder");
             } else {
               setVideoThumbnail(null);
               setVideoSrc(null);
@@ -206,7 +207,7 @@ export default function MapPage() {
           }
         }
       } catch (error) {
-        console.error('Error fetching latest video:', error);
+        console.error("Error fetching latest video:", error);
       }
     };
 
@@ -223,20 +224,15 @@ export default function MapPage() {
 
       try {
         // Fetch videos from all visible cameras in parallel
-        const videoPromises = visibleCameraIds.map(cameraId =>
-          authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`)
-            .then(res => res.json())
+        const videoPromises = visibleCameraIds.map((cameraId) =>
+          authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`).then((res) => res.json()),
         );
 
         const results = await Promise.all(videoPromises);
 
-        // Combine all videos from all cameras
-        const allVideos = results.flatMap(result =>
-          result.success && result.videos ? result.videos : []
-        );
+        const allVideos = results.flatMap((result) => (result.success && result.videos ? result.videos : []));
 
         if (allVideos.length > 0) {
-          // Sum all values from all videos
           const totalVehicles = allVideos.reduce((sum, video) => sum + (video.vehicles || 0), 0);
           const totalSpeeding = allVideos.reduce((sum, video) => sum + (video.speeding_count || 0), 0);
           const totalSwerving = allVideos.reduce((sum, video) => sum + (video.swerving_count || 0), 0);
@@ -244,24 +240,21 @@ export default function MapPage() {
           const totalSigns = allVideos.reduce((sum, video) => sum + (video.signs || 0), 0);
           const totalOccurrences = totalSpeeding + totalSwerving + totalAbruptStop;
 
-          // Collect all unique behaviors
           const allBehaviors = new Set<string>();
-          allVideos.forEach(video => {
-            if (video.speeding_count > 0) allBehaviors.add('Speeding');
-            if (video.swerving_count > 0) allBehaviors.add('Swerving');
-            if (video.abrupt_stopping_count > 0) allBehaviors.add('Abrupt Stopping');
+          allVideos.forEach((video) => {
+            if (video.speeding_count > 0) allBehaviors.add("Speeding");
+            if (video.swerving_count > 0) allBehaviors.add("Swerving");
+            if (video.abrupt_stopping_count > 0) allBehaviors.add("Abrupt Stopping");
           });
 
-          // Collect all unique sign classes
           const allSignClasses = new Set<string>();
-          allVideos.forEach(video => {
+          allVideos.forEach((video) => {
             if (video.sign_classes && Array.isArray(video.sign_classes)) {
               video.sign_classes.forEach((sc: string) => allSignClasses.add(sc));
             }
           });
 
-          // Check if any video has jeepney hotspot
-          const hasJeepneyHotspot = allVideos.some(video => video.jeepney_hotspot);
+          const hasJeepneyHotspot = allVideos.some((video) => video.jeepney_hotspot);
 
           setAggregatedVideoData({
             totalVehicles,
@@ -270,23 +263,20 @@ export default function MapPage() {
             allBehaviors: Array.from(allBehaviors),
             allSignClasses: Array.from(allSignClasses),
             hasJeepneyHotspot,
-            cameraCount: visibleCameraIds.length
+            cameraCount: visibleCameraIds.length,
           });
         } else {
           setAggregatedVideoData(null);
         }
       } catch (error) {
-        console.error('Error fetching aggregated videos:', error);
+        console.error("Error fetching aggregated videos:", error);
       }
     };
 
     fetchAggregatedVideos();
   }, [visibleCameraIds, refreshTrigger]);
 
-  const visibleFeeds = useMemo(() =>
-    allFeeds.filter(feed => visibleCameraIds.includes(feed.id)),
-    [allFeeds, visibleCameraIds]
-  );
+  const visibleFeeds = useMemo(() => allFeeds.filter((feed) => visibleCameraIds.includes(feed.id)), [allFeeds, visibleCameraIds]);
 
   const aggregateData = useMemo(() => {
     if (aggregatedVideoData) {
@@ -299,10 +289,10 @@ export default function MapPage() {
       totalVehicles: visibleFeeds.reduce((sum, feed) => sum + feed.vehicles, 0),
       totalOccurrences: visibleFeeds.reduce((sum, feed) => sum + feed.occurrences, 0),
       totalSigns: visibleFeeds.reduce((sum, feed) => sum + (feed.signs || 0), 0),
-      allBehaviors: Array.from(new Set(visibleFeeds.flatMap(feed => feed.behaviors))).filter(b => b !== 'No Data'),
-      allSignClasses: Array.from(new Set(visibleFeeds.flatMap(feed => feed.signClasses || []))),
-      hasJeepneyHotspot: visibleFeeds.some(feed => feed.jeepneyHotspot),
-      cameraCount: visibleFeeds.length
+      allBehaviors: Array.from(new Set(visibleFeeds.flatMap((feed) => feed.behaviors))).filter((b) => b !== "No Data"),
+      allSignClasses: Array.from(new Set(visibleFeeds.flatMap((feed) => feed.signClasses || []))),
+      hasJeepneyHotspot: visibleFeeds.some((feed) => feed.jeepneyHotspot),
+      cameraCount: visibleFeeds.length,
     };
   }, [aggregatedVideoData, visibleFeeds]);
 
@@ -313,13 +303,13 @@ export default function MapPage() {
       lat: cam.lat,
       lng: cam.lng,
       location: cam.location,
-      latestUpload: cam.latest_upload || 'No uploads yet',
+      latestUpload: cam.latest_upload || "No uploads yet",
       vehicles: cam.vehicles,
       occurrences: cam.occurrences,
-      behaviors: cam.behaviors.length > 0 ? cam.behaviors : ['No Data'],
+      behaviors: cam.behaviors.length > 0 ? cam.behaviors : ["No Data"],
       signs: cam.signs || 0,
       signClasses: cam.sign_classes || [],
-      jeepneyHotspot: cam.latest_video?.jeepney_hotspot || false
+      jeepneyHotspot: cam.latest_video?.jeepney_hotspot || false,
     }));
 
     setAllFeeds(formattedCameras);
@@ -329,16 +319,19 @@ export default function MapPage() {
     }
   }, []);
 
-  const handleVideoFileSelect = useCallback((url: string, thumbnail?: string) => {
-    if (videoSrc) {
-      URL.revokeObjectURL(videoSrc);
-    }
-    if (videoThumbnail && videoThumbnail.startsWith('blob:')) {
-      URL.revokeObjectURL(videoThumbnail);
-    }
-    setVideoSrc(url);
-    setVideoThumbnail(thumbnail || null);
-  }, [videoSrc, videoThumbnail]);
+  const handleVideoFileSelect = useCallback(
+    (url: string, thumbnail?: string) => {
+      if (videoSrc) {
+        URL.revokeObjectURL(videoSrc);
+      }
+      if (videoThumbnail && videoThumbnail.startsWith("blob:")) {
+        URL.revokeObjectURL(videoThumbnail);
+      }
+      setVideoSrc(url);
+      setVideoThumbnail(thumbnail || null);
+    },
+    [videoSrc, videoThumbnail],
+  );
 
   const handleCameraClick = useCallback((cameraId: number) => {
     if (selectedFeedIdRef.current === cameraId) {
@@ -369,129 +362,45 @@ export default function MapPage() {
       behaviors: cameraData.behaviors || ["No Data"],
       signs: cameraData.signs || 0,
       signClasses: cameraData.sign_classes || [],
-      jeepneyHotspot: cameraData.latest_video?.jeepney_hotspot || false
+      jeepneyHotspot: cameraData.latest_video?.jeepney_hotspot || false,
     };
 
-    setAllFeeds(prevFeeds => [...prevFeeds, newFeed]);
+    setAllFeeds((prevFeeds) => [...prevFeeds, newFeed]);
     setSelectedFeedId(id);
     setIsEditingName(false);
   }, []);
 
   const handleVideoUploadComplete = useCallback(() => {
-    setRefreshTrigger(prev => prev + 1);
-    setCamerasRefreshTrigger(prev => prev + 1);
+    setRefreshTrigger((prev) => prev + 1);
+    setCamerasRefreshTrigger((prev) => prev + 1);
   }, []);
 
-  // Shared polling logic — starts an interval that checks the backend for
-  // processing completion of a specific video and updates the notification.
-  const startPollingForVideo = useCallback((notifId: string, videoId: number) => {
-    // Don't double-poll the same video
-    if ((window as any)[`pollInterval_${videoId}`]) return;
 
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/progress/`);
+  const handleUploadStart = useCallback(
+    (videoName: string) => {
+      showToast(`Uploading "${videoName}"…`, "info");
+    },
+    [showToast],
+  );
 
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) {
-            const { processing_status, processing_stage, yolo_progress } = data;
+  const handleProcessingStart = useCallback(
+    (videoName: string, videoId: number) => {
+      showToast(`"${videoName}" uploaded — processing started`, "info");
+      trackVideoProcessing(videoName, videoId);
+    },
+    [showToast, trackVideoProcessing],
+  );
 
-            // YOLO progress maps directly to 0-100%
-            let overallProgress = 0;
-            if (processing_stage === 'yolo') {
-              overallProgress = Math.min(yolo_progress ?? 0, 99);
-            } else if (processing_stage === 'complete') {
-              overallProgress = 100;
-            }
-            updateProgress(notifId, processing_stage ?? '', overallProgress);
-
-            // Complete
-            if (processing_status === 'completed') {
-              clearInterval(pollInterval);
-              delete (window as any)[`pollInterval_${videoId}`];
-
-              // Fetch full video data
-              const videoResponse = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`);
-
-              let videoData = data;
-              if (videoResponse.ok) {
-                const fullData = await videoResponse.json();
-                if (fullData.success && fullData.video) {
-                  videoData = {
-                    yolo_results: { total_unique: fullData.video.vehicles || 0 },
-                    sign_results: { unique_signs: fullData.video.signs || 0 }
-                  };
-                }
-              }
-
-              completeProcessing(notifId, true, videoData);
-              handleVideoUploadComplete();
-            }
-
-            // Failure
-            if (processing_status === 'failed') {
-              completeProcessing(notifId, false, data);
-              clearInterval(pollInterval);
-              delete (window as any)[`pollInterval_${videoId}`];
-            }
-          }
-        }
-      } catch (error) {
-        // Silent
-      }
-    }, 2000);
-
-    (window as any)[`pollInterval_${videoId}`] = pollInterval;
-  }, [completeProcessing, updateProgress, handleVideoUploadComplete]);
-
-  const handleUploadStart = useCallback((videoName: string) => {
-    setUploadToast({ open: true, message: `Uploading "${videoName}"…`, severity: 'info' });
-  }, []);
-
-  const handleProcessingStart = useCallback((videoName: string, videoId: number) => {
-    const notifId = addProcessingNotification(videoName, videoId);
-    setUploadToast({ open: true, message: `"${videoName}" uploaded — processing started`, severity: 'info' });
-    startPollingForVideo(notifId, videoId);
-  }, [addProcessingNotification, startPollingForVideo]);
-
-  const handleProcessingComplete = useCallback((videoName: string, success: boolean, data?: any) => {
-    const processingNotification = notificationsRef.current.find(
-      n => n.videoName === videoName && n.processing
-    );
-
-    if (processingNotification) {
-      // Clear poll interval
-      const pollIntervalId = (window as any)[`pollInterval_${processingNotification.id}`];
-
-      if (pollIntervalId) {
-        clearInterval(pollIntervalId);
-        delete (window as any)[`pollInterval_${processingNotification.id}`];
-      }
-
-      // Complete the notification
-      completeProcessing(processingNotification.id, success, data);
+  const handleProcessingComplete = useCallback(
+  (videoName: string, success: boolean, data?: any) => {
+    if (success) {
+      showToast(`"${videoName}" processed successfully`, "success");
     } else {
-      addNotification(videoName, success, data);
+      showToast(`"${videoName}" — ${data?.error || "Processing failed"}`, "error");
     }
-
-    if (!success) {
-      const errorMsg = data?.error || 'Processing failed';
-      setUploadToast({ open: true, message: `"${videoName}" — ${errorMsg}`, severity: 'error' });
-    }
-
-    setRefreshTrigger(prev => prev + 1);
-    setCamerasRefreshTrigger(prev => prev + 1);
-  }, [completeProcessing, addNotification]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const processingNotifs = notifications.filter(n => n.processing && n.videoId);
-    processingNotifs.forEach(n => {
-      startPollingForVideo(n.id, n.videoId!);
-    });
-  }, [hydrated]);
-
+  },
+  [showToast],
+);
 
   const handleVideoSelect = useCallback((videoData: any) => {
     if (!videoData) {
@@ -504,14 +413,14 @@ export default function MapPage() {
     const occurrences = (videoData.speeding || 0) + (videoData.swerving || 0) + (videoData.abrupt_stop || 0);
 
     const behaviors = [];
-    if (videoData.speeding > 0) behaviors.push('Speeding');
-    if (videoData.swerving > 0) behaviors.push('Swerving');
-    if (videoData.abrupt_stop > 0) behaviors.push('Abrupt Stopping');
+    if (videoData.speeding > 0) behaviors.push("Speeding");
+    if (videoData.swerving > 0) behaviors.push("Swerving");
+    if (videoData.abrupt_stop > 0) behaviors.push("Abrupt Stopping");
 
     setSelectedVideoData({
       vehicles: videoData.vehicles || 0,
       occurrences: occurrences,
-      behaviors: behaviors.length > 0 ? behaviors : ['No Data'],
+      behaviors: behaviors.length > 0 ? behaviors : ["No Data"],
       signs: videoData.signs || 0,
       signClasses: videoData.sign_classes || [],
       jeepneyHotspot: videoData.jeepney_hotspot || false,
@@ -519,20 +428,18 @@ export default function MapPage() {
       swerving: videoData.swerving || 0,
       abruptStop: videoData.abrupt_stop || 0,
       duration: videoData.duration || 0,
-      videoName: videoData.video_name || 'Unknown'
+      videoName: videoData.video_name || "Unknown",
     });
 
-    // Set thumbnail from database
     if (videoData.thumbnail) {
       setVideoThumbnail(videoData.thumbnail);
-      setVideoSrc('placeholder'); // Set a placeholder so thumbnail displays
+      setVideoSrc("placeholder"); 
     } else {
       setVideoThumbnail(null);
       setVideoSrc(null);
     }
   }, []);
 
-  // Handle multiple video selection from table - sum all values
   const handleMultipleVideoSelect = useCallback((videoDataArray: any[]) => {
     if (!videoDataArray || videoDataArray.length === 0) {
       setSelectedVideoData(null);
@@ -547,23 +454,23 @@ export default function MapPage() {
     const totalOccurrences = totalSpeeding + totalSwerving + totalAbruptStop;
 
     const behaviors = [];
-    if (totalSpeeding > 0) behaviors.push('Speeding');
-    if (totalSwerving > 0) behaviors.push('Swerving');
-    if (totalAbruptStop > 0) behaviors.push('Abrupt Stopping');
+    if (totalSpeeding > 0) behaviors.push("Speeding");
+    if (totalSwerving > 0) behaviors.push("Swerving");
+    if (totalAbruptStop > 0) behaviors.push("Abrupt Stopping");
 
     const allSignClasses = new Set<string>();
-    videoDataArray.forEach(video => {
+    videoDataArray.forEach((video) => {
       if (video.sign_classes && Array.isArray(video.sign_classes)) {
         video.sign_classes.forEach((sc: string) => allSignClasses.add(sc));
       }
     });
 
-    const hasJeepneyHotspot = videoDataArray.some(video => video.jeepney_hotspot);
+    const hasJeepneyHotspot = videoDataArray.some((video) => video.jeepney_hotspot);
 
     setSelectedVideoData({
       vehicles: totalVehicles,
       occurrences: totalOccurrences,
-      behaviors: behaviors.length > 0 ? behaviors : ['No Data'],
+      behaviors: behaviors.length > 0 ? behaviors : ["No Data"],
       signs: totalSigns,
       signClasses: Array.from(allSignClasses),
       jeepneyHotspot: hasJeepneyHotspot,
@@ -571,7 +478,7 @@ export default function MapPage() {
       swerving: totalSwerving,
       abruptStop: totalAbruptStop,
       duration: 0,
-      videoName: `${videoDataArray.length} videos selected`
+      videoName: `${videoDataArray.length} videos selected`,
     });
   }, []);
 
@@ -586,7 +493,7 @@ export default function MapPage() {
         behaviors: selectedFeedData.behaviors,
         signs: selectedFeedData.signs,
         signClasses: selectedFeedData.signClasses,
-        jeepneyHotspot: selectedFeedData.jeepneyHotspot
+        jeepneyHotspot: selectedFeedData.jeepneyHotspot,
       };
     }
     return null;
@@ -599,48 +506,49 @@ export default function MapPage() {
   }, [selectedFeedData]);
 
   const saveName = useCallback(() => {
-    if (!selectedFeedData || newFeedName.trim() === selectedFeedData.name || newFeedName.trim() === '') {
+    if (!selectedFeedData || newFeedName.trim() === selectedFeedData.name || newFeedName.trim() === "") {
       setIsEditingName(false);
       return;
     }
 
-    setAllFeeds(prevFeeds =>
-      prevFeeds.map(feed =>
-        feed.id === selectedFeedId ? { ...feed, name: newFeedName.trim() } : feed
-      )
-    );
+    setAllFeeds((prevFeeds) => prevFeeds.map((feed) => (feed.id === selectedFeedId ? { ...feed, name: newFeedName.trim() } : feed)));
 
-    setSelectedFeedData((prev: any) => prev ? { ...prev, name: newFeedName.trim() } : null);
+    setSelectedFeedData((prev: any) => (prev ? { ...prev, name: newFeedName.trim() } : null));
 
     setIsEditingName(false);
   }, [newFeedName, selectedFeedData, selectedFeedId]);
 
-
   if (isNavigating) {
     return (
-      <Box sx={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#f5f5f5',
-        zIndex: 9999
-      }}>
-        <Box sx={{ textAlign: 'center' }}>
-          <Box sx={{
-            width: 50,
-            height: 50,
-            border: '4px solid #f3f3f3',
-            borderTop: '4px solid #161b4cff',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 16px'
-          }}></Box>
-          <Typography variant="h6" style={{ color: '#161b4cff' }}>Loading...</Typography>
+      <Box
+        sx={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#f5f5f5",
+          zIndex: 9999,
+        }}
+      >
+        <Box sx={{ textAlign: "center" }}>
+          <Box
+            sx={{
+              width: 50,
+              height: 50,
+              border: "4px solid #f3f3f3",
+              borderTop: "4px solid #161b4cff",
+              borderRadius: "50%",
+              animation: "spin 1s linear infinite",
+              margin: "0 auto 16px",
+            }}
+          ></Box>
+          <Typography variant="h6" style={{ color: "#161b4cff" }}>
+            Loading...
+          </Typography>
         </Box>
         <style>{`
           @keyframes spin {
@@ -654,14 +562,17 @@ export default function MapPage() {
 
   return (
     <>
-      <Notification />
       {/* Back to Dashboard button */}
       <IconButton
-        onClick={() => router.push('/dashboard')}
+        onClick={() => router.push("/dashboard")}
         sx={{
-          position: 'fixed', top: 16, left: 16, zIndex: 1001,
-          bgcolor: '#fff', boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
-          '&:hover': { bgcolor: '#f5f5f5' },
+          position: "fixed",
+          top: 16,
+          left: 16,
+          zIndex: 1001,
+          bgcolor: "#fff",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
+          "&:hover": { bgcolor: "#f5f5f5" },
         }}
       >
         <ArrowBackIcon />
@@ -681,15 +592,17 @@ export default function MapPage() {
       </Box>
       <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>
         {allFeeds.length === 0 ? (
-          <Box sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            padding: 4,
-            textAlign: 'center'
-          }}>
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "100%",
+              padding: 4,
+              textAlign: "center",
+            }}
+          >
             <Typography variant="h5" sx={{ marginBottom: 2 }}>
               No Cameras Available
             </Typography>
@@ -701,27 +614,27 @@ export default function MapPage() {
           <>
             {aggregateData ? (
               <>
-                <Box className="feed-details" sx={{marginBottom:2, marginTop: 6}}>
+                <Box className="feed-details" sx={{ marginBottom: 2, marginTop: 6 }}>
                   <Typography variant="h4">Total Data</Typography>
                   <Typography variant="body1">
-                    Showing data from {aggregateData.cameraCount} camera{aggregateData.cameraCount !== 1 ? 's' : ''} visible in map
+                    Showing data from {aggregateData.cameraCount} camera{aggregateData.cameraCount !== 1 ? "s" : ""} visible in map
                   </Typography>
                 </Box>
 
-                <Divider/>
+                <Divider />
 
                 <Box className="feed-data">
                   <Box className="feed-aggregates">
                     <List>
                       <ListItem disableGutters>
                         <ListItemAvatar>
-                          <DirectionsCarIcon/>
+                          <DirectionsCarIcon />
                         </ListItemAvatar>
                         <ListItemText primary={`${aggregateData.totalVehicles} Vehicles`}></ListItemText>
                       </ListItem>
                       <ListItem disableGutters>
                         <ListItemAvatar>
-                          <CarCrashIcon sx={{color:'red'}}/>
+                          <CarCrashIcon sx={{ color: "red" }} />
                         </ListItemAvatar>
                         <ListItemText primary={`${aggregateData.totalOccurrences} Occurrences`}></ListItemText>
                       </ListItem>
@@ -739,20 +652,22 @@ export default function MapPage() {
                   )}
                 </Box>
 
-                <Divider sx={{marginBottom:2}} />
+                <Divider sx={{ marginBottom: 2 }} />
 
                 <Table onVideoFileSelect={handleVideoFileSelect} hideUpload={true} cameraId={null} visibleCameraIds={visibleCameraIds} />
               </>
             ) : (
-              <Box sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                height: '100%',
-                padding: 4,
-                textAlign: 'center'
-              }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                  padding: 4,
+                  textAlign: "center",
+                }}
+              >
                 <Typography variant="h5" sx={{ marginBottom: 2 }}>
                   No Cameras in View
                 </Typography>
@@ -764,174 +679,162 @@ export default function MapPage() {
           </>
         ) : (
           <>
-        {loadingFeedData ? (
-          <Box sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            padding: 4
-          }}>
-            <Typography variant="h6">Loading camera data...</Typography>
-          </Box>
-        ) : selectedFeedData ? (
-          <>
-        <Box
-          sx={{
-            display:'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color:'white',
-            bgcolor: 'black',
-            width: '100%',
-            height: 480,
-            marginBottom: 4,
-            position: 'relative'
-          }}
-        >
-          {videoThumbnail ? (
-            <Box
-              component="img"
-              src={videoThumbnail}
-              alt="Video thumbnail"
-              sx={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain',
-                cursor: 'pointer'
-              }}
-            />
-          ) : videoSrc ? (
-            <Typography variant="body1" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-              Thumbnail unavailable
-            </Typography>
-          ) : (
-            <Typography variant="h5" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-              Select a video to view thumbnail
-            </Typography>
-          )}
-        </Box>
-
-        {selectedFeedData && (
-          <>
-            <Box className="feed-details" sx={{marginBottom:2}}>
-
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {isEditingName ? (
-                  <TextField
-                    variant="standard"
-                    value={newFeedName}
-                    onChange={(e) => setNewFeedName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }}
-                    sx={{ '& .MuiInputBase-input': { padding: 0, fontSize: '1.5rem', fontWeight: 700 } }}
-                  />
-                ) : (
-                  <Typography variant="h4" onClick={startEdit} sx={{ cursor: 'pointer' }}>
-                    Feed #{selectedFeedData.id} - {selectedFeedData.name}
-                  </Typography>
-                )}
-
-                <IconButton
-                  onClick={isEditingName ? saveName : startEdit}
-                  size="small"
-                  sx={{ p: 0 }}
-                >
-                  {isEditingName ? <CheckIcon color="primary" /> : <EditIcon fontSize="small" />}
-                </IconButton>
+            {loadingFeedData ? (
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                  padding: 4,
+                }}
+              >
+                <Typography variant="h6">Loading camera data...</Typography>
               </Box>
-
-              <Typography variant="h5"> {selectedFeedData.location}  </Typography>
-              <Typography variant="h5"> {selectedFeedData.lng}°E, {selectedFeedData.lat}°N  </Typography>
-              <Typography variant="body1" > Latest Video Uploaded: {selectedFeedData.latestUpload}  </Typography>
-              {selectedVideoData && (
-                <Typography variant="body2" sx={{ color: 'primary.main', fontStyle: 'italic', mt: 1 }}>
-                  Viewing: {selectedVideoData.videoName}
-                </Typography>
-              )}
-            </Box>
-
-            <Divider/>
-
-            <Box className="feed-data">
-              {displayData && (
-                <>
-                  <Box className="feed-aggregates" >
-                    <List>
-                      <ListItem disableGutters>
-                        <ListItemAvatar>
-                          <DirectionsCarIcon/>
-                        </ListItemAvatar>
-                        <ListItemText primary={`${displayData.vehicles} Vehicles`}></ListItemText>
-                      </ListItem>
-                      <ListItem disableGutters>
-                        <ListItemAvatar>
-                          <CarCrashIcon sx={{color:'red'}}/>
-                        </ListItemAvatar>
-                        <ListItemText primary={`${displayData.occurrences} Occurences`}></ListItemText>
-                      </ListItem>
-                      <ListItem disableGutters>
-                        <ListItemAvatar>
-                          <LocalTaxiIcon sx={{color: displayData.jeepneyHotspot ? '#4CAF50' : '#000000ff'}}/>
-                        </ListItemAvatar>
-                        <ListItemText
-                          primary={`Jeepney Hotspot: ${displayData.jeepneyHotspot ? 'Yes' : 'No'}`}
-                          sx={{color: displayData.jeepneyHotspot ? '#4CAF50' : 'text.secondary'}}
-                        ></ListItemText>
-                      </ListItem>
-                    </List>
-                  </Box>
-
-                  {displayData.behaviors.filter((b: string) => b !== 'No Data').length > 0 && (
-                    <Box className="feed-behavior-list">
-                      <List>
-                        {displayData.behaviors.filter((b: string) => b !== 'No Data').map((value: string, index: number) => (
-                          <ListItemText key={`${value}-${index}`} primary={value}></ListItemText>
-                        ))}
-                      </List>
-                    </Box>
+            ) : selectedFeedData ? (
+              <>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "white",
+                    bgcolor: "black",
+                    width: "100%",
+                    height: 480,
+                    marginBottom: 4,
+                    position: "relative",
+                  }}
+                >
+                  {videoThumbnail ? (
+                    <Box
+                      component="img"
+                      src={videoThumbnail}
+                      alt="Video thumbnail"
+                      sx={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "contain",
+                        cursor: "pointer",
+                      }}
+                    />
+                  ) : videoSrc ? (
+                    <Typography variant="body1" sx={{ color: "rgba(255, 255, 255, 0.5)" }}>
+                      Thumbnail unavailable
+                    </Typography>
+                  ) : (
+                    <Typography variant="h5" sx={{ color: "rgba(255, 255, 255, 0.5)" }}>
+                      Select a video to view thumbnail
+                    </Typography>
                   )}
+                </Box>
 
-                  <CameraTags cameraId={selectedFeedId} />
-                </>
-              )}
-            </Box>
+                {selectedFeedData && (
+                  <>
+                    <Box className="feed-details" sx={{ marginBottom: 2 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        {isEditingName ? (
+                          <TextField
+                            variant="standard"
+                            value={newFeedName}
+                            onChange={(e) => setNewFeedName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveName();
+                            }}
+                            sx={{ "& .MuiInputBase-input": { padding: 0, fontSize: "1.5rem", fontWeight: 700 } }}
+                          />
+                        ) : (
+                          <Typography variant="h4" onClick={startEdit} sx={{ cursor: "pointer" }}>
+                            Feed #{selectedFeedData.id} - {selectedFeedData.name}
+                          </Typography>
+                        )}
 
-            <Divider sx={{marginBottom:2}} />
+                        <IconButton onClick={isEditingName ? saveName : startEdit} size="small" sx={{ p: 0 }}>
+                          {isEditingName ? <CheckIcon color="primary" /> : <EditIcon fontSize="small" />}
+                        </IconButton>
+                      </Box>
 
-            <Table
-              onVideoFileSelect={handleVideoFileSelect}
-              cameraId={selectedFeedId}
-              onUploadComplete={handleVideoUploadComplete}
-              onUploadStart={handleUploadStart}
-              onProcessingStart={handleProcessingStart}
-              onProcessingComplete={handleProcessingComplete}
-              onVideoSelect={handleVideoSelect}
-              onMultipleVideoSelect={handleMultipleVideoSelect}
-            />
+                      <Typography variant="h5"> {selectedFeedData.location} </Typography>
+                      <Typography variant="h5">
+                        {" "}
+                        {selectedFeedData.lng}°E, {selectedFeedData.lat}°N{" "}
+                      </Typography>
+                      <Typography variant="body1"> Latest Video Uploaded: {selectedFeedData.latestUpload} </Typography>
+                      {selectedVideoData && (
+                        <Typography variant="body2" sx={{ color: "primary.main", fontStyle: "italic", mt: 1 }}>
+                          Viewing: {selectedVideoData.videoName}
+                        </Typography>
+                      )}
+                    </Box>
+
+                    <Divider />
+
+                    <Box className="feed-data">
+                      {displayData && (
+                        <>
+                          <Box className="feed-aggregates">
+                            <List>
+                              <ListItem disableGutters>
+                                <ListItemAvatar>
+                                  <DirectionsCarIcon />
+                                </ListItemAvatar>
+                                <ListItemText primary={`${displayData.vehicles} Vehicles`}></ListItemText>
+                              </ListItem>
+                              <ListItem disableGutters>
+                                <ListItemAvatar>
+                                  <CarCrashIcon sx={{ color: "red" }} />
+                                </ListItemAvatar>
+                                <ListItemText primary={`${displayData.occurrences} Occurences`}></ListItemText>
+                              </ListItem>
+                              <ListItem disableGutters>
+                                <ListItemAvatar>
+                                  <LocalTaxiIcon sx={{ color: displayData.jeepneyHotspot ? "#4CAF50" : "#000000ff" }} />
+                                </ListItemAvatar>
+                                <ListItemText
+                                  primary={`Jeepney Hotspot: ${displayData.jeepneyHotspot ? "Yes" : "No"}`}
+                                  sx={{ color: displayData.jeepneyHotspot ? "#4CAF50" : "text.secondary" }}
+                                ></ListItemText>
+                              </ListItem>
+                            </List>
+                          </Box>
+
+                          {displayData.behaviors.filter((b: string) => b !== "No Data").length > 0 && (
+                            <Box className="feed-behavior-list">
+                              <List>
+                                {displayData.behaviors
+                                  .filter((b: string) => b !== "No Data")
+                                  .map((value: string, index: number) => (
+                                    <ListItemText key={`${value}-${index}`} primary={value}></ListItemText>
+                                  ))}
+                              </List>
+                            </Box>
+                          )}
+
+                          <CameraTags cameraId={selectedFeedId} />
+                        </>
+                      )}
+                    </Box>
+
+                    <Divider sx={{ marginBottom: 2 }} />
+
+                    <Table
+                      onVideoFileSelect={handleVideoFileSelect}
+                      cameraId={selectedFeedId}
+                      onUploadComplete={handleVideoUploadComplete}
+                      onUploadStart={handleUploadStart}
+                      onProcessingStart={handleProcessingStart}
+                      onProcessingComplete={handleProcessingComplete}
+                      onVideoSelect={handleVideoSelect}
+                      onMultipleVideoSelect={handleMultipleVideoSelect}
+                    />
+                  </>
+                )}
+              </>
+            ) : null}
           </>
-        )}
-        </>
-        ) : null}
-        </>
         )}
       </SideTab>
 
-      {/* Upload feedback toast */}
-      <Snackbar
-        open={uploadToast.open}
-        autoHideDuration={5000}
-        onClose={() => setUploadToast(prev => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert
-          onClose={() => setUploadToast(prev => ({ ...prev, open: false }))}
-          severity={uploadToast.severity}
-          variant="filled"
-          sx={{ width: '100%' }}
-        >
-          {uploadToast.message}
-        </Alert>
-      </Snackbar>
     </>
   );
 }

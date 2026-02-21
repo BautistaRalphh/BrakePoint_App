@@ -1,5 +1,7 @@
+// notifications.tsx
 "use client";
-import { useState, useEffect } from "react";
+
+import { useState } from "react";
 import { IconButton, Box, Badge, Menu, MenuItem, Snackbar, Alert, Typography, LinearProgress } from "@mui/material";
 
 import NotificationsIcon from "@mui/icons-material/Notifications";
@@ -8,9 +10,8 @@ import { useNotifications } from "@/contexts/NotificationContext";
 
 export default function Notification() {
   const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
-  const [snackbarOpen, setSnackbarOpen] = useState(false);
-  const [snackbarMessage, setSnackbarMessage] = useState("");
-  const { notifications, markAsRead, clearAll, unreadCount } = useNotifications();
+
+  const { notifications, markAsRead, clearAll, unreadCount, toast, hideToast } = useNotifications();
 
   const handleNotificationClick = (event: React.MouseEvent<HTMLElement>) => {
     setNotificationAnchor(event.currentTarget);
@@ -40,9 +41,7 @@ export default function Notification() {
           zIndex: 1000,
           backgroundColor: "white",
           boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
-          "&:hover": {
-            backgroundColor: "#f5f5f5",
-          },
+          "&:hover": { backgroundColor: "#f5f5f5" },
         }}
       >
         <Badge badgeContent={unreadCount} color="error">
@@ -55,14 +54,19 @@ export default function Notification() {
         open={Boolean(notificationAnchor)}
         onClose={handleNotificationClose}
         PaperProps={{
-          sx: {
-            maxHeight: 400,
-            width: 350,
-            mt: 1,
-          },
+          sx: { maxHeight: 400, width: 350, mt: 1 },
         }}
       >
-        <Box sx={{ px: 2, py: 1, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e0e0e0" }}>
+        <Box
+          sx={{
+            px: 2,
+            py: 1,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderBottom: "1px solid #e0e0e0",
+          }}
+        >
           <Typography variant="h6">Notifications</Typography>
           {notifications.length > 0 && (
             <Typography variant="caption" sx={{ color: "primary.main", cursor: "pointer" }} onClick={handleClearAll}>
@@ -85,9 +89,7 @@ export default function Notification() {
               sx={{
                 backgroundColor: notification.read ? "transparent" : "#f5f5f5",
                 borderLeft: notification.read ? "none" : "4px solid #161b4cff",
-                "&:hover": {
-                  backgroundColor: notification.read ? "#fafafa" : "#e8e8e8",
-                },
+                "&:hover": { backgroundColor: notification.read ? "#fafafa" : "#e8e8e8" },
                 cursor: notification.processing ? "default" : "pointer",
               }}
             >
@@ -142,10 +144,7 @@ export default function Notification() {
                         height: 6,
                         borderRadius: 3,
                         bgcolor: "#e0e0e0",
-                        "& .MuiLinearProgress-bar": {
-                          borderRadius: 3,
-                          bgcolor: "#1d1f3f",
-                        },
+                        "& .MuiLinearProgress-bar": { borderRadius: 3, bgcolor: "#1d1f3f" },
                       }}
                     />
                   </Box>
@@ -168,14 +167,9 @@ export default function Notification() {
         )}
       </Menu>
 
-      <Snackbar
-        open={snackbarOpen}
-        autoHideDuration={3000}
-        onClose={() => setSnackbarOpen(false)}
-        anchorOrigin={{ vertical: "top", horizontal: "center" }}
-      >
-        <Alert onClose={() => setSnackbarOpen(false)} severity="info" sx={{ width: "100%" }}>
-          {snackbarMessage}
+      <Snackbar open={toast.open} autoHideDuration={5000} onClose={hideToast} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert onClose={hideToast} severity={toast.severity} variant="filled" sx={{ width: "100%" }}>
+          {toast.message}
         </Alert>
       </Snackbar>
     </Box>
