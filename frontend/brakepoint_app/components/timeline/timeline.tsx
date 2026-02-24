@@ -13,15 +13,28 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
 import { authFetch } from '@/lib/authFetch';
 
+import { PieChart } from "@mui/x-charts/PieChart";
+
 // ===========================================
 // Types
 // ===========================================
+
+type VehicleBreakdown = {
+  car: number;
+  jeepney: number;
+  motorcycle: number;
+  bus: number;
+  truck: number;
+};
+
 type TimelineRow = {
   date: Date;
   speeding: number | null;
   swerving: number | null;
   abruptStop: number | null;
   vehicles: number | null;
+
+  breakdown: VehicleBreakdown;
 };
 
 type TimelineProps = {
@@ -33,10 +46,10 @@ type TimelineProps = {
 // Constants
 // ===========================================
 const METRIC_CFG = [
-  { key: 'speeding',   label: 'Speeding',       color: '#5c6bc0' },
-  { key: 'swerving',   label: 'Swerving',       color: '#ef5350' },
-  { key: 'abruptStop', label: 'Abrupt Stop',    color: '#ffa726' },
-  { key: 'vehicles',   label: 'Vehicles',       color: '#66bb6a' },
+  { key: 'speeding', label: 'Speeding', color: '#5c6bc0' },
+  { key: 'swerving', label: 'Swerving', color: '#ef5350' },
+  { key: 'abruptStop', label: 'Abrupt Stop', color: '#ffa726' },
+  { key: 'vehicles', label: 'Vehicles', color: '#66bb6a' },
 ] as const;
 
 type MetricKey = typeof METRIC_CFG[number]['key'];
@@ -131,26 +144,48 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
     fetchTimeline();
   }, [fetchTimeline]);
 
-  useEffect(() => {
-    if (!USE_MOCK) return;
+useEffect(() => {
+  if (!USE_MOCK) return;
+  if (!startDate || !endDate) return; // wait until both dates are set
 
-    const today = new Date();
+  const start = startDate.toDate();
+  const end = endDate.toDate();
 
-    const mock: TimelineRow[] = Array.from({ length: 14 }, (_, i) => {
-      const d = new Date(today);
-      d.setDate(today.getDate() - (13 - i));
+  const dayCount = Math.ceil(
+    (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+  ) + 1;
 
-      return {
-        date: d,
-        speeding: Math.floor(Math.random() * 20),
-        swerving: Math.floor(Math.random() * 15),
-        abruptStop: Math.floor(Math.random() * 10),
-        vehicles: Math.floor(Math.random() * 200) + 50,
-      };
-    });
+  const mock: TimelineRow[] = Array.from({ length: dayCount }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i); // consecutive day
 
-    setRows(mock);
-  }, []);
+    const breakdown: VehicleBreakdown = {
+      car: Math.floor(Math.random() * 120) + 40,
+      jeepney: Math.floor(Math.random() * 40),
+      motorcycle: Math.floor(Math.random() * 80) + 20,
+      bus: Math.floor(Math.random() * 15),
+      truck: Math.floor(Math.random() * 25),
+    };
+
+    const totalVehicles =
+      breakdown.car +
+      breakdown.jeepney +
+      breakdown.motorcycle +
+      breakdown.bus +
+      breakdown.truck;
+
+    return {
+      date: d,
+      speeding: Math.floor(Math.random() * 20),
+      swerving: Math.floor(Math.random() * 15),
+      abruptStop: Math.floor(Math.random() * 10),
+      vehicles: totalVehicles,
+      breakdown,
+    };
+  });
+
+  setRows(mock);
+}, [startDate, endDate]);
 
   // --- derived data ---
   const sortedData = useMemo(
@@ -158,11 +193,32 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
     [rows],
   );
 
+  const totalBreakdown = useMemo(() => {
+    const sum = {
+      car: 0,
+      jeepney: 0,
+      motorcycle: 0,
+      bus: 0,
+      truck: 0,
+    };
+
+    sortedData.forEach(r => {
+      if (!r.breakdown) return;
+      sum.car += r.breakdown.car ?? 0;
+      sum.jeepney += r.breakdown.jeepney ?? 0;
+      sum.motorcycle += r.breakdown.motorcycle ?? 0;
+      sum.bus += r.breakdown.bus ?? 0;
+      sum.truck += r.breakdown.truck ?? 0;
+    });
+
+    return sum;
+  }, [sortedData]);
+
   const statistics = useMemo(() => ({
-    speeding:   computeStats(sortedData.map(d => d.speeding)),
-    swerving:   computeStats(sortedData.map(d => d.swerving)),
+    speeding: computeStats(sortedData.map(d => d.speeding)),
+    swerving: computeStats(sortedData.map(d => d.swerving)),
     abruptStop: computeStats(sortedData.map(d => d.abruptStop)),
-    vehicles:   computeStats(sortedData.map(d => d.vehicles)),
+    vehicles: computeStats(sortedData.map(d => d.vehicles)),
   }), [sortedData]);
 
   const bandData = useMemo(() => {
@@ -307,8 +363,8 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
                 </Box>
                 <Box sx={{ display: 'flex', gap: 2, justifyContent: 'space-between', alignItems: 'center' }}>
                   {([
-                    ['Mean', (Math.floor(s.mean)).toFixed(0)],
-                    ['Std', `\u00B1${(Math.ceil(s.std!)).toFixed(0)}`],
+                    ['Mean (Vehicles)', (Math.floor(s.mean)).toFixed(0)],
+                    ['Std (Vehicles)', `\u00B1${(Math.ceil(s.std!)).toFixed(0)}`],
                     ['Range', `${s.min} - ${s.max}`],
                   ] as [string, string | number][]).map(([lbl, val]) => (
                     <Box key={lbl}>
@@ -323,80 +379,137 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
         </Box>
       )}
 
-      {/* Chart area */}
-      {loading && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 6, gap: 1.5 }}>
-          <CircularProgress size={32} sx={{ color: '#1d1f3f' }} />
-          <Typography variant="body2" color="text.secondary">Loading timeline data…</Typography>
-        </Box>
-      )}
+      {/* ===== Chart Area ===== */}
+      <Box sx={{ mt: 2 }}>
 
-      {noCameras && !loading && (
-        <Box sx={{ textAlign: 'center', py: 6 }}>
-          <Typography variant="body2" color="text.secondary">
-            Select cameras on the map to view behavior data.
-          </Typography>
-        </Box>
-      )}
+        {/* ---------- States ---------- */}
+        {loading && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 8, gap: 1.5 }}>
+            <CircularProgress size={32} sx={{ color: '#1d1f3f' }} />
+            <Typography variant="body2" color="text.secondary">
+              Loading timeline data…
+            </Typography>
+          </Box>
+        )}
 
-      {noData && !noCameras && !error && (
-        <Box sx={{ textAlign: 'center', py: 6 }}>
-          <Typography variant="body2" color="text.secondary">
-            No video data found for the selected cameras and date range.
-          </Typography>
-        </Box>
-      )}
+        {noCameras && !loading && (
+          <Box sx={{ textAlign: 'center', py: 8 }}>
+            <Typography variant="body2" color="text.secondary">
+              Select cameras on the map to view behavior data.
+            </Typography>
+          </Box>
+        )}
 
-      {error && (
-        <Box sx={{ textAlign: 'center', py: 6 }}>
-          <Typography variant="body2" color="error">{error}</Typography>
-        </Box>
-      )}
+        {noData && !noCameras && !error && (
+          <Box sx={{ textAlign: 'center', py: 8 }}>
+            <Typography variant="body2" color="text.secondary">
+              No video data found for the selected cameras and date range.
+            </Typography>
+          </Box>
+        )}
 
-      {!loading && sortedData.length > 0 && (
-        <LineChart
-          xAxis={[{
-            data: sortedData.map(d => d.date),
-            scaleType: 'time',
-            tickMinStep: 24 * 60 * 60 * 1000,
-            valueFormatter: (v: Date) => v.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          }]}
-          series={[
-            // ---------- speeding ----------
-            ...(isOn('speeding') ? [
-              { id: 'sp-lo', data: bandData.speeding.lower, stack: 'sp-b', showMark: false, color: `rgba(92,107,192,${bandOp('speeding')})`, valueFormatter: () => null },
-              { id: 'sp-hi', data: bandData.speeding.band,  stack: 'sp-b', showMark: false, area: true, color: `rgba(92,107,192,${bandOp('speeding')})`, valueFormatter: () => null },
-              { id: 'sp', data: sortedData.map(d => d.speeding), label: 'Speeding', connectNulls: false, showMark: true, highlightScope, color: '#5c6bc0',
-                valueFormatter: (v: number | null) => v == null ? 'No data' : v.toString() },
-            ] : []),
-            // ---------- swerving ----------
-            ...(isOn('swerving') ? [
-              { id: 'sw-lo', data: bandData.swerving.lower, stack: 'sw-b', showMark: false, color: `rgba(239,83,80,${bandOp('swerving')})`, valueFormatter: () => null },
-              { id: 'sw-hi', data: bandData.swerving.band,  stack: 'sw-b', showMark: false, area: true, color: `rgba(239,83,80,${bandOp('swerving')})`, valueFormatter: () => null },
-              { id: 'sw', data: sortedData.map(d => d.swerving), label: 'Swerving', connectNulls: false, showMark: true, highlightScope, color: '#ef5350',
-                valueFormatter: (v: number | null) => v == null ? 'No data' : v.toString() },
-            ] : []),
-            // ---------- abruptStop ----------
-            ...(isOn('abruptStop') ? [
-              { id: 'as-lo', data: bandData.abruptStop.lower, stack: 'as-b', showMark: false, color: `rgba(255,167,38,${bandOp('abruptStop')})`, valueFormatter: () => null },
-              { id: 'as-hi', data: bandData.abruptStop.band,  stack: 'as-b', showMark: false, area: true, color: `rgba(255,167,38,${bandOp('abruptStop')})`, valueFormatter: () => null },
-              { id: 'as', data: sortedData.map(d => d.abruptStop), label: 'Abrupt Stop', connectNulls: false, showMark: true, highlightScope, color: '#ffa726',
-                valueFormatter: (v: number | null) => v == null ? 'No data' : v.toString() },
-            ] : []),
-            // ---------- vehicles ----------
-              { id: 'vh-lo', data: bandData.vehicles.lower, stack: 'vh-b', showMark: false, color: `rgba(102,187,106,${bandOp('vehicles')})`, valueFormatter: () => null },
-              { id: 'vh-hi', data: bandData.vehicles.band,  stack: 'vh-b', showMark: false, area: true, color: `rgba(102,187,106,${bandOp('vehicles')})`, valueFormatter: () => null },
-              { id: 'vh', data: sortedData.map(d => d.vehicles), label: 'Vehicles', connectNulls: false, showMark: true, highlightScope, color: '#66bb6a',
-                valueFormatter: (v: number | null) => v == null ? 'No data' : v.toString() },
-          ]}
-          height={280}
-          margin={{ left: 48, right: 16, top: 16, bottom: 30 }}
-          sx={{
-            '& .MuiChartsLegend-root': { display: 'none' },
-            '& .MuiChartsAxis-tickLabel': { fontFamily: 'Montserrat', fontSize: '0.7rem' },
-          }}
-        />
-      )}
+        {error && (
+          <Box sx={{ textAlign: 'center', py: 8 }}>
+            <Typography variant="body2" color="error">
+              {error}
+            </Typography>
+          </Box>
+        )}
+
+        {/* ---------- Charts ---------- */}
+        {!loading && sortedData.length > 0 && (
+
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: '2fr 1fr' },
+              gap: 3,
+              alignItems: 'stretch',
+            }}
+          >
+
+            {/* ===== Timeline Line Chart ===== */}
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
+                Behavior Timeline
+              </Typography>
+
+              <LineChart
+                height={300}
+                xAxis={[{
+                  data: sortedData.map(d => d.date),
+                  scaleType: 'time',
+                  tickMinStep: 24 * 60 * 60 * 1000,
+                  valueFormatter: (v: Date) =>
+                    v.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                }]}
+
+                series={[
+
+                  // ---------- SPEEDING ----------
+                  ...(isOn('speeding') ? [
+                    { id: 'sp-lo', data: bandData.speeding.lower, stack: 'sp-b', showMark: false, color: `rgba(92,107,192,${bandOp('speeding')})`, valueFormatter: () => null },
+                    { id: 'sp-hi', data: bandData.speeding.band, stack: 'sp-b', showMark: false, area: true, color: `rgba(92,107,192,${bandOp('speeding')})`, valueFormatter: () => null },
+                    { id: 'sp', data: sortedData.map(d => d.speeding), label: 'Speeding', showMark: true, highlightScope, color: '#5c6bc0' },
+                  ] : []),
+
+                  // ---------- SWERVING ----------
+                  ...(isOn('swerving') ? [
+                    { id: 'sw-lo', data: bandData.swerving.lower, stack: 'sw-b', showMark: false, color: `rgba(239,83,80,${bandOp('swerving')})`, valueFormatter: () => null },
+                    { id: 'sw-hi', data: bandData.swerving.band, stack: 'sw-b', showMark: false, area: true, color: `rgba(239,83,80,${bandOp('swerving')})`, valueFormatter: () => null },
+                    { id: 'sw', data: sortedData.map(d => d.swerving), label: 'Swerving', showMark: true, highlightScope, color: '#ef5350' },
+                  ] : []),
+
+                  // ---------- ABRUPT STOP ----------
+                  ...(isOn('abruptStop') ? [
+                    { id: 'as-lo', data: bandData.abruptStop.lower, stack: 'as-b', showMark: false, color: `rgba(255,167,38,${bandOp('abruptStop')})`, valueFormatter: () => null },
+                    { id: 'as-hi', data: bandData.abruptStop.band, stack: 'as-b', showMark: false, area: true, color: `rgba(255,167,38,${bandOp('abruptStop')})`, valueFormatter: () => null },
+                    { id: 'as', data: sortedData.map(d => d.abruptStop), label: 'Abrupt Stop', showMark: true, highlightScope, color: '#ffa726' },
+                  ] : []),
+
+                  // ---------- VEHICLES ----------
+                  { id: 'vh-lo', data: bandData.vehicles.lower, stack: 'vh-b', showMark: false, color: `rgba(102,187,106,${bandOp('vehicles')})`, valueFormatter: () => null },
+                  { id: 'vh-hi', data: bandData.vehicles.band, stack: 'vh-b', showMark: false, area: true, color: `rgba(102,187,106,${bandOp('vehicles')})`, valueFormatter: () => null },
+                  { id: 'vh', data: sortedData.map(d => d.vehicles), label: 'Vehicles', showMark: true, highlightScope, color: '#66bb6a' },
+                ]}
+
+                margin={{ left: 48, right: 16, top: 16, bottom: 30 }}
+
+                sx={{
+                  '& .MuiChartsLegend-root': { display: 'none' },
+                  '& .MuiChartsAxis-tickLabel': {
+                    fontFamily: 'Montserrat',
+                    fontSize: '0.7rem',
+                  },
+                }}
+              />
+            </Box>
+
+
+            {/* ===== Vehicle Composition Pie ===== */}
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1.5 }}>
+                Vehicle Composition
+              </Typography>
+
+              <PieChart
+                height={250}
+                series={[{
+                  data: [
+                    { id: 0, value: totalBreakdown.car, label: 'Car', color: '#DF6842' },
+                    { id: 1, value: totalBreakdown.jeepney, label: 'Jeepney', color: '#EFA54D' },
+                    { id: 2, value: totalBreakdown.motorcycle, label: 'Motorcycle', color: '#4669A9' },
+                    { id: 3, value: totalBreakdown.bus, label: 'Bus', color: '#9EBEBD' },
+                    { id: 4, value: totalBreakdown.truck, label: 'Truck', color: '#9b64a4' },
+                  ],
+                }]}
+              />
+
+            </Box>
+
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 }
