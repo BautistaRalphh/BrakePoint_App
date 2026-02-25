@@ -64,6 +64,21 @@
     pointer !important;
 }
 
+.maplibregl-ctrl-geocoder {
+  position:fixed;
+  top: 14px;
+  left: 64px;
+  border-radius:8px;
+}
+
+input[type="search"]::-webkit-search-cancel-button {
+  display: none !important;
+}
+
+.maplibregl-ctrl-geocoder .suggestions {
+  border-radius:8px;
+}
+
 /* ── Polygon creation animations ── */
 @keyframes polygon-toast-in {
   0% {

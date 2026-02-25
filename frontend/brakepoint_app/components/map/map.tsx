@@ -4,10 +4,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ReactDOM from "react-dom/client";
 import maplibregl from "maplibre-gl";
 import MaplibreGeocoder, { MaplibreGeocoderApi, MaplibreGeocoderFeatureResults } from "@maplibre/maplibre-gl-geocoder";
+import { MaplibreTerradrawControl } from "@watergis/maplibre-gl-terradraw";
+import "@watergis/maplibre-gl-terradraw/dist/maplibre-gl-terradraw.css";
 import "@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./map.css";
 import ModeEditIcon from "@mui/icons-material/ModeEdit";
+import CheckIcon from "@mui/icons-material/Check";
+import CloseIcon from "@mui/icons-material/Close";
 import { authFetch } from "@/lib/authFetch";
 
 type MapMode = "explore" | "map" | "heatmap" | "dashboard";
@@ -32,6 +36,13 @@ type DashboardMarker = {
 type CompletedPolygon = {
   points: [number, number][];
   cameraId: number | string | null;
+};
+
+type TerraDrawFeature = {
+  id: string;
+  type: "Feature";
+  geometry: { type: "Polygon"; coordinates: [[number, number][]] };
+  properties?: any;
 };
 
 type MapProps = {
@@ -82,6 +93,62 @@ class ToggleEditButton implements maplibregl.IControl {
       btn.style.backgroundColor = this.isEditMode ? "#e0e4e9ff" : "";
       this.onToggle(this.isEditMode);
     };
+
+    this.container.appendChild(btn);
+    return this.container;
+  }
+
+  onRemove() {
+    this.container?.parentNode?.removeChild(this.container);
+    this.container = null;
+  }
+}
+
+class ConfirmAOIButton implements maplibregl.IControl {
+  private container: HTMLElement | null = null;
+  private onConfirm: () => void;
+
+  constructor(onConfirm: () => void) {
+    this.onConfirm = onConfirm;
+  }
+
+  onAdd() {
+    this.container = document.createElement("div");
+    this.container.className = "maplibregl-ctrl maplibregl-ctrl-group";
+
+    const btn = document.createElement("button");
+    btn.title = "Confirm Area of Interest";
+    ReactDOM.createRoot(btn).render(<CheckIcon sx={{ width: 16 }} />);
+
+    btn.onclick = () => this.onConfirm();
+
+    this.container.appendChild(btn);
+    return this.container;
+  }
+
+  onRemove() {
+    this.container?.parentNode?.removeChild(this.container);
+    this.container = null;
+  }
+}
+
+class CancelAOIButton implements maplibregl.IControl {
+  private container: HTMLElement | null = null;
+  private onCancel: () => void;
+
+  constructor(onCancel: () => void) {
+    this.onCancel = onCancel;
+  }
+
+  onAdd() {
+    this.container = document.createElement("div");
+    this.container.className = "maplibregl-ctrl maplibregl-ctrl-group";
+
+    const btn = document.createElement("button");
+    btn.title = "Cancel Area of Interest";
+    ReactDOM.createRoot(btn).render(<CloseIcon sx={{ width: 16 }} />);
+
+    btn.onclick = () => this.onCancel();
 
     this.container.appendChild(btn);
     return this.container;
@@ -155,8 +222,14 @@ export default function MapView({
   const openDashboardPopupRef = useRef<maplibregl.Popup | null>(null);
   const editControlRef = useRef<ToggleEditButton | null>(null);
   const geocoderControlRef = useRef<MaplibreGeocoder | null>(null);
+  const drawPolygonRef = useRef<MaplibreTerradrawControl | null>(null);
+  const rectIdRef = useRef<string | null>(null);
+  const lockAfterFitRef = useRef(false);
+  const enforcingRef = useRef(false);
 
-  const [pendingGeocoderResult, setPendingGeocoderResult] = useState<any | null>(null);
+  const [boundingBox, setBoundingBox] = useState<[number, number, number, number] | null>(null);
+  const confirmControlRef = useRef<ConfirmAOIButton | null>(null);
+  const cancelControlRef = useRef<CancelAOIButton | null>(null);
 
   const style = "https://tiles.openfreemap.org/styles/liberty";
   const lng = 120.9842;
@@ -377,6 +450,29 @@ export default function MapView({
     openDashboardPopupRef.current = popup;
     entry.marker.togglePopup();
   };
+
+  function rectToBoundingBox(rect: [number, number][]) {
+    let minLng = Infinity,
+      minLat = Infinity,
+      maxLng = -Infinity,
+      maxLat = -Infinity;
+
+    for (const [lng, lat] of rect) {
+      if (lng < minLng) minLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lng > maxLng) maxLng = lng;
+      if (lat > maxLat) maxLat = lat;
+    }
+    return [minLng, minLat, maxLng, maxLat] as [number, number, number, number];
+  }
+
+  function expandBbox(b: [number, number, number, number], pct = 0.05) {
+    const [minLng, minLat, maxLng, maxLat] = b;
+    const dx = (maxLng - minLng) * pct;
+    const dy = (maxLat - minLat) * pct;
+    return [minLng - dx, minLat - dy, maxLng + dx, maxLat + dy] as [number, number, number, number];
+  }
+
   useEffect(() => {
     if (!mapContainer.current) return;
     if (mapRef.current) return;
@@ -420,6 +516,145 @@ export default function MapView({
       if (mode !== "heatmap") removeHeatmapLayers(map);
       if (mode === "heatmap") addHeatmapLayers(map);
 
+      if (mode === "map" || mode === "explore") {
+        if (!geocoderControlRef.current) {
+          const geocoder = new MaplibreGeocoder(geocoderApi, {
+            maplibregl,
+            flyTo: true,
+            marker: false,
+            showResultMarkers: false,
+            showResultsWhileTyping: true,
+            countries: "ph",
+          });
+          map.addControl(geocoder, "top-left");
+          geocoderControlRef.current = geocoder;
+        }
+      } else {
+        if (geocoderControlRef.current) {
+          map.removeControl(geocoderControlRef.current);
+          geocoderControlRef.current = null;
+        }
+      }
+
+      if (mode === "explore") {
+        if (!drawPolygonRef.current) {
+          const drawControl = new MaplibreTerradrawControl({
+            modes: ["select", "delete", "rectangle"],
+            open: true,
+            showDeleteConfirmation: false,
+          });
+
+          map.addControl(drawControl, "bottom-right");
+          drawPolygonRef.current = drawControl;
+
+          const di = drawControl.getTerraDrawInstance();
+
+          if (di) {
+            const enforceSingleRectangle = () => {
+              if (enforcingRef.current) return;
+              enforcingRef.current = true;
+
+              try {
+                const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
+                const polys = snapshot.filter((f) => f?.geometry?.type === "Polygon");
+
+                if (polys.length === 0) {
+                  rectIdRef.current = null;
+                  return;
+                }
+
+                const keep = polys[polys.length - 1];
+                const keepId = String(keep.id);
+
+                for (const f of polys) {
+                  const id = String(f.id);
+                  if (id !== keepId) di.removeFeatures([id]);
+                }
+
+                rectIdRef.current = keepId;
+              } finally {
+                enforcingRef.current = false;
+              }
+            };
+
+            enforceSingleRectangle();
+
+            try {
+              di.on("finish", enforceSingleRectangle);
+            } catch {}
+          }
+
+          if (!confirmControlRef.current) {
+            confirmControlRef.current = new ConfirmAOIButton(() => {
+              const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
+              const polys = snapshot.filter((f) => f?.geometry?.type === "Polygon");
+              if (polys.length === 0) return;
+
+              const rect = rectIdRef.current
+                ? (polys.find((f) => String(f.id) === String(rectIdRef.current)) ?? polys[polys.length - 1])
+                : polys[polys.length - 1];
+
+              const ring = rect.geometry.coordinates[0] as [number, number][];
+              if (!ring || ring.length < 4) return;
+
+              const bbox = rectToBoundingBox(ring);
+
+              if (lockAfterFitRef.current) return;
+              lockAfterFitRef.current = true;
+
+              map.fitBounds(
+                [
+                  [bbox[0], bbox[1]],
+                  [bbox[2], bbox[3]],
+                ],
+                { padding: 40, duration: 50 },
+              );
+
+              map.once("idle", () => {
+                requestAnimationFrame(() => {
+                  const padded = expandBbox(bbox, 0.08);
+                  map.setMaxBounds([
+                    [padded[0], padded[1]],
+                    [padded[2], padded[3]],
+                  ]);
+
+                  lockAfterFitRef.current = false;
+                });
+              });
+
+              di.removeFeatures([rectIdRef.current])
+            });
+
+            map.addControl(confirmControlRef.current, "bottom-right");
+          }
+
+          if (!cancelControlRef.current) {
+            cancelControlRef.current = new CancelAOIButton(() => {
+              if (rectIdRef.current) {
+                di.removeFeatures([rectIdRef.current]);
+                rectIdRef.current = null;
+              }
+            });
+
+            map.addControl(cancelControlRef.current, "bottom-right");
+          }
+        }
+      } else {
+        if (drawPolygonRef.current) {
+          map.removeControl(drawPolygonRef.current);
+          drawPolygonRef.current = null;
+        }
+        if (confirmControlRef.current) {
+          map.removeControl(confirmControlRef.current);
+          confirmControlRef.current = null;
+        }
+        if (cancelControlRef.current) {
+          map.removeControl(cancelControlRef.current);
+          cancelControlRef.current = null;
+        }
+        rectIdRef.current = null;
+      }
+
       if (mode === "map") {
         if (!editControlRef.current) {
           editControlRef.current = new ToggleEditButton((isEdit) => {
@@ -428,19 +663,6 @@ export default function MapView({
           });
           map.addControl(editControlRef.current, "bottom-right");
         }
-
-        if (!geocoderControlRef.current) {
-          const geocoder = new MaplibreGeocoder(geocoderApi, {
-            maplibregl,
-            flyTo: true,
-            marker: false,
-            showResultMarkers:false,
-            showResultsWhileTyping:true,
-            countries: "ph"
-          });
-          map.addControl(geocoder, "top-left");
-          geocoderControlRef.current = geocoder;
-        }
       } else {
         if (editControlRef.current) {
           map.removeControl(editControlRef.current);
@@ -448,11 +670,6 @@ export default function MapView({
         }
         setIsEditMode(false);
         setToolMode("none");
-        
-        if (geocoderControlRef.current) {
-          map.removeControl(geocoderControlRef.current);
-          geocoderControlRef.current = null;
-        }
       }
 
       if (mode !== "map") {
@@ -464,8 +681,17 @@ export default function MapView({
 
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
-
   }, [mode, addHeatmapLayers, removeHeatmapLayers, add3DBuildingsLayer, geocoderApi]);
+
+  useEffect(() => {
+    if (boundingBox && mapRef.current) {
+      const map = mapRef.current;
+      map.fitBounds([
+        [boundingBox[0], boundingBox[1]],
+        [boundingBox[2], boundingBox[3]],
+      ]);
+    }
+  }, [boundingBox]);
 
   useEffect(() => {
     if (!goTo) return;
@@ -929,7 +1155,6 @@ export default function MapView({
         });
       }
 
-      // In-progress fill preview (when ≥ 2 points)
       if (pts.length >= 2) {
         const ring = [...pts, cursor, pts[0]];
         features.push({
@@ -1124,16 +1349,12 @@ export default function MapView({
     setToolMode("none");
   }, []);
 
-  // ---------------------------
-  // Render
-  // ---------------------------
   return (
     <div className="map-wrap">
       <div ref={mapContainer} className="map" />
 
       {isEditMode && mode === "map" && (
         <>
-          {/* ── Toolbar ── */}
           <div
             className="edit-toolbar"
             style={{
@@ -1181,7 +1402,6 @@ export default function MapView({
               </button>
             ))}
 
-            {/* Undo last point — only while drawing */}
             {toolMode === "addPoint" && polygonPoints.length > 0 && (
               <>
                 <div style={{ width: "1px", background: "#d0d0d0", margin: "2px 2px" }} />
@@ -1228,7 +1448,6 @@ export default function MapView({
             )}
           </div>
 
-          {/* ── Contextual hint ── */}
           {toolMode === "addPoint" && (
             <div
               style={{
@@ -1264,7 +1483,6 @@ export default function MapView({
         </>
       )}
 
-      {/* ── Success toast ── */}
       {showSuccessNotification && (
         <div
           style={{

@@ -90,6 +90,8 @@ export default function MapPage() {
   const [selectedFeedId, setSelectedFeedId] = useState<number | null>(null);
   const selectedFeedIdRef = useRef<number | null>(null);
 
+  const [goTo, setGoTo] = useState<[number, number] | null>(null);
+
   const [isEditingName, setIsEditingName] = useState(false);
   const [newFeedName, setNewFeedName] = useState("");
 
@@ -130,8 +132,11 @@ export default function MapPage() {
 
         if (response.ok) {
           const data = await response.json();
+          
           if (data.success && data.cameras) {
-            const camera = data.cameras.find((cam: any) => cam.id === selectedFeedId);
+            const cameraId = Number(selectedFeedId);
+            
+            const camera = data.cameras.find((cam: any) => cam.id === cameraId);
             if (camera) {
               setSelectedFeedData({
                 id: camera.id,
@@ -147,6 +152,8 @@ export default function MapPage() {
                 signClasses: camera.sign_classes || [],
                 jeepneyHotspot: camera.latest_video?.jeepney_hotspot || false,
               });
+
+              setGoTo([camera.lng, camera.lat]);
             }
           }
         } else {
@@ -586,7 +593,7 @@ export default function MapPage() {
           onCamerasLoaded={handleCamerasLoaded}
           selectedCameraId={selectedFeedId}
           refreshTrigger={camerasRefreshTrigger}
-          goTo={undefined}
+          goTo={goTo}
           onMapReady={handleMapReady}
         />
       </Box>
