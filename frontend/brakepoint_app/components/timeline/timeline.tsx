@@ -239,6 +239,14 @@ useEffect(() => {
     vehicles: computeStats(sortedData.map(d => d.vehicles)),
   }), [sortedData]);
 
+  const vehicleStats = useMemo(() => [
+    { label: 'Car', value: totalBreakdown.car, color: '#DF6842' },
+    { label: 'Jeepney', value: totalBreakdown.jeepney, color: '#EFA54D' },
+    { label: 'Motorcycle', value: totalBreakdown.motorcycle, color: '#4669A9' },
+    { label: 'Bus', value: totalBreakdown.bus, color: '#9EBEBD' },
+    { label: 'Truck', value: totalBreakdown.truck, color: '#9b64a4' },
+  ], [totalBreakdown]);
+
   const bandData = useMemo(() => {
     const build = (key: MetricKey) => {
       const stats = statistics[key];
@@ -352,7 +360,8 @@ useEffect(() => {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            //gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md:'repeat(4, 1fr)' },
             gap: 1.5,
             mb: 2.5,
           }}
@@ -459,21 +468,56 @@ useEffect(() => {
                 Vehicle Composition
               </Typography>
 
+              {/* Vehicle stat cards */}
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' },
+                gap: 1.25,
+                width: '100%',
+                mt: 2
+              }}
+            >
+              {vehicleStats.map(({ label, value, color }) => (
+                <Box
+                  key={label}
+                  sx={{
+                    p: 1.25,
+                    borderRadius: '12px',
+                    bgcolor: `${color}10`,
+                    border: `1px solid ${color}40`,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: color }} />
+                    <Typography sx={{ fontWeight: 600, fontSize: '0.85rem', color: '#1d1f3f' }}>
+                      {label}
+                    </Typography>
+                  </Box>
+
+                  <Typography sx={{ fontWeight: 700, fontSize: '0.9rem' }}>
+                    {value}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+
               <PieChart
                 height={250}
-                sx={{minWidth: 0}}
+                sx={{ mt: 2.5, '& .MuiChartsLegend-root': { display: 'none' } }}
                 series={[{
-                  data: [
-                    { id: 0, value: totalBreakdown.car, label: 'Car', color: '#DF6842' },
-                    { id: 1, value: totalBreakdown.jeepney, label: 'Jeepney', color: '#EFA54D' },
-                    { id: 2, value: totalBreakdown.motorcycle, label: 'Motorcycle', color: '#4669A9' },
-                    { id: 3, value: totalBreakdown.bus, label: 'Bus', color: '#9EBEBD' },
-                    { id: 4, value: totalBreakdown.truck, label: 'Truck', color: '#9b64a4' },
-                  ],
+                  data: vehicleStats.map((v, i) => ({
+                    id: i,
+                    value: v.value,
+                    label: v.label,
+                    color: v.color
+                  }))
                 }]}
               />
             </Box>
-
 
             {/* ===== Timeline Line Chart ===== */}
             <Box 
@@ -486,7 +530,7 @@ useEffect(() => {
               </Typography>
 
               <LineChart
-                height={300}
+                height={400}
                 xAxis={[{
                   data: sortedData.map(d => d.date),
                   scaleType: 'time',
