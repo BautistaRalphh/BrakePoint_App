@@ -13,6 +13,15 @@ import ModeEditIcon from "@mui/icons-material/ModeEdit";
 import CheckIcon from "@mui/icons-material/Check";
 import CloseIcon from "@mui/icons-material/Close";
 import { authFetch } from "@/lib/authFetch";
+import {
+  TerraDraw,
+  TerraDrawLineStringMode,
+  TerraDrawPointMode,
+  TerraDrawPolygonMode,
+  TerraDrawRectangleMode,
+  TerraDrawSelectMode,
+} from "terra-draw";
+import { TerraDrawBaseSelectMode } from "terra-draw/dist/extend";
 
 type MapMode = "explore" | "map" | "heatmap" | "dashboard";
 type ToolMode = "none" | "addCamera" | "removeCamera" | "addPoint" | "removePoint" | "assignCamera";
@@ -542,6 +551,40 @@ export default function MapView({
             modes: ["select", "delete", "rectangle"],
             open: true,
             showDeleteConfirmation: false,
+            modeOptions: {
+              rectangle: new TerraDrawRectangleMode({
+                styles: {
+                  fillColor: "#1d1f3f",
+                  fillOpacity: 0.22,
+                  outlineColor: "#1d1f3f",
+                  outlineWidth: 2,
+                },
+              }),
+              select: new TerraDrawSelectMode({
+                styles: {
+                  selectedPolygonColor: "#1d1f3f",
+                  selectedPolygonFillOpacity: 0.7,
+                  selectedPolygonOutlineColor: "#1d1f3f",
+                  selectedPolygonOutlineWidth: 5,
+                  selectionPointColor: "#1d1f3f",
+                  selectionPointOutlineColor: "#1d1f3f",
+                },
+                flags: {
+                  rectangle: {
+                    feature: {
+                      draggable: false,
+                      scaleable: true,
+                      coordinates: {
+                        midpoints: false,
+                        draggable: true,
+                        deletable: false,
+                        resizable: "opposite",
+                      },
+                    },
+                  },
+                },
+              }),
+            },
           });
 
           map.addControl(drawControl, "bottom-right");
@@ -581,6 +624,9 @@ export default function MapView({
 
             try {
               di.on("finish", enforceSingleRectangle);
+            } catch {}
+            try {
+              di.on("change", enforceSingleRectangle);
             } catch {}
           }
 
@@ -622,7 +668,7 @@ export default function MapView({
                 });
               });
 
-              di.removeFeatures([rectIdRef.current])
+              di.removeFeatures([rectIdRef.current]);
             });
 
             map.addControl(confirmControlRef.current, "bottom-right");
