@@ -11,6 +11,11 @@
   height:100%;
 }
 
+.lc-container:hover {
+  transform: translateY(-6px); /* move up */
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12); /* optional nice lift effect */
+}
+
 .lc-header {
   display: flex;
   flex-direction: row;

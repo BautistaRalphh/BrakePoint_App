@@ -122,7 +122,35 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
     }
   }, [cameraIdsKey, startDate, endDate]);
 
-  useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
+  //useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
+
+  // FOR TESTING
+  const USE_MOCK = true;
+  useEffect(() => {
+    if (USE_MOCK) return;
+    fetchTimeline();
+  }, [fetchTimeline]);
+
+  useEffect(() => {
+    if (!USE_MOCK) return;
+
+    const today = new Date();
+
+    const mock: TimelineRow[] = Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() - (13 - i));
+
+      return {
+        date: d,
+        speeding: Math.floor(Math.random() * 20),
+        swerving: Math.floor(Math.random() * 15),
+        abruptStop: Math.floor(Math.random() * 10),
+        vehicles: Math.floor(Math.random() * 200) + 50,
+      };
+    });
+
+    setRows(mock);
+  }, []);
 
   // --- derived data ---
   const sortedData = useMemo(
@@ -220,7 +248,7 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
           size="small"
           sx={{ flexWrap: 'wrap', gap: 0.5 }}
         >
-          {METRIC_CFG.map(({ key, label, color }) => (
+          {METRIC_CFG.filter(c => c.key !== 'vehicles').map(({ key, label, color }) => (
             <ToggleButton
               key={key}
               value={key}
@@ -255,35 +283,36 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
             mb: 2.5,
           }}
         >
-          {selectedMetrics.map((m) => {
-            const cfg = METRIC_CFG.find(c => c.key === m)!;
-            const s = statistics[m as MetricKey];
+          {METRIC_CFG.map(({ key, label, color }) => {
+            const s = statistics[key as MetricKey];
             if (!s || s.mean == null) return null;
+            const isVisible = key === 'vehicles' || isOn(key);
+            if (!isVisible) return null;
+
             return (
               <Box
-                key={m}
+                key={key}
                 sx={{
                   p: 1.5,
                   borderRadius: '12px',
-                  border: `1.5px solid ${cfg.color}40`,
-                  bgcolor: `${cfg.color}08`,
+                  border: `1.5px solid ${color}40`,
+                  bgcolor: `${color}08`,
                 }}
               >
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: cfg.color }} />
-                  <Typography variant="caption" sx={{ fontWeight: 700, color: '#1d1f3f' }}>
-                    {cfg.label}
+                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: color }} />
+                  <Typography variant="caption" sx={{ fontSize: '0.85rem', fontWeight: 700, color: '#1d1f3f' }}>
+                    {label}
                   </Typography>
                 </Box>
-                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+                <Box sx={{ display: 'flex', gap: 2, justifyContent: 'space-between', alignItems: 'center' }}>
                   {([
-                    ['Mean', s.mean.toFixed(1)],
-                    ['Std', `\u00B1${s.std!.toFixed(1)}`],
-                    ['Min', s.min],
-                    ['Max', s.max],
+                    ['Mean', (Math.floor(s.mean)).toFixed(0)],
+                    ['Std', `\u00B1${(Math.ceil(s.std!)).toFixed(0)}`],
+                    ['Range', `${s.min} - ${s.max}`],
                   ] as [string, string | number][]).map(([lbl, val]) => (
                     <Box key={lbl}>
-                      <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>{lbl}</Typography>
+                      <Typography variant="caption" sx={{ fontSize: '0.8rem' }}>{lbl}</Typography>
                       <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{val}</Typography>
                     </Box>
                   ))}
@@ -355,12 +384,10 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
                 valueFormatter: (v: number | null) => v == null ? 'No data' : v.toString() },
             ] : []),
             // ---------- vehicles ----------
-            ...(isOn('vehicles') ? [
               { id: 'vh-lo', data: bandData.vehicles.lower, stack: 'vh-b', showMark: false, color: `rgba(102,187,106,${bandOp('vehicles')})`, valueFormatter: () => null },
               { id: 'vh-hi', data: bandData.vehicles.band,  stack: 'vh-b', showMark: false, area: true, color: `rgba(102,187,106,${bandOp('vehicles')})`, valueFormatter: () => null },
               { id: 'vh', data: sortedData.map(d => d.vehicles), label: 'Vehicles', connectNulls: false, showMark: true, highlightScope, color: '#66bb6a',
                 valueFormatter: (v: number | null) => v == null ? 'No data' : v.toString() },
-            ] : []),
           ]}
           height={280}
           margin={{ left: 48, right: 16, top: 16, bottom: 30 }}
