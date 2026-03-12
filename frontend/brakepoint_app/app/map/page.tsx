@@ -620,6 +620,7 @@ export default function MapPage() {
         selectedCameraId={selectedFeedId}
         refreshTrigger={camerasRefreshTrigger}
         goTo={undefined}
+        showMapillarySigns
       />
       <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>
         {allFeeds.length === 0 ? (

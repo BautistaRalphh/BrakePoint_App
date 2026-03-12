@@ -14,6 +14,15 @@ import CheckIcon from "@mui/icons-material/Check";
 import CloseIcon from "@mui/icons-material/Close";
 import { authFetch } from "@/lib/authFetch";
 import {
+  MAPILLARY_SOURCE_ID,
+  MAPILLARY_LAYER_ID,
+  mapillaryTileUrl,
+  buildMapillaryFilter,
+  buildIconImageExpression,
+  loadSignImages,
+  resolveBrakePointClass,
+} from "@/lib/mapillary";
+import {
   TerraDraw,
   TerraDrawLineStringMode,
   TerraDrawPointMode,
@@ -68,6 +77,8 @@ type MapProps = {
 
   refreshTrigger: number;
   goTo?: [number, number] | null;
+
+  showMapillarySigns?: boolean;
 
   onMapReady?: (map: maplibregl.Map) => void;
 };
@@ -204,6 +215,7 @@ export default function MapView({
   selectedCameraId,
   refreshTrigger,
   goTo,
+  showMapillarySigns = true,
   onMapReady,
 }: MapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
@@ -728,6 +740,78 @@ export default function MapView({
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
   }, [mode, addHeatmapLayers, removeHeatmapLayers, add3DBuildingsLayer, geocoderApi]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const token = process.env.NEXT_PUBLIC_MAPILLARY_TOKEN;
+
+    const apply = () => {
+      if (showMapillarySigns && token) {
+        if (!map.getSource(MAPILLARY_SOURCE_ID)) {
+          map.addSource(MAPILLARY_SOURCE_ID, {
+            type: "vector",
+            tiles: [mapillaryTileUrl(token)],
+            minzoom: 14,
+            maxzoom: 14,
+          });
+        }
+
+        if (!map.getLayer(MAPILLARY_LAYER_ID)) {
+
+          loadSignImages(map, token).then(() => {
+            if (map.getLayer(MAPILLARY_LAYER_ID)) return;
+            map.addLayer({
+              id: MAPILLARY_LAYER_ID,
+              type: "symbol",
+              source: MAPILLARY_SOURCE_ID,
+              "source-layer": "traffic_sign",
+              minzoom: 14,
+              filter: buildMapillaryFilter() as any,
+              layout: {
+                "icon-image": buildIconImageExpression() as any,
+                "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.28, 18, 0.7],
+                "icon-allow-overlap": true,
+                "icon-ignore-placement": true,
+              },
+            });
+
+            // Popup on click
+            map.on("click", MAPILLARY_LAYER_ID, (e: any) => {
+              const feature = e.features?.[0];
+              if (!feature) return;
+              const val = feature.properties?.value ?? "";
+              const cls = resolveBrakePointClass(val) ?? val;
+              new maplibregl.Popup({ offset: 10, closeButton: false })
+                .setLngLat(e.lngLat)
+                .setHTML(
+                  `<div style="font-family:Montserrat,sans-serif;padding:4px 2px">` +
+                    `<strong style="font-size:13px">${cls}</strong>` +
+                    `<br/><span style="font-size:11px;color:#666">${val}</span>` +
+                  `</div>`,
+                )
+                .addTo(map);
+            });
+
+            // Pointer cursor
+            map.on("mouseenter", MAPILLARY_LAYER_ID, () => {
+              map.getCanvas().style.cursor = "pointer";
+            });
+            map.on("mouseleave", MAPILLARY_LAYER_ID, () => {
+              map.getCanvas().style.cursor = "";
+            });
+          });
+        }
+      } else {
+        if (map.getLayer(MAPILLARY_LAYER_ID)) map.removeLayer(MAPILLARY_LAYER_ID);
+        if (map.getSource(MAPILLARY_SOURCE_ID)) map.removeSource(MAPILLARY_SOURCE_ID);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [showMapillarySigns]);
 
   useEffect(() => {
     if (boundingBox && mapRef.current) {
