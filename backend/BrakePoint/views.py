@@ -790,6 +790,17 @@ def behavior_timeline_api(request):
         .order_by('date')
     )
 
+    # Build per-date vehicle breakdown from the JSONField
+    date_breakdowns: dict[str, dict[str, int]] = {}
+    for vid in qs.annotate(date=TruncDate('uploaded_at')).values('date', 'vehicle_breakdown'):
+        d_iso = vid['date'].isoformat()
+        vb = vid['vehicle_breakdown']
+        if not isinstance(vb, dict):
+            continue
+        entry = date_breakdowns.setdefault(d_iso, {})
+        for k, v in vb.items():
+            entry[k] = entry.get(k, 0) + (v if isinstance(v, int) else 0)
+
     data = [
         {
             'date': row['date'].isoformat(),
@@ -797,6 +808,7 @@ def behavior_timeline_api(request):
             'swerving': row['swerving'] or 0,
             'abrupt_stopping': row['abrupt_stopping'] or 0,
             'vehicles': row['vehicles'] or 0,
+            'breakdown': date_breakdowns.get(row['date'].isoformat(), {}),
         }
         for row in rows
     ]

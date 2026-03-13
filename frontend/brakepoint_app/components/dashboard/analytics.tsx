@@ -99,7 +99,7 @@ export default function Analytics() {
   }, [startDate, endDate]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
-  useEffect(() => { router.prefetch("/map"); }, [router]);
+  useEffect(() => { router.prefetch("/map"); router.prefetch("/monitoring"); }, [router]);
 
   // Collect all unique tags across cameras
   const allTags = useMemo(() => {

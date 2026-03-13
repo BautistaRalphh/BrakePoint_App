@@ -122,6 +122,13 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
             swerving: r.swerving ?? null,
             abruptStop: r.abrupt_stopping ?? null,
             vehicles: r.vehicles ?? null,
+            breakdown: {
+              car: (r.breakdown?.car ?? 0) + (r.breakdown?.Car ?? 0),
+              jeepney: (r.breakdown?.jeepney ?? 0) + (r.breakdown?.Jeepney ?? 0),
+              motorcycle: (r.breakdown?.motorcycle ?? 0) + (r.breakdown?.Motorcycle ?? 0),
+              bus: (r.breakdown?.bus ?? 0) + (r.breakdown?.Bus ?? 0),
+              truck: (r.breakdown?.truck ?? 0) + (r.breakdown?.Truck ?? 0),
+            },
           })),
         );
       } else {
@@ -135,76 +142,7 @@ export default function Timeline({ cameraIds = [] }: TimelineProps) {
     }
   }, [cameraIdsKey, startDate, endDate]);
 
-  //useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
-
-  // FOR TESTING
-  const USE_MOCK = true;
-  useEffect(() => {
-    if (USE_MOCK) return;
-    fetchTimeline();
-  }, [fetchTimeline]);
-
-useEffect(() => {
-  if (!USE_MOCK) return;
-  if (!startDate || !endDate) return;
-
-  const start = startDate.toDate();
-  const end = endDate.toDate();
-
-  const dayCount =
-    Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-
-  const mock: TimelineRow[] = Array.from({ length: dayCount }, (_, i) => {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-
-    const noData = Math.random() < 0.25;
-
-    if (noData) {
-      return {
-        date: d,
-        speeding: null,
-        swerving: null,
-        abruptStop: null,
-        vehicles: null,
-        breakdown: {
-          car: 0,
-          jeepney: 0,
-          motorcycle: 0,
-          bus: 0,
-          truck: 0,
-        },
-      };
-    }
-
-    // Otherwise generate normal data
-    const breakdown = {
-      car: Math.floor(Math.random() * 120) + 40,
-      jeepney: Math.floor(Math.random() * 40),
-      motorcycle: Math.floor(Math.random() * 80) + 20,
-      bus: Math.floor(Math.random() * 15),
-      truck: Math.floor(Math.random() * 25),
-    };
-
-    const total =
-      breakdown.car +
-      breakdown.jeepney +
-      breakdown.motorcycle +
-      breakdown.bus +
-      breakdown.truck;
-
-    return {
-      date: d,
-      speeding: Math.floor(Math.random() * 20),
-      swerving: Math.floor(Math.random() * 15),
-      abruptStop: Math.floor(Math.random() * 10),
-      vehicles: total,
-      breakdown,
-    };
-  });
-
-  setRows(mock);
-}, [startDate, endDate]);
+  useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
     // --- derived data ---
     const sortedData = useMemo(
       () => [...rows].sort((a, b) => a.date.getTime() - b.date.getTime()),
