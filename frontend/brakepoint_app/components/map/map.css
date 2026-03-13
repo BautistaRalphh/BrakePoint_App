@@ -6,49 +6,33 @@
 
 .map {
   position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
 }
 
-.dash-marker {
-  cursor: pointer;
+/* -------------------------------------------------------------------------- */
+/* MapLibre / Geocoder                                                        */
+/* -------------------------------------------------------------------------- */
+
+.maplibregl-ctrl-geocoder {
+  position: fixed;
+  top: 14px;
+  left: 64px;
+  border-radius: 8px;
 }
-.dash-marker__pin {
-  position: relative;
-  width: auto;
-  height: 34px;
-   padding: 0 12px; 
-  border-radius: 999px;
-  background: #161b4c;
-  border: 2px solid #fff;
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
-  display: flex;
-  place-items: center;
+
+.maplibregl-ctrl-geocoder .suggestions {
+  border-radius: 8px;
 }
-.dash-marker__pin::after {
-  content: "";
-  position: absolute;
-  bottom: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-left: 7px solid transparent;
-  border-right: 7px solid transparent;
-  border-top: 10px solid #161b4c;
-  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.2));
+
+input[type="search"]::-webkit-search-cancel-button {
+  display: none !important;
 }
-.dash-marker__label {
-  color: #fff;
-  font-weight: 700;
-  font-size: 12px;
-  line-height: 1;
-  padding: 0 6px;
-  max-width: none;
-  overflow: visible;
-  text-overflow: unset;
-  white-space: nowrap;
-}
+
+/* -------------------------------------------------------------------------- */
+/* Cursor modes                                                               */
+/* -------------------------------------------------------------------------- */
 
 .map-crosshair {
   cursor:
@@ -64,22 +48,273 @@
     pointer !important;
 }
 
-.maplibregl-ctrl-geocoder {
-  position:fixed;
-  top: 14px;
-  left: 64px;
-  border-radius:8px;
+/* -------------------------------------------------------------------------- */
+/* Dashboard markers                                                          */
+/* -------------------------------------------------------------------------- */
+
+.dash-marker {
+  cursor: pointer;
 }
 
-input[type="search"]::-webkit-search-cancel-button {
-  display: none !important;
+.dash-marker__pin {
+  position: relative;
+  display: flex;
+  place-items: center;
+  width: auto;
+  height: 34px;
+  padding: 0 12px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #161b4c;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
 }
 
-.maplibregl-ctrl-geocoder .suggestions {
-  border-radius:8px;
+.dash-marker__pin::after {
+  content: "";
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-top: 10px solid #161b4c;
+  border-right: 7px solid transparent;
+  border-left: 7px solid transparent;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.2));
 }
 
-/* ── Polygon creation animations ── */
+.dash-marker__label {
+  max-width: none;
+  overflow: visible;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  text-overflow: unset;
+  padding: 0 6px;
+}
+
+.dash-popup {
+  width: 320px;
+}
+
+.dash-popup__content {
+  padding: 12px;
+}
+
+.dash-popup__title {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.dash-popup__body {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.dash-popup__coords {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shared floating UI                                                         */
+/* -------------------------------------------------------------------------- */
+
+.explore-toolbar-row,
+.edit-toolbar,
+.explore-status,
+.explore-error,
+.map-hint,
+.map-toast,
+.assign-camera-banner {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: Montserrat, sans-serif;
+}
+
+.explore-toolbar-row {
+  top: 12px;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.explore-toolbar,
+.edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(8px);
+}
+
+.explore-toolbar {
+  flex-wrap: wrap;
+}
+
+.explore-toolbar--secondary {
+  max-width: 520px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+}
+
+.edit-toolbar {
+  top: 12px;
+  z-index: 1200;
+  justify-content: center;
+}
+
+.explore-toolbar__label {
+  color: #1d1f3f;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Buttons                                                                    */
+/* -------------------------------------------------------------------------- */
+
+.explore-toolbar__btn,
+.edit-toolbar__btn,
+.polygon-modal__btn {
+  border-radius: 8px;
+  font-family: Montserrat, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.explore-toolbar__btn {
+  padding: 7px 12px;
+  background: #fff;
+}
+
+.explore-toolbar__btn--neutral {
+  border: 1px solid #d0d0d0;
+  color: #333;
+}
+
+.explore-toolbar__btn--primary {
+  border: none;
+  background: #1d1f3f;
+  color: #fff;
+}
+
+.explore-toolbar__btn--outline {
+  border: 1px solid #1d1f3f;
+  color: #1d1f3f;
+}
+
+.explore-toolbar__btn--sub {
+  border: 1px solid #1d4ed8;
+  color: #1d4ed8;
+}
+
+.explore-toolbar__btn--danger {
+  border: 1px solid #ef4444;
+  color: #ef4444;
+}
+
+.edit-toolbar__btn {
+  padding: 7px 14px;
+  border: 1px solid #d0d0d0;
+  background: transparent;
+  color: #333;
+  letter-spacing: 0.2px;
+}
+
+.edit-toolbar__btn.is-active {
+  border-color: transparent;
+  color: #fff;
+}
+
+.edit-toolbar__btn--addCamera.is-active,
+.edit-toolbar__btn--addPoint.is-active {
+  background: #1d1f3f;
+}
+
+.edit-toolbar__btn--removeCamera.is-active,
+.edit-toolbar__btn--removePoint.is-active {
+  background: #f44336;
+}
+
+.edit-toolbar__btn--undo {
+  padding: 7px 12px;
+  border: 1px solid #f57c00;
+  color: #f57c00;
+}
+
+.edit-toolbar__btn--clear {
+  padding: 7px 12px;
+  border: 1px solid #f44336;
+  color: #f44336;
+}
+
+.edit-toolbar__divider {
+  width: 1px;
+  margin: 2px;
+  background: #d0d0d0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Status / hints / errors                                                    */
+/* -------------------------------------------------------------------------- */
+
+.explore-status,
+.map-hint {
+  z-index: 1190;
+  padding: 8px 18px;
+  border-radius: 10px;
+  background: rgba(29, 31, 63, 0.82);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(6px);
+}
+
+.explore-status {
+  top: 76px;
+  padding-inline: 16px;
+}
+
+.map-hint {
+  top: 62px;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.map-hint__accent {
+  color: #81c784;
+  font-weight: 700;
+}
+
+.explore-error {
+  top: 120px;
+  z-index: 1190;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Toasts / banners                                                           */
+/* -------------------------------------------------------------------------- */
+
 @keyframes polygon-toast-in {
   0% {
     opacity: 0;
@@ -99,4 +334,97 @@ input[type="search"]::-webkit-search-cancel-button {
   50% {
     box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
   }
+}
+
+.map-toast {
+  top: 62px;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  animation: polygon-toast-in 0.25s ease;
+}
+
+.map-toast--success {
+  background: #4caf50;
+  box-shadow: 0 4px 14px rgba(76, 175, 80, 0.35);
+}
+
+.map-toast__icon {
+  font-size: 18px;
+}
+
+.assign-camera-banner {
+  top: 20px;
+  z-index: 2000;
+  padding: 14px 24px;
+  border-radius: 12px;
+  background: rgba(29, 31, 63, 0.85);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(6px);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Polygon modal                                                              */
+/* -------------------------------------------------------------------------- */
+
+.polygon-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2000;
+  min-width: 280px;
+  padding: 28px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  transform: translate(-50%, -50%);
+  font-family: Montserrat, sans-serif;
+}
+
+.polygon-modal__title {
+  margin: 0 0 18px;
+  color: #1d1f3f;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.polygon-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.polygon-modal__btn {
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.polygon-modal__btn--primary {
+  border: none;
+  background: #1d1f3f;
+  color: #fff;
+}
+
+.polygon-modal__btn--danger {
+  border: none;
+  background: #f44336;
+  color: #fff;
+}
+
+.polygon-modal__btn--ghost {
+  border: 1px solid #d0d0d0;
+  background: transparent;
+  color: #666;
 }

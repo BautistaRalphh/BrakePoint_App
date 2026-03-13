@@ -39,17 +39,8 @@ export default function MenuBar({ activeView = "analytics", onViewChange }: Menu
           Analytics
         </Button>
 
-        <Button
-          className={styles.menuButton}
-          startIcon={<EditIcon />}
-          onClick={() => onViewChange?.("edit")}
-          sx={activeView === "edit" ? { bgcolor: "rgba(255,255,255,0.1) !important" } : {}}
-        >
-          Edit
-        </Button>
-
-        <Button className={styles.menuButton} startIcon={<MapIcon />} onClick={() => router.push('/mapper')}>
-          Map
+        <Button className={styles.menuButton} startIcon={<MapIcon />} onClick={() => router.push('/explore')}>
+          Explore
         </Button>
 
         <Button className={styles.menuButton} startIcon={<LogoutIcon />} onClick={handleSignOut}>

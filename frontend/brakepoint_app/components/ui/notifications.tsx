@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { IconButton, Box, Badge, Menu, MenuItem, Snackbar, Alert, Typography, LinearProgress } from "@mui/material";
 
 import NotificationsIcon from "@mui/icons-material/Notifications";
@@ -9,9 +10,13 @@ import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 import { useNotifications } from "@/contexts/NotificationContext";
 
 export default function Notification() {
+  const pathname = usePathname();
   const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
-
   const { notifications, markAsRead, clearAll, unreadCount, toast, hideToast } = useNotifications();
+
+  if (pathname === "/home") {
+    return null;
+  }
 
   const handleNotificationClick = (event: React.MouseEvent<HTMLElement>) => {
     setNotificationAnchor(event.currentTarget);

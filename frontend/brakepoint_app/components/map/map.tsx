@@ -1,17 +1,23 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import maplibregl from "maplibre-gl";
-import MaplibreGeocoder, { MaplibreGeocoderApi, MaplibreGeocoderFeatureResults } from "@maplibre/maplibre-gl-geocoder";
+import MaplibreGeocoder, {
+  MaplibreGeocoderApi,
+  MaplibreGeocoderFeatureResults,
+} from "@maplibre/maplibre-gl-geocoder";
 import { MaplibreTerradrawControl } from "@watergis/maplibre-gl-terradraw";
+
 import "@watergis/maplibre-gl-terradraw/dist/maplibre-gl-terradraw.css";
 import "@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./map.css";
+
 import ModeEditIcon from "@mui/icons-material/ModeEdit";
 import CheckIcon from "@mui/icons-material/Check";
 import CloseIcon from "@mui/icons-material/Close";
+
 import { authFetch } from "@/lib/authFetch";
 import {
   MAPILLARY_SOURCE_ID,
@@ -22,18 +28,15 @@ import {
   loadSignImages,
   resolveBrakePointClass,
 } from "@/lib/mapillary";
-import {
-  TerraDraw,
-  TerraDrawLineStringMode,
-  TerraDrawPointMode,
-  TerraDrawPolygonMode,
-  TerraDrawRectangleMode,
-  TerraDrawSelectMode,
-} from "terra-draw";
-import { TerraDrawBaseSelectMode } from "terra-draw/dist/extend";
 
 type MapMode = "explore" | "map" | "heatmap" | "dashboard";
-type ToolMode = "none" | "addCamera" | "removeCamera" | "addPoint" | "removePoint" | "assignCamera";
+type ToolMode =
+  | "none"
+  | "addCamera"
+  | "removeCamera"
+  | "addPoint"
+  | "removePoint"
+  | "assignCamera";
 
 type Camera = {
   id: number | string;
@@ -59,9 +62,31 @@ type CompletedPolygon = {
 type TerraDrawFeature = {
   id: string;
   type: "Feature";
-  geometry: { type: "Polygon"; coordinates: [[number, number][]] };
-  properties?: any;
+  geometry: {
+    type: "Polygon";
+    coordinates: [[number, number][]];
+  };
+  properties: {
+    mode: "rectangle";
+    selected?: boolean;
+    [key: string]: any;
+  };
 };
+
+type FocusArea = {
+  kind: "primary" | "sub";
+  label: string;
+  ring: [number, number][];
+  bbox: [number, number, number, number];
+  paddedBbox: [number, number, number, number];
+  minZoom: number;
+};
+
+type ExplorePhase =
+  | "idle"
+  | "drawing-primary"
+  | "locked-primary"
+  | "drawing-sub";
 
 type MapProps = {
   mode: MapMode;
@@ -70,7 +95,12 @@ type MapProps = {
   onDashboardMarkerClick?: (id: DashboardMarker["id"]) => void;
 
   onCameraClick?: (cameraId: Camera["id"]) => void;
-  onCameraAdd?: (cameraId: Camera["id"], lat: number, lng: number, camera: Camera) => void;
+  onCameraAdd?: (
+    cameraId: Camera["id"],
+    lat: number,
+    lng: number,
+    camera: Camera
+  ) => void;
   onVisibleCamerasChange?: (visibleCameraIds: Camera["id"][]) => void;
   onCamerasLoaded?: (cameras: Camera[]) => void;
   selectedCameraId?: Camera["id"] | null;
@@ -79,8 +109,23 @@ type MapProps = {
   goTo?: [number, number] | null;
 
   showMapillarySigns?: boolean;
-
   onMapReady?: (map: maplibregl.Map) => void;
+};
+
+type DashMarkerEntry = {
+  marker: maplibregl.Marker;
+  popup?: maplibregl.Popup;
+  popupRoot?: ReactDOM.Root;
+  el: HTMLElement;
+  labelEl: HTMLElement;
+};
+
+type CameraMarkerEntry = {
+  id: number | string;
+  marker: maplibregl.Marker;
+  lat: number;
+  lng: number;
+  element: HTMLElement;
 };
 
 function useLatestRef<T>(value: T) {
@@ -89,6 +134,81 @@ function useLatestRef<T>(value: T) {
     ref.current = value;
   }, [value]);
   return ref;
+}
+
+function ensureClosedRing(points: [number, number][]) {
+  if (points.length < 3) return points;
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) return points;
+  return [...points, first];
+}
+
+function rectToBoundingBox(rect: [number, number][]) {
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+
+  for (const [lng, lat] of rect) {
+    if (lng < minLng) minLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lng > maxLng) maxLng = lng;
+    if (lat > maxLat) maxLat = lat;
+  }
+
+  return [minLng, minLat, maxLng, maxLat] as [
+    number,
+    number,
+    number,
+    number
+  ];
+}
+
+function expandBbox(
+  bbox: [number, number, number, number],
+  pct = 0.05
+): [number, number, number, number] {
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const dx = (maxLng - minLng) * pct;
+  const dy = (maxLat - minLat) * pct;
+  return [minLng - dx, minLat - dy, maxLng + dx, maxLat + dy];
+}
+
+function bboxToBoundsLike(
+  bbox: [number, number, number, number]
+): maplibregl.LngLatBoundsLike {
+  return [
+    [bbox[0], bbox[1]],
+    [bbox[2], bbox[3]],
+  ];
+}
+
+function bboxContains(
+  outer: [number, number, number, number],
+  inner: [number, number, number, number]
+) {
+  return (
+    inner[0] >= outer[0] &&
+    inner[1] >= outer[1] &&
+    inner[2] <= outer[2] &&
+    inner[3] <= outer[3]
+  );
+}
+
+function bboxCenter(bbox: [number, number, number, number]): [number, number] {
+  return [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
+}
+
+function disableRotationInteractions(map: maplibregl.Map) {
+  map.dragRotate.disable();
+  map.touchPitch.disable();
+  map.touchZoomRotate.disableRotation();
+  map.keyboard.disable();
+  map.doubleClickZoom.enable();
+  map.scrollZoom.enable();
+  map.boxZoom.enable();
+  map.dragPan.enable();
 }
 
 class ToggleEditButton implements maplibregl.IControl {
@@ -180,28 +300,32 @@ class CancelAOIButton implements maplibregl.IControl {
   }
 }
 
-type DashMarkerEntry = {
-  marker: maplibregl.Marker;
-  popup?: maplibregl.Popup;
-  popupRoot?: ReactDOM.Root;
-  el: HTMLElement;
-  labelEl: HTMLElement;
-};
+class EditAOIButton implements maplibregl.IControl {
+  private container: HTMLElement | null = null;
+  private onEdit: () => void;
 
-type CameraMarkerEntry = {
-  id: number | string;
-  marker: maplibregl.Marker;
-  lat: number;
-  lng: number;
-  element: HTMLElement;
-};
+  constructor(onEdit: () => void) {
+    this.onEdit = onEdit;
+  }
 
-function ensureClosedRing(points: [number, number][]) {
-  if (points.length < 3) return points;
-  const first = points[0];
-  const last = points[points.length - 1];
-  if (first[0] === last[0] && first[1] === last[1]) return points;
-  return [...points, first];
+  onAdd() {
+    this.container = document.createElement("div");
+    this.container.className = "maplibregl-ctrl maplibregl-ctrl-group";
+
+    const btn = document.createElement("button");
+    btn.title = "Edit Area of Interest";
+    ReactDOM.createRoot(btn).render(<ModeEditIcon sx={{ width: 16 }} />);
+
+    btn.onclick = () => this.onEdit();
+
+    this.container.appendChild(btn);
+    return this.container;
+  }
+
+  onRemove() {
+    this.container?.parentNode?.removeChild(this.container);
+    this.container = null;
+  }
 }
 
 export default function MapView({
@@ -225,32 +349,55 @@ export default function MapView({
   const [toolMode, setToolMode] = useState<ToolMode>("none");
 
   const [showPolygonModal, setShowPolygonModal] = useState(false);
-
   const [cameras, setCameras] = useState<CameraMarkerEntry[]>([]);
   const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
-  const [completedPolygons, setCompletedPolygons] = useState<CompletedPolygon[]>([]);
-  const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(null);
+  const [completedPolygons, setCompletedPolygons] = useState<CompletedPolygon[]>(
+    []
+  );
+  const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(
+    null
+  );
   const [showSuccessNotification, setShowSuccessNotification] = useState(false);
+
+  const [primaryFocusArea, setPrimaryFocusArea] = useState<FocusArea | null>(
+    null
+  );
+  const [subFocusAreas, setSubFocusAreas] = useState<FocusArea[]>([]);
+  const [activeSubAreaIndex, setActiveSubAreaIndex] = useState<number | null>(
+    null
+  );
+  const [explorePhase, setExplorePhase] = useState<ExplorePhase>("idle");
+  const [focusError, setFocusError] = useState<string | null>(null);
+  const [hoverSubAreaIndex, setHoverSubAreaIndex] = useState<number | null>(
+    null
+  );
+
+  const camerasRef = useRef<CameraMarkerEntry[]>([]);
+  const dashboardRegistryRef = useRef<Map<string, DashMarkerEntry>>(new Map());
+  const openDashboardPopupRef = useRef<maplibregl.Popup | null>(null);
+
+  const editControlRef = useRef<ToggleEditButton | null>(null);
+  const geocoderControlRef = useRef<MaplibreGeocoder | null>(null);
+  const drawControlRef = useRef<MaplibreTerradrawControl | null>(null);
+  const confirmControlRef = useRef<ConfirmAOIButton | null>(null);
+  const cancelControlRef = useRef<CancelAOIButton | null>(null);
+  const editAoiControlRef = useRef<EditAOIButton | null>(null);
+
+  const rectIdRef = useRef<string | null>(null);
+  const lockAfterFitRef = useRef(false);
+  const enforcingRef = useRef(false);
+  const defaultMinZoomRef = useRef(0);
+  const defaultMaxZoomRef = useRef(22);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   const toolModeRef = useLatestRef(toolMode);
   const selectedPolygonIndexRef = useLatestRef(selectedPolygonIndex);
   const completedPolygonsRef = useLatestRef(completedPolygons);
   const polygonPointsRef = useLatestRef(polygonPoints);
-
-  const camerasRef = useRef<CameraMarkerEntry[]>([]);
-
-  const dashboardRegistryRef = useRef<Map<string, DashMarkerEntry>>(new Map());
-  const openDashboardPopupRef = useRef<maplibregl.Popup | null>(null);
-  const editControlRef = useRef<ToggleEditButton | null>(null);
-  const geocoderControlRef = useRef<MaplibreGeocoder | null>(null);
-  const drawPolygonRef = useRef<MaplibreTerradrawControl | null>(null);
-  const rectIdRef = useRef<string | null>(null);
-  const lockAfterFitRef = useRef(false);
-  const enforcingRef = useRef(false);
-
-  const [boundingBox, setBoundingBox] = useState<[number, number, number, number] | null>(null);
-  const confirmControlRef = useRef<ConfirmAOIButton | null>(null);
-  const cancelControlRef = useRef<CancelAOIButton | null>(null);
+  const primaryFocusAreaRef = useLatestRef(primaryFocusArea);
+  const subFocusAreasRef = useLatestRef(subFocusAreas);
+  const activeSubAreaIndexRef = useLatestRef(activeSubAreaIndex);
+  const explorePhaseRef = useLatestRef(explorePhase);
 
   const style = "https://tiles.openfreemap.org/styles/liberty";
   const lng = 120.9842;
@@ -260,16 +407,24 @@ export default function MapView({
   const isAssigningCamera = toolMode === "assignCamera";
 
   const geocoderApi: MaplibreGeocoderApi = {
-    forwardGeocode: async (config: { query: string }): Promise<MaplibreGeocoderFeatureResults> => {
+    forwardGeocode: async (
+      config: { query: string }
+    ): Promise<MaplibreGeocoderFeatureResults> => {
       const features: any[] = [];
+
       try {
-        const request = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(config.query)}&format=geojson&polygon_geojson=1&addressdetails=1&limit=5`;
+        const request = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          config.query
+        )}&format=geojson&polygon_geojson=1&addressdetails=1&limit=5`;
 
         const response = await fetch(request);
         const geojson = await response.json();
 
         for (const feature of geojson.features ?? []) {
-          const center = [feature.bbox[0] + (feature.bbox[2] - feature.bbox[0]) / 2, feature.bbox[1] + (feature.bbox[3] - feature.bbox[1]) / 2];
+          const center = [
+            feature.bbox[0] + (feature.bbox[2] - feature.bbox[0]) / 2,
+            feature.bbox[1] + (feature.bbox[3] - feature.bbox[1]) / 2,
+          ];
 
           features.push({
             type: "Feature",
@@ -302,6 +457,20 @@ export default function MapView({
     });
   }, []);
 
+  const restoreDefaultExploreCamera = useCallback((map: maplibregl.Map) => {
+    map.setMaxBounds(null as any);
+    map.setMinZoom(defaultMinZoomRef.current);
+    map.setMaxZoom(defaultMaxZoomRef.current);
+    map.dragPan.enable();
+    map.scrollZoom.enable();
+    map.boxZoom.enable();
+    map.doubleClickZoom.enable();
+    map.dragRotate.disable();
+    map.touchPitch.disable();
+    map.touchZoomRotate.disableRotation();
+    map.keyboard.disable();
+  }, []);
+
   const add3DBuildingsLayer = useCallback((map: maplibregl.Map) => {
     const layers = map.getStyle().layers ?? [];
     const firstSymbolId = layers.find((l) => l.type === "symbol")?.id;
@@ -319,12 +488,28 @@ export default function MapView({
           minzoom: 15,
           paint: {
             "fill-extrusion-color": "#aaa",
-            "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_height"]],
-            "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.05, ["get", "render_min_height"]],
+            "fill-extrusion-height": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              15,
+              0,
+              15.05,
+              ["get", "render_height"],
+            ],
+            "fill-extrusion-base": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              15,
+              0,
+              15.05,
+              ["get", "render_min_height"],
+            ],
             "fill-extrusion-opacity": 0.6,
           },
         },
-        firstSymbolId,
+        firstSymbolId
       );
     }
   }, []);
@@ -344,7 +529,15 @@ export default function MapView({
         source: "earthquakes",
         maxzoom: 9,
         paint: {
-          "heatmap-weight": ["interpolate", ["linear"], ["get", "mag"], 0, 0, 6, 1],
+          "heatmap-weight": [
+            "interpolate",
+            ["linear"],
+            ["get", "mag"],
+            0,
+            0,
+            6,
+            1,
+          ],
           "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 9, 3],
           "heatmap-color": [
             "interpolate",
@@ -399,8 +592,6 @@ export default function MapView({
     if (map.getSource("earthquakes")) map.removeSource("earthquakes");
   }, []);
 
-  const toKey = (id: number | string) => String(id);
-
   const cleanupDashEntry = (entry: DashMarkerEntry) => {
     try {
       entry.popupRoot?.unmount();
@@ -430,12 +621,16 @@ export default function MapView({
     return { el, labelEl };
   };
 
-  const openDashboardPopup = (map: maplibregl.Map, entry: DashMarkerEntry, m: DashboardMarker) => {
+  const openDashboardPopup = (
+    map: maplibregl.Map,
+    entry: DashMarkerEntry,
+    m: DashboardMarker
+  ) => {
     openDashboardPopupRef.current?.remove();
     openDashboardPopupRef.current = null;
 
     const host = document.createElement("div");
-    host.style.width = "320px";
+    host.className = "dash-popup";
 
     const popup = new maplibregl.Popup({
       offset: 16,
@@ -446,16 +641,18 @@ export default function MapView({
 
     const root = ReactDOM.createRoot(host);
     root.render(
-      <div style={{ padding: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>{m.popupTitle ?? m.label ?? "Marker"}</div>
+      <div className="dash-popup__content">
+        <div className="dash-popup__title">
+          {m.popupTitle ?? m.label ?? "Marker"}
+        </div>
         {m.popupBody ? (
-          <div style={{ fontSize: 13, opacity: 0.85 }}>{m.popupBody}</div>
+          <div className="dash-popup__body">{m.popupBody}</div>
         ) : (
-          <div style={{ fontSize: 12, opacity: 0.75 }}>
+          <div className="dash-popup__coords">
             {m.lat.toFixed(5)}, {m.lng.toFixed(5)}
           </div>
         )}
-      </div>,
+      </div>
     );
 
     popup.on("close", () => {
@@ -467,466 +664,379 @@ export default function MapView({
     entry.marker.setPopup(popup);
     entry.popup = popup;
     entry.popupRoot = root;
-
     openDashboardPopupRef.current = popup;
     entry.marker.togglePopup();
   };
 
-  function rectToBoundingBox(rect: [number, number][]) {
-    let minLng = Infinity,
-      minLat = Infinity,
-      maxLng = -Infinity,
-      maxLat = -Infinity;
-
-    for (const [lng, lat] of rect) {
-      if (lng < minLng) minLng = lng;
-      if (lat < minLat) minLat = lat;
-      if (lng > maxLng) maxLng = lng;
-      if (lat > maxLat) maxLat = lat;
-    }
-    return [minLng, minLat, maxLng, maxLat] as [number, number, number, number];
-  }
-
-  function expandBbox(b: [number, number, number, number], pct = 0.05) {
-    const [minLng, minLat, maxLng, maxLat] = b;
-    const dx = (maxLng - minLng) * pct;
-    const dy = (maxLat - minLat) * pct;
-    return [minLng - dx, minLat - dy, maxLng + dx, maxLat + dy] as [number, number, number, number];
-  }
-
-  useEffect(() => {
-    if (!mapContainer.current) return;
-    if (mapRef.current) return;
-
-    const map = createMap();
-    mapRef.current = map;
-    onMapReady?.(map);
-
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
-
-    map.once("load", () => {
-      add3DBuildingsLayer(map);
-    });
-
-    return () => {
-      openDashboardPopupRef.current?.remove();
-      openDashboardPopupRef.current = null;
-
-      const reg = dashboardRegistryRef.current;
-      for (const entry of reg.values()) cleanupDashEntry(entry);
-      reg.clear();
-
-      camerasRef.current.forEach((c) => c.marker?.remove());
-      camerasRef.current = [];
-      setCameras([]);
+  const reverseGeocodeAreaName = useCallback(
+    async (bbox: [number, number, number, number], fallback: string) => {
+      const [lngCenter, latCenter] = bboxCenter(bbox);
 
       try {
-        map.remove();
-      } catch {}
+        const request = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(
+          String(latCenter)
+        )}&lon=${encodeURIComponent(
+          String(lngCenter)
+        )}&format=jsonv2&zoom=16&addressdetails=1`;
 
-      mapRef.current = null;
-      editControlRef.current = null;
-    };
-  }, [createMap, add3DBuildingsLayer, onMapReady]);
+        const response = await fetch(request, {
+          headers: { Accept: "application/json" },
+        });
 
-  useEffect(() => {
+        if (!response.ok) return fallback;
+
+        const data = await response.json();
+        const address = data?.address ?? {};
+
+        return (
+          address.neighbourhood ||
+          address.suburb ||
+          address.quarter ||
+          address.city_district ||
+          address.hamlet ||
+          address.village ||
+          address.town ||
+          address.city ||
+          address.municipality ||
+          data?.name ||
+          (typeof data?.display_name === "string"
+            ? data.display_name.split(",")[0]
+            : fallback) ||
+          fallback
+        );
+      } catch {
+        return fallback;
+      }
+    },
+    []
+  );
+
+  const applyLockedFocusToMap = useCallback((area: FocusArea) => {
     const map = mapRef.current;
     if (!map) return;
 
-    const apply = () => {
-      if (mode !== "heatmap") removeHeatmapLayers(map);
-      if (mode === "heatmap") addHeatmapLayers(map);
+    if (lockAfterFitRef.current) return;
+    lockAfterFitRef.current = true;
 
-      if (mode === "map" || mode === "explore") {
-        if (!geocoderControlRef.current) {
-          const geocoder = new MaplibreGeocoder(geocoderApi, {
-            maplibregl,
-            flyTo: true,
-            marker: false,
-            showResultMarkers: false,
-            showResultsWhileTyping: true,
-            countries: "ph",
-          });
-          map.addControl(geocoder, "top-left");
-          geocoderControlRef.current = geocoder;
-        }
-      } else {
-        if (geocoderControlRef.current) {
-          map.removeControl(geocoderControlRef.current);
-          geocoderControlRef.current = null;
-        }
-      }
+    map.fitBounds(bboxToBoundsLike(area.bbox), { padding: 40, duration: 900 });
 
-      if (mode === "explore") {
-        if (!drawPolygonRef.current) {
-          const drawControl = new MaplibreTerradrawControl({
-            modes: ["select", "delete", "rectangle"],
-            open: true,
-            showDeleteConfirmation: false,
-            modeOptions: {
-              rectangle: new TerraDrawRectangleMode({
-                styles: {
-                  fillColor: "#1d1f3f",
-                  fillOpacity: 0.22,
-                  outlineColor: "#1d1f3f",
-                  outlineWidth: 2,
-                },
-              }),
-              select: new TerraDrawSelectMode({
-                styles: {
-                  selectedPolygonColor: "#1d1f3f",
-                  selectedPolygonFillOpacity: 0.7,
-                  selectedPolygonOutlineColor: "#1d1f3f",
-                  selectedPolygonOutlineWidth: 5,
-                  selectionPointColor: "#1d1f3f",
-                  selectionPointOutlineColor: "#1d1f3f",
-                },
-                flags: {
-                  rectangle: {
-                    feature: {
-                      draggable: false,
-                      scaleable: true,
-                      coordinates: {
-                        midpoints: false,
-                        draggable: true,
-                        deletable: false,
-                        resizable: "opposite",
-                      },
-                    },
-                  },
-                },
-              }),
-            },
-          });
-
-          map.addControl(drawControl, "bottom-right");
-          drawPolygonRef.current = drawControl;
-
-          const di = drawControl.getTerraDrawInstance();
-
-          if (di) {
-            const enforceSingleRectangle = () => {
-              if (enforcingRef.current) return;
-              enforcingRef.current = true;
-
-              try {
-                const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
-                const polys = snapshot.filter((f) => f?.geometry?.type === "Polygon");
-
-                if (polys.length === 0) {
-                  rectIdRef.current = null;
-                  return;
-                }
-
-                const keep = polys[polys.length - 1];
-                const keepId = String(keep.id);
-
-                for (const f of polys) {
-                  const id = String(f.id);
-                  if (id !== keepId) di.removeFeatures([id]);
-                }
-
-                rectIdRef.current = keepId;
-              } finally {
-                enforcingRef.current = false;
-              }
-            };
-
-            enforceSingleRectangle();
-
-            try {
-              di.on("finish", enforceSingleRectangle);
-            } catch {}
-            try {
-              di.on("change", enforceSingleRectangle);
-            } catch {}
-          }
-
-          if (!confirmControlRef.current) {
-            confirmControlRef.current = new ConfirmAOIButton(() => {
-              const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
-              const polys = snapshot.filter((f) => f?.geometry?.type === "Polygon");
-              if (polys.length === 0) return;
-
-              const rect = rectIdRef.current
-                ? (polys.find((f) => String(f.id) === String(rectIdRef.current)) ?? polys[polys.length - 1])
-                : polys[polys.length - 1];
-
-              const ring = rect.geometry.coordinates[0] as [number, number][];
-              if (!ring || ring.length < 4) return;
-
-              const bbox = rectToBoundingBox(ring);
-
-              if (lockAfterFitRef.current) return;
-              lockAfterFitRef.current = true;
-
-              map.fitBounds(
-                [
-                  [bbox[0], bbox[1]],
-                  [bbox[2], bbox[3]],
-                ],
-                { padding: 40, duration: 50 },
-              );
-
-              map.once("idle", () => {
-                requestAnimationFrame(() => {
-                  const padded = expandBbox(bbox, 0.08);
-                  map.setMaxBounds([
-                    [padded[0], padded[1]],
-                    [padded[2], padded[3]],
-                  ]);
-
-                  lockAfterFitRef.current = false;
-                });
-              });
-
-              di.removeFeatures([rectIdRef.current]);
-            });
-
-            map.addControl(confirmControlRef.current, "bottom-right");
-          }
-
-          if (!cancelControlRef.current) {
-            cancelControlRef.current = new CancelAOIButton(() => {
-              if (rectIdRef.current) {
-                di.removeFeatures([rectIdRef.current]);
-                rectIdRef.current = null;
-              }
-            });
-
-            map.addControl(cancelControlRef.current, "bottom-right");
-          }
-        }
-      } else {
-        if (drawPolygonRef.current) {
-          map.removeControl(drawPolygonRef.current);
-          drawPolygonRef.current = null;
-        }
-        if (confirmControlRef.current) {
-          map.removeControl(confirmControlRef.current);
-          confirmControlRef.current = null;
-        }
-        if (cancelControlRef.current) {
-          map.removeControl(cancelControlRef.current);
-          cancelControlRef.current = null;
-        }
-        rectIdRef.current = null;
-      }
-
-      if (mode === "map") {
-        if (!editControlRef.current) {
-          editControlRef.current = new ToggleEditButton((isEdit) => {
-            setIsEditMode(isEdit);
-            setToolMode("none");
-          });
-          map.addControl(editControlRef.current, "bottom-right");
-        }
-      } else {
-        if (editControlRef.current) {
-          map.removeControl(editControlRef.current);
-          editControlRef.current = null;
-        }
-        setIsEditMode(false);
-        setToolMode("none");
-      }
-
-      if (mode !== "map") {
-        setShowPolygonModal(false);
-        setSelectedPolygonIndex(null);
-        setPolygonPoints([]);
-      }
-    };
-
-    if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
-  }, [mode, addHeatmapLayers, removeHeatmapLayers, add3DBuildingsLayer, geocoderApi]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const token = process.env.NEXT_PUBLIC_MAPILLARY_TOKEN;
-
-    const apply = () => {
-      if (showMapillarySigns && token) {
-        if (!map.getSource(MAPILLARY_SOURCE_ID)) {
-          map.addSource(MAPILLARY_SOURCE_ID, {
-            type: "vector",
-            tiles: [mapillaryTileUrl(token)],
-            minzoom: 14,
-            maxzoom: 14,
-          });
-        }
-
-        if (!map.getLayer(MAPILLARY_LAYER_ID)) {
-
-          loadSignImages(map, token).then(() => {
-            if (map.getLayer(MAPILLARY_LAYER_ID)) return;
-            map.addLayer({
-              id: MAPILLARY_LAYER_ID,
-              type: "symbol",
-              source: MAPILLARY_SOURCE_ID,
-              "source-layer": "traffic_sign",
-              minzoom: 14,
-              filter: buildMapillaryFilter() as any,
-              layout: {
-                "icon-image": buildIconImageExpression() as any,
-                "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.28, 18, 0.7],
-                "icon-allow-overlap": true,
-                "icon-ignore-placement": true,
-              },
-            });
-
-            // Popup on click
-            map.on("click", MAPILLARY_LAYER_ID, (e: any) => {
-              const feature = e.features?.[0];
-              if (!feature) return;
-              const val = feature.properties?.value ?? "";
-              const cls = resolveBrakePointClass(val) ?? val;
-              new maplibregl.Popup({ offset: 10, closeButton: false })
-                .setLngLat(e.lngLat)
-                .setHTML(
-                  `<div style="font-family:Montserrat,sans-serif;padding:4px 2px">` +
-                    `<strong style="font-size:13px">${cls}</strong>` +
-                    `<br/><span style="font-size:11px;color:#666">${val}</span>` +
-                  `</div>`,
-                )
-                .addTo(map);
-            });
-
-            // Pointer cursor
-            map.on("mouseenter", MAPILLARY_LAYER_ID, () => {
-              map.getCanvas().style.cursor = "pointer";
-            });
-            map.on("mouseleave", MAPILLARY_LAYER_ID, () => {
-              map.getCanvas().style.cursor = "";
-            });
-          });
-        }
-      } else {
-        if (map.getLayer(MAPILLARY_LAYER_ID)) map.removeLayer(MAPILLARY_LAYER_ID);
-        if (map.getSource(MAPILLARY_SOURCE_ID)) map.removeSource(MAPILLARY_SOURCE_ID);
-      }
-    };
-
-    if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
-  }, [showMapillarySigns]);
-
-  useEffect(() => {
-    if (boundingBox && mapRef.current) {
-      const map = mapRef.current;
-      map.fitBounds([
-        [boundingBox[0], boundingBox[1]],
-        [boundingBox[2], boundingBox[3]],
-      ]);
-    }
-  }, [boundingBox]);
-
-  useEffect(() => {
-    if (!goTo) return;
-    const map = mapRef.current;
-    if (!map) return;
-
-    map.flyTo({
-      center: goTo,
-      zoom: 18,
-      duration: 1200,
-      essential: true,
+    map.once("idle", () => {
+      requestAnimationFrame(() => {
+        const fittedZoom = map.getZoom();
+        map.setMaxBounds(bboxToBoundsLike(area.paddedBbox));
+        map.setMinZoom(fittedZoom);
+        map.setMaxZoom(Math.max(fittedZoom + 6, 18));
+        disableRotationInteractions(map);
+        lockAfterFitRef.current = false;
+      });
     });
-  }, [goTo]);
+  }, []);
 
-  useEffect(() => {
+  const clearTerradrawSelection = useCallback(() => {
+    const di = drawControlRef.current?.getTerraDrawInstance?.();
+    if (!di) return;
+
+    const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
+    snapshot.forEach((feature) => {
+      try {
+        di.removeFeatures([String(feature.id)]);
+      } catch {}
+    });
+
+    rectIdRef.current = null;
+  }, []);
+
+  const restoreFocusAreaToTerradraw = useCallback(
+    (area: FocusArea) => {
+      const di = drawControlRef.current?.getTerraDrawInstance?.();
+      if (!di) return false;
+
+      clearTerradrawSelection();
+
+      const feature: TerraDrawFeature = {
+        id: crypto.randomUUID(),
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [ensureClosedRing(area.ring)],
+        },
+        properties: {
+          mode: "rectangle",
+          selected: true,
+        },
+      };
+
+      try {
+        di.addFeatures?.([feature]);
+        rectIdRef.current = feature.id;
+        di.setMode?.("select");
+        di.selectFeature?.(feature.id);
+        return true;
+      } catch {
+        setFocusError("Unable to restore the previous area. Draw a new rectangle instead.");
+        return false;
+      }
+    },
+    [clearTerradrawSelection]
+  );
+
+  const beginPrimaryFocusDrawing = useCallback(() => {
+    const map = mapRef.current;
+    if (map) restoreDefaultExploreCamera(map);
+
+    clearTerradrawSelection();
+    setFocusError(null);
+    setPrimaryFocusArea(null);
+    setSubFocusAreas([]);
+    setActiveSubAreaIndex(null);
+    setExplorePhase("drawing-primary");
+
+    const di = drawControlRef.current?.getTerraDrawInstance?.();
+    try {
+      di?.setMode?.("rectangle");
+    } catch {}
+  }, [clearTerradrawSelection, restoreDefaultExploreCamera]);
+
+  const beginSubFocusDrawing = useCallback(() => {
+    const primary = primaryFocusAreaRef.current;
+    if (!primary) return;
+
+    const map = mapRef.current;
+    if (map) applyLockedFocusToMap(primary);
+
+    clearTerradrawSelection();
+    setFocusError(null);
+    setActiveSubAreaIndex(null);
+    setExplorePhase("drawing-sub");
+
+    const di = drawControlRef.current?.getTerraDrawInstance?.();
+    try {
+      di?.setMode?.("rectangle");
+    } catch {}
+  }, [applyLockedFocusToMap, clearTerradrawSelection, primaryFocusAreaRef]);
+
+  const handleEditAoi = useCallback(() => {
+    const currentPrimaryArea = primaryFocusAreaRef.current;
     const map = mapRef.current;
     if (!map) return;
 
-    const canvas = map.getCanvas();
-    canvas.classList.remove("map-crosshair", "map-remove");
-    canvas.style.cursor = "";
+    setFocusError(null);
+    clearTerradrawSelection();
+    setActiveSubAreaIndex(null);
+    setExplorePhase("drawing-primary");
+    restoreDefaultExploreCamera(map);
 
-    if (!isEditMode) return;
+    const di = drawControlRef.current?.getTerraDrawInstance?.();
 
-    if (toolMode === "addCamera" || toolMode === "addPoint") canvas.classList.add("map-crosshair");
-    if (toolMode === "removeCamera" || toolMode === "removePoint") canvas.classList.add("map-remove");
-    if (toolMode === "assignCamera") canvas.style.cursor = "pointer";
-  }, [toolMode, isEditMode]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const reg = dashboardRegistryRef.current;
-
-    if (mode !== "dashboard") {
-      openDashboardPopupRef.current?.remove();
-      openDashboardPopupRef.current = null;
-
-      for (const entry of reg.values()) cleanupDashEntry(entry);
-      reg.clear();
+    if (!currentPrimaryArea) {
+      try {
+        di?.setMode?.("rectangle");
+      } catch {}
       return;
     }
 
-    const markers = dashboardMarkers ?? [];
-    const incomingKeys = new Set(markers.map((m) => toKey(m.id)));
+    const restored = restoreFocusAreaToTerradraw(currentPrimaryArea);
+    if (!restored) {
+      try {
+        di?.setMode?.("rectangle");
+      } catch {}
+    }
+  }, [
+    clearTerradrawSelection,
+    primaryFocusAreaRef,
+    restoreDefaultExploreCamera,
+    restoreFocusAreaToTerradraw,
+  ]);
 
-    for (const m of markers) {
-      const key = toKey(m.id);
-      const existing = reg.get(key);
+  const handleEditSubArea = useCallback(
+    (index: number) => {
+      const parent = primaryFocusAreaRef.current;
+      const sub = subFocusAreasRef.current[index];
+      if (!parent || !sub) return;
 
-      if (!existing) {
-        const { el, labelEl } = makeDashboardMarkerElement(m.label);
+      const map = mapRef.current;
+      if (map) applyLockedFocusToMap(parent);
 
-        const marker = new maplibregl.Marker({ element: el, anchor: "bottom" }).setLngLat([m.lng, m.lat]).addTo(map);
+      setFocusError(null);
+      clearTerradrawSelection();
+      setActiveSubAreaIndex(index);
+      setExplorePhase("drawing-sub");
 
-        const entry: DashMarkerEntry = { marker, el, labelEl };
-        reg.set(key, entry);
+      const restored = restoreFocusAreaToTerradraw(sub);
+      if (!restored) {
+        const di = drawControlRef.current?.getTerraDrawInstance?.();
+        try {
+          di?.setMode?.("rectangle");
+        } catch {}
+      }
+    },
+    [
+      applyLockedFocusToMap,
+      clearTerradrawSelection,
+      primaryFocusAreaRef,
+      restoreFocusAreaToTerradraw,
+      subFocusAreasRef,
+    ]
+  );
 
-        el.addEventListener("click", (e) => {
-          e.stopPropagation();
-          onDashboardMarkerClick?.(m.id);
-          openDashboardPopup(map, entry, m);
-        });
+  const handleConfirmAoi = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const di = drawControlRef.current?.getTerraDrawInstance?.();
+    if (!di) {
+      setFocusError("Drawing tool is not ready.");
+      return;
+    }
+
+    const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
+    const polygons = snapshot.filter((f) => f?.geometry?.type === "Polygon");
+
+    if (polygons.length === 0) {
+      setFocusError("Draw a rectangle first.");
+      return;
+    }
+
+    const rect =
+      rectIdRef.current != null
+        ? polygons.find((f) => String(f.id) === String(rectIdRef.current)) ??
+          polygons[polygons.length - 1]
+        : polygons[polygons.length - 1];
+
+    const ring = rect.geometry?.coordinates?.[0] as
+      | [number, number][]
+      | undefined;
+
+    if (!ring || ring.length < 4) {
+      setFocusError("The selected area is invalid.");
+      return;
+    }
+
+    const bbox = rectToBoundingBox(ring);
+    const parentArea = primaryFocusAreaRef.current;
+    const isSubArea =
+      explorePhaseRef.current === "drawing-sub" && !!parentArea;
+    const editingIndex = activeSubAreaIndexRef.current;
+
+    if (isSubArea && parentArea && !bboxContains(parentArea.bbox, bbox)) {
+      setFocusError("Sub-area must stay inside the primary AOI.");
+      return;
+    }
+
+    const paddedBbox = expandBbox(bbox, isSubArea ? 0.04 : 0.08);
+
+    const fallbackLabel = isSubArea
+      ? editingIndex != null
+        ? subFocusAreasRef.current[editingIndex]?.label ??
+          `Sub-area ${editingIndex + 1}`
+        : `Sub-area ${subFocusAreasRef.current.length + 1}`
+      : "Focused Area";
+
+    const label = await reverseGeocodeAreaName(bbox, fallbackLabel);
+
+    const nextArea: FocusArea = {
+      kind: isSubArea ? "sub" : "primary",
+      label,
+      ring,
+      bbox,
+      paddedBbox,
+      minZoom:
+        map.cameraForBounds(
+          [
+            [bbox[0], bbox[1]],
+            [bbox[2], bbox[3]],
+          ],
+          { padding: 40 }
+        )?.zoom ?? 14,
+    };
+
+    setFocusError(null);
+    clearTerradrawSelection();
+
+    if (isSubArea && parentArea) {
+      if (editingIndex != null) {
+        setSubFocusAreas((prev) =>
+          prev.map((area, index) => (index === editingIndex ? nextArea : area))
+        );
       } else {
-        existing.marker.setLngLat([m.lng, m.lat]);
-        const nextLabel = m.label ?? "";
-        if (existing.labelEl.textContent !== nextLabel) existing.labelEl.textContent = nextLabel;
+        setSubFocusAreas((prev) => [...prev, nextArea]);
       }
+
+      setActiveSubAreaIndex(null);
+      setExplorePhase("locked-primary");
+      applyLockedFocusToMap(parentArea);
+      return;
     }
 
-    for (const [key, entry] of reg.entries()) {
-      if (!incomingKeys.has(key)) {
-        cleanupDashEntry(entry);
-        reg.delete(key);
-      }
-    }
-  }, [mode, dashboardMarkers, onDashboardMarkerClick]);
+    setPrimaryFocusArea(nextArea);
+    setSubFocusAreas([]);
+    setActiveSubAreaIndex(null);
+    setExplorePhase("locked-primary");
+    applyLockedFocusToMap(nextArea);
+  }, [
+    activeSubAreaIndexRef,
+    applyLockedFocusToMap,
+    clearTerradrawSelection,
+    explorePhaseRef,
+    primaryFocusAreaRef,
+    reverseGeocodeAreaName,
+    subFocusAreasRef,
+  ]);
+
+  const fitToFocusArea = useCallback((area: FocusArea) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.fitBounds(
+      [
+        [area.bbox[0], area.bbox[1]],
+        [area.bbox[2], area.bbox[3]],
+      ],
+      { padding: 40, duration: 700 }
+    );
+  }, []);
 
   const removeCamera = useCallback(async (cameraId: number | string) => {
     try {
-      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-      });
+      const response = await authFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+        }
+      );
 
       if (!response.ok) return;
 
-      const cam = camerasRef.current.find((c) => String(c.id) === String(cameraId));
+      const cam = camerasRef.current.find(
+        (c) => String(c.id) === String(cameraId)
+      );
       cam?.marker?.remove();
 
-      camerasRef.current = camerasRef.current.filter((c) => String(c.id) !== String(cameraId));
-      setCameras((prev) => prev.filter((c) => String(c.id) !== String(cameraId)));
+      camerasRef.current = camerasRef.current.filter(
+        (c) => String(c.id) !== String(cameraId)
+      );
+      setCameras((prev) =>
+        prev.filter((c) => String(c.id) !== String(cameraId))
+      );
     } catch {}
   }, []);
 
-  const savePolygonToCamera = useCallback(async (cameraId: number | string, points: [number, number][]) => {
-    const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/polygon/`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ polygon: points }),
-    });
+  const savePolygonToCamera = useCallback(
+    async (cameraId: number | string, points: [number, number][]) => {
+      const res = await authFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/polygon/`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ polygon: points }),
+        }
+      );
 
-    return res.ok;
-  }, []);
+      return res.ok;
+    },
+    []
+  );
 
   const addCameraFromData = useCallback(
     (cameraLat: number, cameraLng: number, id: number | string) => {
@@ -947,9 +1057,21 @@ export default function MapView({
       el.style.color = "#999";
       el.style.filter = "drop-shadow(0 2px 4px rgba(0,0,0,0.3))";
 
-      const marker = new maplibregl.Marker({ element: el, draggable: false, anchor: "center" }).setLngLat([cameraLng, cameraLat]).addTo(map);
+      const marker = new maplibregl.Marker({
+        element: el,
+        draggable: false,
+        anchor: "center",
+      })
+        .setLngLat([cameraLng, cameraLat])
+        .addTo(map);
 
-      const cameraObj: CameraMarkerEntry = { id, marker, lat: cameraLat, lng: cameraLng, element: el };
+      const cameraObj: CameraMarkerEntry = {
+        id,
+        marker,
+        lat: cameraLat,
+        lng: cameraLng,
+        element: el,
+      };
 
       el.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -969,12 +1091,13 @@ export default function MapView({
           const ok = await savePolygonToCamera(id, poly.points);
           if (!ok) return;
 
-          setCompletedPolygons((prev) => prev.map((p, i) => (i === polyIdx ? { ...p, cameraId: id } : p)));
+          setCompletedPolygons((prev) =>
+            prev.map((p, i) => (i === polyIdx ? { ...p, cameraId: id } : p))
+          );
 
           setToolMode("none");
           setShowPolygonModal(false);
           setSelectedPolygonIndex(null);
-
           return;
         }
 
@@ -984,10 +1107,15 @@ export default function MapView({
       camerasRef.current = [...camerasRef.current, cameraObj];
       setCameras((prev) => [...prev, cameraObj]);
     },
-    [onCameraClick, removeCamera, savePolygonToCamera, completedPolygonsRef, selectedPolygonIndexRef, toolModeRef],
+    [
+      completedPolygonsRef,
+      onCameraClick,
+      removeCamera,
+      savePolygonToCamera,
+      selectedPolygonIndexRef,
+      toolModeRef,
+    ]
   );
-
-  const loadAbortRef = useRef<AbortController | null>(null);
 
   const loadCamerasFromDatabase = useCallback(async () => {
     loadAbortRef.current?.abort();
@@ -995,11 +1123,14 @@ export default function MapView({
     loadAbortRef.current = controller;
 
     try {
-      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-      });
+      const response = await authFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`,
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+        }
+      );
 
       if (controller.signal.aborted) return;
       if (!response.ok) return;
@@ -1012,40 +1143,35 @@ export default function MapView({
       camerasRef.current = [];
       setCameras([]);
 
-      data.cameras.forEach((cam: Camera) => addCameraFromData(cam.lat, cam.lng, cam.id));
+      data.cameras.forEach((cam: Camera) =>
+        addCameraFromData(cam.lat, cam.lng, cam.id)
+      );
 
       const polygons: CompletedPolygon[] = data.cameras
         .filter((cam: Camera) => cam.polygon && cam.polygon.length > 0)
-        .map((cam: Camera) => ({ points: cam.polygon as [number, number][], cameraId: cam.id }));
+        .map((cam: Camera) => ({
+          points: cam.polygon as [number, number][],
+          cameraId: cam.id,
+        }));
 
       setCompletedPolygons(polygons);
       onCamerasLoaded?.(data.cameras);
     } catch (err: any) {
-      if (err?.name === "AbortError") return; // expected on cancel
+      if (err?.name === "AbortError") return;
     }
   }, [addCameraFromData, onCamerasLoaded]);
-
-  useEffect(() => {
-    if (mode !== "map" && mode !== "heatmap") return;
-    loadCamerasFromDatabase();
-    return () => {
-      loadAbortRef.current?.abort();
-    };
-  }, [mode, loadCamerasFromDatabase]);
-
-  useEffect(() => {
-    if (mode !== "map") return;
-    if (refreshTrigger > 0 && mapRef.current) loadCamerasFromDatabase();
-  }, [mode, refreshTrigger, loadCamerasFromDatabase]);
 
   const addCamera = useCallback(
     async (cameraLat: number, cameraLng: number) => {
       try {
-        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lat: cameraLat, lng: cameraLng }),
-        });
+        const response = await authFetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lat: cameraLat, lng: cameraLng }),
+          }
+        );
 
         if (!response.ok) return;
 
@@ -1053,37 +1179,28 @@ export default function MapView({
         if (!data?.success || !data?.camera) return;
 
         addCameraFromData(data.camera.lat, data.camera.lng, data.camera.id);
-        onCameraAdd?.(data.camera.id, data.camera.lat, data.camera.lng, data.camera);
+        onCameraAdd?.(
+          data.camera.id,
+          data.camera.lat,
+          data.camera.lng,
+          data.camera
+        );
       } catch {}
     },
-    [addCameraFromData, onCameraAdd],
+    [addCameraFromData, onCameraAdd]
   );
 
   const updateVisibleCameras = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
-    const bounds = map.getBounds();
 
-    const visible = camerasRef.current.filter((c) => bounds.contains([c.lng, c.lat])).map((c) => c.id);
+    const bounds = map.getBounds();
+    const visible = camerasRef.current
+      .filter((c) => bounds.contains([c.lng, c.lat]))
+      .map((c) => c.id);
 
     onVisibleCamerasChange?.(visible);
   }, [onVisibleCamerasChange]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const onMoveEnd = () => updateVisibleCameras();
-    map.on("moveend", onMoveEnd);
-    map.on("zoomend", onMoveEnd);
-
-    updateVisibleCameras();
-
-    return () => {
-      map.off("moveend", onMoveEnd);
-      map.off("zoomend", onMoveEnd);
-    };
-  }, [updateVisibleCameras]);
 
   const renderPolygonLayers = useCallback(() => {
     const map = mapRef.current;
@@ -1092,6 +1209,7 @@ export default function MapView({
     const safeRemoveLayer = (id: string) => {
       if (map.getLayer(id)) map.removeLayer(id);
     };
+
     const safeRemoveSource = (id: string) => {
       if (map.getSource(id)) map.removeSource(id);
     };
@@ -1191,9 +1309,28 @@ export default function MapView({
       type: "circle",
       source: "polygon-points",
       paint: {
-        "circle-radius": ["case", ["==", ["get", "canClose"], true], 8, ["==", ["get", "isFirst"], true], 7, 5],
-        "circle-color": ["case", ["==", ["get", "canClose"], true], "#4CAF50", ["==", ["get", "isCompleted"], false], "#1d1f3f", "#5c6bc0"],
-        "circle-stroke-width": ["case", ["==", ["get", "canClose"], true], 3, 2],
+        "circle-radius": [
+          "case",
+          ["==", ["get", "canClose"], true],
+          8,
+          ["==", ["get", "isFirst"], true],
+          7,
+          5,
+        ],
+        "circle-color": [
+          "case",
+          ["==", ["get", "canClose"], true],
+          "#4CAF50",
+          ["==", ["get", "isCompleted"], false],
+          "#1d1f3f",
+          "#5c6bc0",
+        ],
+        "circle-stroke-width": [
+          "case",
+          ["==", ["get", "canClose"], true],
+          3,
+          2,
+        ],
         "circle-stroke-color": "#ffffff",
         "circle-opacity": 0.95,
       },
@@ -1209,37 +1346,6 @@ export default function MapView({
       },
     });
   }, [completedPolygonsRef, polygonPointsRef]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const apply = () => renderPolygonLayers();
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once("load", apply);
-      return () => {
-        map.off("load", apply);
-      };
-    }
-  }, [renderPolygonLayers, completedPolygons, polygonPoints]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    if (!map.getLayer("polygon-fill")) return;
-
-    const selected = selectedCameraId != null ? selectedCameraId : null;
-
-    if (selected == null) {
-      map.setPaintProperty("polygon-fill", "fill-opacity", 0.08);
-      map.setPaintProperty("polygon-line", "line-opacity", 0.25);
-    } else {
-      map.setPaintProperty("polygon-fill", "fill-opacity", ["case", ["==", ["get", "cameraId"], selected], 0.35, 0.05]);
-      map.setPaintProperty("polygon-line", "line-opacity", ["case", ["==", ["get", "cameraId"], selected], 1, 0.15]);
-    }
-  }, [selectedCameraId, completedPolygons]);
 
   const clearGuideline = useCallback(() => {
     const map = mapRef.current;
@@ -1273,7 +1379,6 @@ export default function MapView({
         },
       });
 
-      // Closing preview line: cursor → first point (when ≥ 3 points)
       if (pts.length >= 3) {
         features.push({
           type: "Feature",
@@ -1335,15 +1440,421 @@ export default function MapView({
           },
         });
       } else {
-        (map.getSource("polygon-guide") as maplibregl.GeoJSONSource).setData(data as any);
+        (map.getSource("polygon-guide") as maplibregl.GeoJSONSource).setData(
+          data as any
+        );
       }
     },
-    [polygonPointsRef, toolModeRef, clearGuideline],
+    [clearGuideline, polygonPointsRef, toolModeRef]
   );
 
   useEffect(() => {
+    if (!mapContainer.current) return;
+    if (mapRef.current) return;
+
+    const map = createMap();
+    mapRef.current = map;
+    onMapReady?.(map);
+
+    map.addControl(
+      new maplibregl.NavigationControl({ visualizePitch: true }),
+      "bottom-right"
+    );
+
+    defaultMinZoomRef.current = map.getMinZoom();
+    defaultMaxZoomRef.current = map.getMaxZoom();
+
+    map.once("load", () => {
+      add3DBuildingsLayer(map);
+      restoreDefaultExploreCamera(map);
+    });
+
+    return () => {
+      openDashboardPopupRef.current?.remove();
+      openDashboardPopupRef.current = null;
+
+      const reg = dashboardRegistryRef.current;
+      for (const entry of reg.values()) cleanupDashEntry(entry);
+      reg.clear();
+
+      camerasRef.current.forEach((c) => c.marker?.remove());
+      camerasRef.current = [];
+      setCameras([]);
+
+      try {
+        map.remove();
+      } catch {}
+
+      mapRef.current = null;
+      editControlRef.current = null;
+    };
+  }, [add3DBuildingsLayer, createMap, onMapReady, restoreDefaultExploreCamera]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const apply = () => {
+      if (mode !== "heatmap") removeHeatmapLayers(map);
+      if (mode === "heatmap") addHeatmapLayers(map);
+
+      if (mode === "map" || mode === "explore") {
+        if (!geocoderControlRef.current) {
+          const geocoder = new MaplibreGeocoder(geocoderApi, {
+            maplibregl,
+            flyTo: true,
+            marker: false,
+            showResultMarkers: false,
+            showResultsWhileTyping: true,
+            countries: "ph",
+          });
+
+          map.addControl(geocoder, "top-left");
+          geocoderControlRef.current = geocoder;
+        }
+      } else if (geocoderControlRef.current) {
+        map.removeControl(geocoderControlRef.current);
+        geocoderControlRef.current = null;
+      }
+
+      if (mode === "explore") {
+        if (!drawControlRef.current) {
+          const drawControl = new MaplibreTerradrawControl({
+            modes: ["select", "delete", "rectangle"],
+            open: true,
+            showDeleteConfirmation: false,
+          });
+
+          map.addControl(drawControl, "bottom-right");
+          drawControlRef.current = drawControl;
+
+          const di = drawControl.getTerraDrawInstance();
+
+          if (di) {
+            const syncTerradrawState = () => {
+              if (enforcingRef.current) return;
+              enforcingRef.current = true;
+
+              try {
+                const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
+                const polys = snapshot.filter(
+                  (f) => f?.geometry?.type === "Polygon"
+                );
+
+                if (polys.length === 0) {
+                  rectIdRef.current = null;
+
+                  if (explorePhaseRef.current === "drawing-primary") {
+                    if (primaryFocusAreaRef.current) {
+                      setPrimaryFocusArea(null);
+                      setSubFocusAreas([]);
+                      setActiveSubAreaIndex(null);
+                    }
+
+                    setExplorePhase("idle");
+                    const currentMap = mapRef.current;
+                    if (currentMap) restoreDefaultExploreCamera(currentMap);
+                  } else if (explorePhaseRef.current === "drawing-sub") {
+                    const editIndex = activeSubAreaIndexRef.current;
+
+                    if (editIndex != null) {
+                      setSubFocusAreas((prev) =>
+                        prev.filter((_, index) => index !== editIndex)
+                      );
+                    }
+
+                    setActiveSubAreaIndex(null);
+                    setExplorePhase("locked-primary");
+
+                    const primary = primaryFocusAreaRef.current;
+                    if (primary) applyLockedFocusToMap(primary);
+                  }
+
+                  return;
+                }
+
+                const keep = polys[polys.length - 1];
+                const keepId = String(keep.id);
+
+                for (const f of polys) {
+                  const id = String(f.id);
+                  if (id !== keepId) {
+                    try {
+                      di.removeFeatures([id]);
+                    } catch {}
+                  }
+                }
+
+                rectIdRef.current = keepId;
+              } finally {
+                enforcingRef.current = false;
+              }
+            };
+
+            syncTerradrawState();
+
+            try {
+              di.on("finish", syncTerradrawState);
+            } catch {}
+            try {
+              di.on("select", syncTerradrawState);
+            } catch {}
+            try {
+              di.on("change", syncTerradrawState);
+            } catch {}
+          }
+        }
+
+        if (!editAoiControlRef.current) {
+          editAoiControlRef.current = new EditAOIButton(handleEditAoi);
+          map.addControl(editAoiControlRef.current, "bottom-right");
+        }
+
+        if (!confirmControlRef.current) {
+          confirmControlRef.current = new ConfirmAOIButton(handleConfirmAoi);
+          map.addControl(confirmControlRef.current, "bottom-right");
+        }
+
+        if (!cancelControlRef.current) {
+          cancelControlRef.current = new CancelAOIButton(() => {
+            clearTerradrawSelection();
+            setFocusError(null);
+            setActiveSubAreaIndex(null);
+
+            const primary = primaryFocusAreaRef.current;
+            if (primary) {
+              applyLockedFocusToMap(primary);
+              setExplorePhase("locked-primary");
+            } else {
+              restoreDefaultExploreCamera(map);
+              setExplorePhase("idle");
+            }
+          });
+
+          map.addControl(cancelControlRef.current, "bottom-right");
+        }
+      } else {
+        if (drawControlRef.current) {
+          map.removeControl(drawControlRef.current);
+          drawControlRef.current = null;
+        }
+        if (confirmControlRef.current) {
+          map.removeControl(confirmControlRef.current);
+          confirmControlRef.current = null;
+        }
+        if (cancelControlRef.current) {
+          map.removeControl(cancelControlRef.current);
+          cancelControlRef.current = null;
+        }
+        if (editAoiControlRef.current) {
+          map.removeControl(editAoiControlRef.current);
+          editAoiControlRef.current = null;
+        }
+
+        rectIdRef.current = null;
+      }
+
+      if (mode === "map") {
+        if (!editControlRef.current) {
+          editControlRef.current = new ToggleEditButton((isEdit) => {
+            setIsEditMode(isEdit);
+            setToolMode("none");
+          });
+
+          map.addControl(editControlRef.current, "bottom-right");
+        }
+      } else {
+        if (editControlRef.current) {
+          map.removeControl(editControlRef.current);
+          editControlRef.current = null;
+        }
+
+        setIsEditMode(false);
+        setToolMode("none");
+      }
+
+      if (mode !== "map") {
+        setShowPolygonModal(false);
+        setSelectedPolygonIndex(null);
+        setPolygonPoints([]);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [
+    addHeatmapLayers,
+    applyLockedFocusToMap,
+    clearTerradrawSelection,
+    geocoderApi,
+    handleConfirmAoi,
+    handleEditAoi,
+    mode,
+    primaryFocusAreaRef,
+    activeSubAreaIndexRef,
+    explorePhaseRef,
+    removeHeatmapLayers,
+    restoreDefaultExploreCamera,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const token = process.env.NEXT_PUBLIC_MAPILLARY_TOKEN;
+
+    const apply = () => {
+      if (showMapillarySigns && token) {
+        if (!map.getSource(MAPILLARY_SOURCE_ID)) {
+          map.addSource(MAPILLARY_SOURCE_ID, {
+            type: "vector",
+            tiles: [mapillaryTileUrl(token)],
+            minzoom: 14,
+            maxzoom: 14,
+          });
+        }
+
+        if (!map.getLayer(MAPILLARY_LAYER_ID)) {
+          loadSignImages(map, token).then(() => {
+            if (!map.getSource(MAPILLARY_SOURCE_ID)) return;
+            if (map.getLayer(MAPILLARY_LAYER_ID)) return;
+
+            map.addLayer({
+              id: MAPILLARY_LAYER_ID,
+              type: "symbol",
+              source: MAPILLARY_SOURCE_ID,
+              "source-layer": "traffic_sign",
+              minzoom: 14,
+              filter: buildMapillaryFilter() as any,
+              layout: {
+                "icon-image": buildIconImageExpression() as any,
+                "icon-size": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  14,
+                  0.28,
+                  18,
+                  0.7,
+                ],
+                "icon-allow-overlap": true,
+                "icon-ignore-placement": true,
+              },
+            });
+
+            map.on("click", MAPILLARY_LAYER_ID, (e: any) => {
+              const feature = e.features?.[0];
+              if (!feature) return;
+
+              const val = feature.properties?.value ?? "";
+              const cls = resolveBrakePointClass(val) ?? val;
+
+              new maplibregl.Popup({ offset: 10, closeButton: false })
+                .setLngLat(e.lngLat)
+                .setHTML(
+                  `<div style="font-family:Montserrat,sans-serif;padding:4px 2px">
+                    <strong style="font-size:13px">${cls}</strong>
+                    <br/>
+                    <span style="font-size:11px;color:#666">${val}</span>
+                  </div>`
+                )
+                .addTo(map);
+            });
+
+            map.on("mouseenter", MAPILLARY_LAYER_ID, () => {
+              map.getCanvas().style.cursor = "pointer";
+            });
+
+            map.on("mouseleave", MAPILLARY_LAYER_ID, () => {
+              map.getCanvas().style.cursor = "";
+            });
+          });
+        }
+      } else {
+        if (map.getLayer(MAPILLARY_LAYER_ID)) map.removeLayer(MAPILLARY_LAYER_ID);
+        if (map.getSource(MAPILLARY_SOURCE_ID))
+          map.removeSource(MAPILLARY_SOURCE_ID);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [showMapillarySigns]);
+
+  useEffect(() => {
+    if (mode !== "map" && mode !== "heatmap") return;
+    loadCamerasFromDatabase();
+
+    return () => {
+      loadAbortRef.current?.abort();
+    };
+  }, [loadCamerasFromDatabase, mode]);
+
+  useEffect(() => {
+    if (mode !== "map") return;
+    if (refreshTrigger > 0 && mapRef.current) loadCamerasFromDatabase();
+  }, [loadCamerasFromDatabase, mode, refreshTrigger]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const onMoveEnd = () => updateVisibleCameras();
+    map.on("moveend", onMoveEnd);
+    map.on("zoomend", onMoveEnd);
+
+    updateVisibleCameras();
+
+    return () => {
+      map.off("moveend", onMoveEnd);
+      map.off("zoomend", onMoveEnd);
+    };
+  }, [updateVisibleCameras]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const apply = () => renderPolygonLayers();
+    if (map.isStyleLoaded()) {
+      apply();
+    } else {
+      map.once("load", apply);
+      return () => {
+        map.off("load", apply);
+      };
+    }
+  }, [completedPolygons, polygonPoints, renderPolygonLayers]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!map.getLayer("polygon-fill")) return;
+
+    const selected = selectedCameraId != null ? selectedCameraId : null;
+
+    if (selected == null) {
+      map.setPaintProperty("polygon-fill", "fill-opacity", 0.08);
+      map.setPaintProperty("polygon-line", "line-opacity", 0.25);
+    } else {
+      map.setPaintProperty("polygon-fill", "fill-opacity", [
+        "case",
+        ["==", ["get", "cameraId"], selected],
+        0.35,
+        0.05,
+      ]);
+      map.setPaintProperty("polygon-line", "line-opacity", [
+        "case",
+        ["==", ["get", "cameraId"], selected],
+        1,
+        0.15,
+      ]);
+    }
+  }, [completedPolygons, selectedCameraId]);
+
+  useEffect(() => {
     if (toolMode !== "addPoint") clearGuideline();
-  }, [toolMode, clearGuideline]);
+  }, [clearGuideline, toolMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1353,7 +1864,10 @@ export default function MapView({
       const activeTool = toolModeRef.current;
 
       if (activeTool === "none" && !isEditMode && mode === "map") {
-        const features = map.queryRenderedFeatures(e.point, { layers: ["polygon-fill"] });
+        const features = map.queryRenderedFeatures(e.point, {
+          layers: ["polygon-fill"],
+        });
+
         if (features.length > 0) {
           const idx = Number(features[0].properties?.polygonIndex);
           if (!Number.isNaN(idx)) {
@@ -1380,18 +1894,23 @@ export default function MapView({
           if (hit.length > 0) {
             const props: any = hit[0].properties ?? {};
             const idx = Number(props.index);
-            const isCompleted = props.isCompleted === true || props.isCompleted === "true";
+            const isCompleted =
+              props.isCompleted === true || props.isCompleted === "true";
 
             if (!isCompleted && idx === 0) {
               const newPoly: CompletedPolygon = {
                 points: [...polygonPointsRef.current],
                 cameraId: null,
               };
+
               setCompletedPolygons((prev) => [...prev, newPoly]);
               setPolygonPoints([]);
               clearGuideline();
               setShowSuccessNotification(true);
-              window.setTimeout(() => setShowSuccessNotification(false), 1500);
+              window.setTimeout(
+                () => setShowSuccessNotification(false),
+                1500
+              );
               return;
             }
           }
@@ -1409,7 +1928,9 @@ export default function MapView({
         if (hit.length > 0) {
           const props: any = hit[0].properties ?? {};
           const idx = Number(props.index);
-          const isCompleted = props.isCompleted === true || props.isCompleted === "true";
+          const isCompleted =
+            props.isCompleted === true || props.isCompleted === "true";
+
           if (!isCompleted && !Number.isNaN(idx)) {
             setPolygonPoints((prev) => prev.filter((_, i) => i !== idx));
           }
@@ -1429,20 +1950,324 @@ export default function MapView({
       map.off("click", handleMapClick);
       map.off("mousemove", handleMouseMove);
     };
-  }, [addCamera, clearGuideline, isEditMode, mode, renderGuideline, toolModeRef, polygonPointsRef]);
+  }, [
+    addCamera,
+    clearGuideline,
+    isEditMode,
+    mode,
+    renderGuideline,
+    toolModeRef,
+    polygonPointsRef,
+  ]);
 
   useEffect(() => {
     const selected = selectedCameraId != null ? String(selectedCameraId) : null;
+
     for (const c of camerasRef.current) {
       const isSel = selected != null && String(c.id) === selected;
       c.element.style.color = isSel ? "#161b4c" : "#999";
+
       const svg = c.element.querySelector("svg") as SVGSVGElement | null;
       if (svg) {
         svg.style.transform = isSel ? "scale(1.08)" : "scale(1)";
         svg.style.transition = "transform 0.15s ease";
       }
     }
-  }, [selectedCameraId, cameras]);
+  }, [cameras, selectedCameraId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const canvas = map.getCanvas();
+    canvas.classList.remove("map-crosshair", "map-remove");
+    canvas.style.cursor = "";
+
+    if (!isEditMode) return;
+
+    if (toolMode === "addCamera" || toolMode === "addPoint") {
+      canvas.classList.add("map-crosshair");
+    }
+
+    if (toolMode === "removeCamera" || toolMode === "removePoint") {
+      canvas.classList.add("map-remove");
+    }
+
+    if (toolMode === "assignCamera") {
+      canvas.style.cursor = "pointer";
+    }
+  }, [isEditMode, toolMode]);
+
+  useEffect(() => {
+    if (!goTo) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.flyTo({
+      center: goTo,
+      zoom: 18,
+      duration: 1200,
+      essential: true,
+    });
+  }, [goTo]);
+
+  useEffect(() => {
+    if (mode !== "explore") return;
+    if (explorePhase === "idle" && !primaryFocusArea) {
+      beginPrimaryFocusDrawing();
+    }
+  }, [beginPrimaryFocusDrawing, explorePhase, mode, primaryFocusArea]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const sourceId = "focus-areas";
+    const fillId = "focus-areas-fill";
+    const lineId = "focus-areas-line";
+    const labelId = "focus-areas-label";
+
+    if (mode !== "explore") {
+      if (map.getLayer(labelId)) map.removeLayer(labelId);
+      if (map.getLayer(lineId)) map.removeLayer(lineId);
+      if (map.getLayer(fillId)) map.removeLayer(fillId);
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+      return;
+    }
+
+    const features: GeoJSON.Feature[] = [];
+
+    const hidePrimary = explorePhase === "drawing-primary";
+    if (primaryFocusArea && !hidePrimary) {
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "primary",
+          label: primaryFocusArea.label,
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [ensureClosedRing(primaryFocusArea.ring)],
+        },
+      });
+    }
+
+    subFocusAreas.forEach((area, index) => {
+      const hideEditing =
+        explorePhase === "drawing-sub" && activeSubAreaIndex === index;
+
+      if (!hideEditing) {
+        features.push({
+          type: "Feature",
+          properties: {
+            kind: "sub",
+            index,
+            label: area.label,
+            hovered: hoverSubAreaIndex === index ? 1 : 0,
+          },
+          geometry: {
+            type: "Polygon",
+            coordinates: [ensureClosedRing(area.ring)],
+          },
+        });
+      }
+    });
+
+    const data: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features,
+    };
+
+    const apply = () => {
+      if (!map.getSource(sourceId)) {
+        map.addSource(sourceId, {
+          type: "geojson",
+          data,
+        });
+
+        map.addLayer({
+          id: fillId,
+          type: "fill",
+          source: sourceId,
+          paint: {
+            "fill-color": [
+              "case",
+              ["==", ["get", "kind"], "sub"],
+              "#3b82f6",
+              "#111827",
+            ],
+            "fill-opacity": [
+              "case",
+              ["==", ["get", "kind"], "sub"],
+              ["case", ["==", ["get", "hovered"], 1], 0.34, 0.22],
+              0.14,
+            ],
+          },
+        });
+
+        map.addLayer({
+          id: lineId,
+          type: "line",
+          source: sourceId,
+          paint: {
+            "line-color": [
+              "case",
+              ["==", ["get", "kind"], "sub"],
+              "#2563eb",
+              "#111827",
+            ],
+            "line-width": [
+              "case",
+              ["==", ["get", "kind"], "sub"],
+              2.5,
+              2,
+            ],
+          },
+        });
+
+        map.addLayer({
+          id: labelId,
+          type: "symbol",
+          source: sourceId,
+          layout: {
+            "text-field": ["get", "label"],
+            "text-size": 13,
+            "text-anchor": "center",
+          },
+          paint: {
+            "text-color": [
+              "case",
+              ["==", ["get", "kind"], "sub"],
+              "#1d4ed8",
+              "#111827",
+            ],
+            "text-halo-color": "#ffffff",
+            "text-halo-width": 1.2,
+          },
+        });
+      } else {
+        (map.getSource(sourceId) as maplibregl.GeoJSONSource).setData(data);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+
+    return () => {
+      map.off("load", apply);
+    };
+  }, [
+    activeSubAreaIndex,
+    explorePhase,
+    hoverSubAreaIndex,
+    mode,
+    primaryFocusArea,
+    subFocusAreas,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mode !== "explore") return;
+    if (!map.getLayer("focus-areas-fill")) return;
+
+    const handleMouseMove = (e: any) => {
+      const feature = e.features?.[0];
+      if (!feature || feature.properties?.kind !== "sub") {
+        setHoverSubAreaIndex(null);
+        return;
+      }
+
+      setHoverSubAreaIndex(Number(feature.properties.index));
+    };
+
+    const handleMouseLeave = () => {
+      setHoverSubAreaIndex(null);
+    };
+
+    const handleClick = (e: any) => {
+      const feature = e.features?.[0];
+      if (!feature || feature.properties?.kind !== "sub") return;
+
+      const index = Number(feature.properties.index);
+      const area = subFocusAreas[index];
+      if (!area) return;
+
+      map.easeTo({
+        center: bboxCenter(area.bbox),
+        zoom: map.cameraForBounds(bboxToBoundsLike(area.bbox), {
+          padding: 40,
+        })?.zoom,
+        duration: 800,
+      });
+    };
+
+    map.on("mousemove", "focus-areas-fill", handleMouseMove);
+    map.on("mouseleave", "focus-areas-fill", handleMouseLeave);
+    map.on("click", "focus-areas-fill", handleClick);
+
+    return () => {
+      map.off("mousemove", "focus-areas-fill", handleMouseMove);
+      map.off("mouseleave", "focus-areas-fill", handleMouseLeave);
+      map.off("click", "focus-areas-fill", handleClick);
+    };
+  }, [mode, subFocusAreas]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const reg = dashboardRegistryRef.current;
+
+    if (mode !== "dashboard") {
+      openDashboardPopupRef.current?.remove();
+      openDashboardPopupRef.current = null;
+
+      for (const entry of reg.values()) cleanupDashEntry(entry);
+      reg.clear();
+      return;
+    }
+
+    const markers = dashboardMarkers ?? [];
+    const incomingKeys = new Set(markers.map((m) => String(m.id)));
+
+    for (const m of markers) {
+      const key = String(m.id);
+      const existing = reg.get(key);
+
+      if (!existing) {
+        const { el, labelEl } = makeDashboardMarkerElement(m.label);
+
+        const marker = new maplibregl.Marker({
+          element: el,
+          anchor: "bottom",
+        })
+          .setLngLat([m.lng, m.lat])
+          .addTo(map);
+
+        const entry: DashMarkerEntry = { marker, el, labelEl };
+        reg.set(key, entry);
+
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onDashboardMarkerClick?.(m.id);
+          openDashboardPopup(map, entry, m);
+        });
+      } else {
+        existing.marker.setLngLat([m.lng, m.lat]);
+        const nextLabel = m.label ?? "";
+        if (existing.labelEl.textContent !== nextLabel) {
+          existing.labelEl.textContent = nextLabel;
+        }
+      }
+    }
+
+    for (const [key, entry] of reg.entries()) {
+      if (!incomingKeys.has(key)) {
+        cleanupDashEntry(entry);
+        reg.delete(key);
+      }
+    }
+  }, [dashboardMarkers, mode, onDashboardMarkerClick]);
 
   const beginAssignCamera = useCallback(() => {
     if (selectedPolygonIndexRef.current == null) return;
@@ -1459,11 +2284,14 @@ export default function MapView({
 
     if (poly.cameraId != null) {
       try {
-        await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${poly.cameraId}/polygon/`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ polygon: null }),
-        });
+        await authFetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${poly.cameraId}/polygon/`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ polygon: null }),
+          }
+        );
       } catch {}
     }
 
@@ -1471,7 +2299,7 @@ export default function MapView({
     setShowPolygonModal(false);
     setSelectedPolygonIndex(null);
     setToolMode("none");
-  }, [selectedPolygonIndexRef, completedPolygonsRef]);
+  }, [completedPolygonsRef, selectedPolygonIndexRef]);
 
   const cancelPolygonModal = useCallback(() => {
     setShowPolygonModal(false);
@@ -1483,50 +2311,88 @@ export default function MapView({
     <div className="map-wrap">
       <div ref={mapContainer} className="map" />
 
+      {mode === "explore" && (
+        <>
+          <div className="explore-toolbar-row">
+            <div className="explore-toolbar">
+              <span className="explore-toolbar__label">
+                {primaryFocusArea
+                  ? `Focused: ${primaryFocusArea.label}`
+                  : "Draw a focus area"}
+                {subFocusAreas.length > 0
+                  ? ` / ${subFocusAreas.length} sub-area${
+                      subFocusAreas.length > 1 ? "s" : ""
+                    }`
+                  : ""}
+              </span>
+
+              {primaryFocusArea && (
+                <button
+                  onClick={() => fitToFocusArea(primaryFocusArea)}
+                  className="explore-toolbar__btn explore-toolbar__btn--neutral"
+                >
+                  Reset View
+                </button>
+              )}
+
+              {primaryFocusArea && (
+                <button
+                  onClick={beginSubFocusDrawing}
+                  className="explore-toolbar__btn explore-toolbar__btn--outline"
+                >
+                  Add Sub-area
+                </button>
+              )}
+            </div>
+
+            {subFocusAreas.length > 0 && (
+              <div className="explore-toolbar explore-toolbar--secondary">
+                <span className="explore-toolbar__label">Sub-areas</span>
+
+                {subFocusAreas.map((area, index) => (
+                  <button
+                    key={`${area.label}-${index}`}
+                    onClick={() => handleEditSubArea(index)}
+                    className="explore-toolbar__btn explore-toolbar__btn--sub"
+                  >
+                    Edit {area.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="explore-status">
+            {explorePhase === "drawing-sub"
+              ? activeSubAreaIndex != null
+                ? "Adjust the selected sub-area or delete it with the map trash tool, then confirm."
+                : "Draw a smaller sub-area inside the selected focus area, then confirm."
+              : primaryFocusArea
+              ? "Use the map edit tool to adjust the AOI. Use the trash tool to delete the active AOI while editing."
+              : "Draw a rectangle, then confirm to focus on that area."}
+          </div>
+
+          {focusError && <div className="explore-error">{focusError}</div>}
+        </>
+      )}
+
       {isEditMode && mode === "map" && (
         <>
-          <div
-            className="edit-toolbar"
-            style={{
-              position: "absolute",
-              top: "12px",
-              left: "50%",
-              transform: "translateX(-50%)",
-              zIndex: 1000,
-              display: "flex",
-              gap: "6px",
-              backgroundColor: "#ffffffee",
-              padding: "6px 10px",
-              borderRadius: "12px",
-              boxShadow: "0 2px 12px rgba(0,0,0,0.15)",
-              backdropFilter: "blur(8px)",
-              fontFamily: "Montserrat, sans-serif",
-            }}
-          >
+          <div className="edit-toolbar">
             {(
               [
-                { key: "addCamera", label: "＋ Camera", color: "#1d1f3f" },
-                { key: "removeCamera", label: "− Camera", color: "#f44336" },
-                { key: "addPoint", label: "＋ Polygon", color: "#1d1f3f" },
-                { key: "removePoint", label: "− Point", color: "#f44336" },
+                { key: "addCamera", label: "＋ Camera" },
+                { key: "removeCamera", label: "− Camera" },
+                { key: "addPoint", label: "＋ Polygon" },
+                { key: "removePoint", label: "− Point" },
               ] as const
-            ).map(({ key, label, color }) => (
+            ).map(({ key, label }) => (
               <button
                 key={key}
                 onClick={() => setToolMode((cur) => (cur === key ? "none" : key))}
-                style={{
-                  padding: "7px 14px",
-                  backgroundColor: toolMode === key ? color : "transparent",
-                  color: toolMode === key ? "#fff" : "#333",
-                  border: toolMode === key ? "none" : "1px solid #d0d0d0",
-                  borderRadius: "8px",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: "13px",
-                  fontFamily: "Montserrat, sans-serif",
-                  transition: "all 0.15s ease",
-                  letterSpacing: "0.2px",
-                }}
+                className={`edit-toolbar__btn edit-toolbar__btn--${key} ${
+                  toolMode === key ? "is-active" : ""
+                }`}
               >
                 {label}
               </button>
@@ -1534,21 +2400,10 @@ export default function MapView({
 
             {toolMode === "addPoint" && polygonPoints.length > 0 && (
               <>
-                <div style={{ width: "1px", background: "#d0d0d0", margin: "2px 2px" }} />
+                <div className="edit-toolbar__divider" />
                 <button
                   onClick={() => setPolygonPoints((prev) => prev.slice(0, -1))}
-                  style={{
-                    padding: "7px 12px",
-                    backgroundColor: "transparent",
-                    color: "#f57c00",
-                    border: "1px solid #f57c00",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    fontFamily: "Montserrat, sans-serif",
-                    transition: "all 0.15s ease",
-                  }}
+                  className="edit-toolbar__btn edit-toolbar__btn--undo"
                   title="Undo last point"
                 >
                   ↩ Undo
@@ -1558,18 +2413,7 @@ export default function MapView({
                     setPolygonPoints([]);
                     clearGuideline();
                   }}
-                  style={{
-                    padding: "7px 12px",
-                    backgroundColor: "transparent",
-                    color: "#f44336",
-                    border: "1px solid #f44336",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    fontFamily: "Montserrat, sans-serif",
-                    transition: "all 0.15s ease",
-                  }}
+                  className="edit-toolbar__btn edit-toolbar__btn--clear"
                   title="Discard current polygon"
                 >
                   ✕ Clear
@@ -1579,33 +2423,17 @@ export default function MapView({
           </div>
 
           {toolMode === "addPoint" && (
-            <div
-              style={{
-                position: "absolute",
-                top: "62px",
-                left: "50%",
-                transform: "translateX(-50%)",
-                zIndex: 1000,
-                backgroundColor: "rgba(29,31,63,0.82)",
-                color: "#fff",
-                padding: "8px 18px",
-                borderRadius: "10px",
-                fontSize: "13px",
-                fontFamily: "Montserrat, sans-serif",
-                fontWeight: 500,
-                letterSpacing: "0.3px",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-                backdropFilter: "blur(6px)",
-                pointerEvents: "none",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {polygonPoints.length === 0 && "Click on the map to start drawing a polygon"}
+            <div className="map-hint">
+              {polygonPoints.length === 0 &&
+                "Click on the map to start drawing a polygon"}
               {polygonPoints.length === 1 && "Click to add more points"}
-              {polygonPoints.length === 2 && "Click to add at least one more point"}
+              {polygonPoints.length === 2 &&
+                "Click to add at least one more point"}
               {polygonPoints.length >= 3 && (
                 <>
-                  Click the <span style={{ color: "#81c784", fontWeight: 700 }}>green starting point</span> to close the polygon
+                  Click the{" "}
+                  <span className="map-hint__accent">green starting point</span>{" "}
+                  to close the polygon
                 </>
               )}
             </div>
@@ -1614,121 +2442,38 @@ export default function MapView({
       )}
 
       {showSuccessNotification && (
-        <div
-          style={{
-            position: "absolute",
-            top: "62px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 2000,
-            backgroundColor: "#4CAF50",
-            color: "#fff",
-            padding: "10px 24px",
-            borderRadius: "10px",
-            fontSize: "14px",
-            fontFamily: "Montserrat, sans-serif",
-            fontWeight: 600,
-            boxShadow: "0 4px 14px rgba(76,175,80,0.35)",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            animation: "polygon-toast-in 0.25s ease",
-          }}
-        >
-          <span style={{ fontSize: "18px" }}>✓</span> Polygon created!
+        <div className="map-toast map-toast--success">
+          <span className="map-toast__icon">✓</span> Polygon created!
         </div>
       )}
 
       {isAssigningCamera && (
-        <div
-          style={{
-            position: "absolute",
-            top: "20px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 2000,
-            backgroundColor: "rgba(29,31,63,0.85)",
-            color: "#fff",
-            padding: "14px 24px",
-            borderRadius: "12px",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
-            fontSize: "14px",
-            fontFamily: "Montserrat, sans-serif",
-            fontWeight: 500,
-            backdropFilter: "blur(6px)",
-            letterSpacing: "0.2px",
-          }}
-        >
+        <div className="assign-camera-banner">
           Click on the camera you want this polygon assigned to
         </div>
       )}
 
       {showPolygonModal && (
-        <div
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            zIndex: 2000,
-            backgroundColor: "#fff",
-            padding: "28px",
-            borderRadius: "16px",
-            boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-            minWidth: "280px",
-            fontFamily: "Montserrat, sans-serif",
-          }}
-        >
-          <h3 style={{ margin: "0 0 18px 0", fontSize: "17px", fontWeight: 700, color: "#1d1f3f" }}>Polygon Options</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <div className="polygon-modal">
+          <h3 className="polygon-modal__title">Polygon Options</h3>
+          <div className="polygon-modal__actions">
             <button
               onClick={beginAssignCamera}
-              style={{
-                padding: "12px",
-                backgroundColor: "#1d1f3f",
-                color: "#fff",
-                border: "none",
-                borderRadius: "10px",
-                cursor: "pointer",
-                fontSize: "14px",
-                fontWeight: 600,
-                fontFamily: "Montserrat, sans-serif",
-                transition: "background 0.15s ease",
-              }}
+              className="polygon-modal__btn polygon-modal__btn--primary"
             >
               Assign to Camera
             </button>
 
             <button
               onClick={deletePolygon}
-              style={{
-                padding: "12px",
-                backgroundColor: "#f44336",
-                color: "#fff",
-                border: "none",
-                borderRadius: "10px",
-                cursor: "pointer",
-                fontSize: "14px",
-                fontWeight: 600,
-                fontFamily: "Montserrat, sans-serif",
-                transition: "background 0.15s ease",
-              }}
+              className="polygon-modal__btn polygon-modal__btn--danger"
             >
               Delete Polygon
             </button>
 
             <button
               onClick={cancelPolygonModal}
-              style={{
-                padding: "12px",
-                backgroundColor: "transparent",
-                color: "#666",
-                border: "1px solid #d0d0d0",
-                borderRadius: "10px",
-                cursor: "pointer",
-                fontSize: "14px",
-                fontFamily: "Montserrat, sans-serif",
-              }}
+              className="polygon-modal__btn polygon-modal__btn--ghost"
             >
               Cancel
             </button>
