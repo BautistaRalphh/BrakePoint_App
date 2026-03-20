@@ -2,6 +2,12 @@ from django.db import models
 from django.contrib.auth.models import User
 
 class SavedLocation(models.Model):
+    LOCATION_TYPES = [
+
+        ("aoi", "Area of Interest"),
+        ("sub_area", "Sub Area"),
+    ]
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='saved_locations')
     name = models.CharField(max_length=255)
     lat = models.FloatField()
@@ -13,7 +19,13 @@ class SavedLocation(models.Model):
     
     geometry = models.JSONField(null=True, blank=True)
     bounds = models.JSONField(null=True, blank=True)
-
+    location_type = models.CharField(
+        max_length=20,
+        choices=LOCATION_TYPES,
+        default="sub_area",
+    )
+    parent_id = models.IntegerField(null=True, blank=True)
+   
     
     class Meta:
         ordering = ['-created_at']

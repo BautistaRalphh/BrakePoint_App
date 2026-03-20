@@ -25,6 +25,7 @@ class SavedLocationSerializer(serializers.ModelSerializer):
             "geometry",
             "bounds",
             "location_type",
+            "parent",
             "created_at",
             "camera_count",
             "total_vehicles",
@@ -35,23 +36,6 @@ class SavedLocationSerializer(serializers.ModelSerializer):
             "behavior_summary",
         ]
         read_only_fields = ["user", "created_at"]
-    total_vehicles = serializers.ReadOnlyField()
-    total_occurrences = serializers.ReadOnlyField()
-    total_speeding = serializers.ReadOnlyField()
-    total_swerving = serializers.ReadOnlyField()
-    total_abrupt_stopping = serializers.ReadOnlyField()
-    behavior_summary = serializers.ReadOnlyField()
-    camera_count = serializers.ReadOnlyField()
-
-    class Meta:
-        model = SavedLocation
-        fields = [
-            'id', 'name', 'lat', 'lng', 'zoom', 'bearing', 'pitch',
-            'total_vehicles', 'total_occurrences',
-            'total_speeding', 'total_swerving', 'total_abrupt_stopping',
-            'behavior_summary', 'camera_count'
-        ]
-
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     class Meta:

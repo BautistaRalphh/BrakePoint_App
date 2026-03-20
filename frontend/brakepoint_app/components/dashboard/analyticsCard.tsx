@@ -81,12 +81,17 @@ function DefaultPie({ data, compact, pieId = "pie-chart" }: { data: ChartData[];
     [data],
   );
 
+  const chartSize = compact
+    ? { width: 180, height: 160, innerRadius: 35, outerRadius: 70 }
+    : { width: 240, height: 220, innerRadius: 45, outerRadius: 90 };
+
   if (!cleaned.length) {
     return <EmptyPie compact={compact} pieId={`${pieId}-empty`} />;
   }
   return (
     <PieChart
-      height={compact ? 160 : 220}
+      width={chartSize.width}
+      height={chartSize.height}
       margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
       series={[
         {

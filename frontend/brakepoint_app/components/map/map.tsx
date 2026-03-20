@@ -43,6 +43,17 @@ type DashboardMarker = {
   popupBody?: string;
 };
 
+type SavedLocationRecord = {
+  id: number;
+  name: string;
+  lat: number;
+  lng: number;
+  geometry: [number, number][];
+  bounds: [[number, number], [number, number]] | [number, number, number, number] | null;
+  location_type: "aoi" | "sub_area" | "bookmark";
+  parent_id: number | null;
+};
+
 type CompletedPolygon = {
   points: [number, number][];
   cameraId: number | string | null;
@@ -87,6 +98,7 @@ type MapProps = {
 
   refreshTrigger: number;
   goTo?: [number, number] | null;
+  goToBounds?: [[number, number], [number, number]] | null;
 
   showMapillarySigns?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
@@ -107,6 +119,34 @@ type CameraMarkerEntry = {
   lng: number;
   element: HTMLElement;
 };
+
+function normalizeBounds(bounds: SavedLocationRecord["bounds"], ring: [number, number][]): [number, number, number, number] {
+  if (Array.isArray(bounds) && bounds.length === 4 && typeof bounds[0] === "number") {
+    return bounds as [number, number, number, number];
+  }
+
+  if (Array.isArray(bounds) && bounds.length === 2 && Array.isArray(bounds[0]) && Array.isArray(bounds[1])) {
+    return [bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1]];
+  }
+
+  return rectToBoundingBox(ring);
+}
+
+function savedLocationToFocusArea(loc: SavedLocationRecord, kind: "primary" | "sub"): FocusArea | null {
+  if (!loc.geometry || loc.geometry.length < 4) return null;
+
+  const ring = loc.geometry;
+  const bbox = normalizeBounds(loc.bounds, ring);
+
+  return {
+    kind,
+    label: loc.name,
+    ring,
+    bbox,
+    paddedBbox: expandBbox(bbox, kind === "sub" ? 0.04 : 0.08),
+    minZoom: 14,
+  };
+}
 
 function useLatestRef<T>(value: T) {
   const ref = useRef(value);
@@ -240,6 +280,7 @@ export default function MapView({
   selectedCameraId,
   refreshTrigger,
   goTo,
+  goToBounds,
   showMapillarySigns = true,
   onMapReady,
 }: MapProps) {
@@ -288,6 +329,10 @@ export default function MapView({
   const activeSubAreaIndexRef = useLatestRef(activeSubAreaIndex);
   const explorePhaseRef = useLatestRef(explorePhase);
   const selectedSubAreaIndexRef = useLatestRef(selectedSubAreaIndex);
+  const [savedAoiId, setSavedAoiId] = useState<number | null>(null);
+  const [savedSubAreaIds, setSavedSubAreaIds] = useState<Record<number, number>>({});
+
+  const hasLoadedExploreAreasRef = useRef(false);
 
   const style = "https://tiles.openfreemap.org/styles/liberty";
   const lng = 120.9842;
@@ -590,6 +635,118 @@ export default function MapView({
     ];
   }
 
+  const createSavedArea = useCallback(
+    async ({
+      name,
+      coords,
+      locationType,
+      parentId = null,
+    }: {
+      name: string;
+      coords: [number, number][];
+      locationType: "aoi" | "sub_area";
+      parentId?: number | null;
+    }) => {
+      const centroid = getPolygonCentroid(coords);
+      const bounds = getPolygonBounds(coords);
+
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/saved-locations/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          lat: centroid.lat,
+          lng: centroid.lng,
+          geometry: coords,
+          bounds,
+          location_type: locationType,
+          parent_id: parentId,
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error("Create saved area failed:", response.status, text);
+        throw new Error(`Failed to create saved area: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.saved_location;
+    },
+    [],
+  );
+
+  const updateSavedArea = useCallback(
+    async ({ id, name, coords, parentId }: { id: number; name: string; coords: [number, number][]; parentId?: number | null }) => {
+      const centroid = getPolygonCentroid(coords);
+      const bounds = getPolygonBounds(coords);
+
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/saved-locations/${id}/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          lat: centroid.lat,
+          lng: centroid.lng,
+          geometry: coords,
+          bounds,
+          parent_id: parentId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update saved area");
+      }
+    },
+    [],
+  );
+
+  const deleteSavedArea = useCallback(async (id: number) => {
+    const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/saved-locations/${id}/`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to delete saved area");
+    }
+  }, []);
+
+  const clearTerradrawSelection = useCallback(() => {
+    try {
+      const control = drawControlRef.current;
+      if (!control) {
+        rectIdRef.current = null;
+        return;
+      }
+
+      const di = control.getTerraDrawInstance?.();
+      if (!di) {
+        rectIdRef.current = null;
+        return;
+      }
+
+      let snapshot: TerraDrawFeature[] = [];
+      try {
+        snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
+      } catch {
+        rectIdRef.current = null;
+        return;
+      }
+
+      snapshot.forEach((feature) => {
+        try {
+          di.removeFeatures?.([String(feature.id)]);
+        } catch {
+          // ignore if TerraDraw is disabled/not ready
+        }
+      });
+
+      rectIdRef.current = null;
+    } catch {
+      rectIdRef.current = null;
+    }
+  }, []);
+
   const applyLockedFocusToMap = useCallback((area: FocusArea) => {
     const map = mapRef.current;
     if (!map) return;
@@ -611,19 +768,101 @@ export default function MapView({
     });
   }, []);
 
-  const clearTerradrawSelection = useCallback(() => {
-    const di = drawControlRef.current?.getTerraDrawInstance?.();
-    if (!di) return;
+  const startPrimaryDrawingMode = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
 
-    const snapshot = (di.getSnapshot?.() ?? []) as TerraDrawFeature[];
-    snapshot.forEach((feature) => {
+    restoreDefaultExploreCamera(map);
+    clearTerradrawSelection();
+    setFocusError(null);
+    setPrimaryFocusArea(null);
+    setSubFocusAreas([]);
+    setActiveSubAreaIndex(null);
+    setSelectedSubAreaIndex(null);
+    setExplorePhase("drawing-primary");
+
+    const trySetRectangleMode = () => {
       try {
-        di.removeFeatures([String(feature.id)]);
-      } catch {}
-    });
+        const di = drawControlRef.current?.getTerraDrawInstance?.();
+        if (!di) return false;
+        di.setMode?.("rectangle");
+        return true;
+      } catch {
+        return false;
+      }
+    };
 
-    rectIdRef.current = null;
-  }, []);
+    if (trySetRectangleMode()) return;
+
+    requestAnimationFrame(() => {
+      if (trySetRectangleMode()) return;
+      setTimeout(() => {
+        trySetRectangleMode();
+      }, 0);
+    });
+  }, [clearTerradrawSelection, restoreDefaultExploreCamera]);
+
+  const loadSavedExploreAreas = useCallback(async () => {
+    try {
+      const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/saved-locations/`, {
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error("Failed to load saved explore areas:", response.status, text);
+        return;
+      }
+
+      const data = await response.json();
+      if (!data.success || !Array.isArray(data.saved_locations)) return;
+
+      const savedLocations = data.saved_locations as SavedLocationRecord[];
+
+      const savedAoi = savedLocations.find((loc) => loc.location_type === "aoi");
+      if (!savedAoi) {
+        setSavedAoiId(null);
+        setSavedSubAreaIds({});
+        setPrimaryFocusArea(null);
+        setSubFocusAreas([]);
+        setActiveSubAreaIndex(null);
+        setSelectedSubAreaIndex(null);
+
+        startPrimaryDrawingMode();
+        return;
+      }
+
+      const nextPrimary = savedLocationToFocusArea(savedAoi, "primary");
+      if (!nextPrimary) return;
+
+      const savedSubs = savedLocations.filter((loc) => loc.location_type === "sub_area" && loc.parent_id === savedAoi.id);
+
+      const nextSubAreas: FocusArea[] = [];
+      const nextSavedSubAreaIds: Record<number, number> = {};
+
+      savedSubs.forEach((loc, index) => {
+        const area = savedLocationToFocusArea(loc, "sub");
+        if (!area) return;
+        nextSubAreas.push(area);
+        nextSavedSubAreaIds[index] = loc.id;
+      });
+
+      setSavedAoiId(savedAoi.id);
+      setSavedSubAreaIds(nextSavedSubAreaIds);
+      setPrimaryFocusArea(nextPrimary);
+      setSubFocusAreas(nextSubAreas);
+      setActiveSubAreaIndex(null);
+      setSelectedSubAreaIndex(null);
+      setFocusError(null);
+      setExplorePhase("locked-primary");
+
+      requestAnimationFrame(() => {
+        applyLockedFocusToMap(nextPrimary);
+      });
+    } catch (error) {
+      console.error("Error loading saved explore areas:", error);
+    }
+  }, [applyLockedFocusToMap, startPrimaryDrawingMode]);
 
   const restoreFocusAreaToTerradraw = useCallback(
     (area: FocusArea) => {
@@ -820,39 +1059,98 @@ export default function MapView({
 
     setFocusError(null);
 
-    if (isSubArea && parentArea) {
-      if (editingIndex != null) {
-        setSubFocusAreas((prev) => prev.map((area, index) => (index === editingIndex ? nextArea : area)));
-        setSelectedSubAreaIndex(editingIndex);
-      } else {
-        const nextIndex = subFocusAreasRef.current.length;
-        setSubFocusAreas((prev) => [...prev, nextArea]);
-        setSelectedSubAreaIndex(nextIndex);
+    try {
+      if (isSubArea && parentArea) {
+        if (editingIndex != null) {
+          const existingSavedSubAreaId = savedSubAreaIds[editingIndex];
+
+          if (existingSavedSubAreaId) {
+            await updateSavedArea({
+              id: existingSavedSubAreaId,
+              name: label,
+              coords: ring,
+              parentId: savedAoiId,
+            });
+          } else {
+            const savedSubArea = await createSavedArea({
+              name: label,
+              coords: ring,
+              locationType: "sub_area",
+              parentId: savedAoiId,
+            });
+
+            setSavedSubAreaIds((prev) => ({
+              ...prev,
+              [editingIndex]: savedSubArea.id,
+            }));
+          }
+
+          setSubFocusAreas((prev) => prev.map((area, index) => (index === editingIndex ? nextArea : area)));
+          setSelectedSubAreaIndex(editingIndex);
+        } else {
+          const savedSubArea = await createSavedArea({
+            name: label,
+            coords: ring,
+            locationType: "sub_area",
+            parentId: savedAoiId,
+          });
+
+          const nextIndex = subFocusAreasRef.current.length;
+
+          setSubFocusAreas((prev) => [...prev, nextArea]);
+          setSavedSubAreaIds((prev) => ({
+            ...prev,
+            [nextIndex]: savedSubArea.id,
+          }));
+          setSelectedSubAreaIndex(nextIndex);
+        }
+
+        setActiveSubAreaIndex(null);
+        setExplorePhase("locked-primary");
+        applyLockedFocusToMap(parentArea);
+        di.setMode?.("select");
+        return;
       }
 
+      if (savedAoiId) {
+        await updateSavedArea({
+          id: savedAoiId,
+          name: label,
+          coords: ring,
+        });
+      } else {
+        const savedAoi = await createSavedArea({
+          name: label,
+          coords: ring,
+          locationType: "aoi",
+        });
+
+        setSavedAoiId(savedAoi.id);
+      }
+
+      setPrimaryFocusArea(nextArea);
       setActiveSubAreaIndex(null);
+      setSelectedSubAreaIndex(null);
+      setSubFocusAreas((prev) => prev.filter((sub) => bboxContains(nextArea.bbox, sub.bbox)));
       setExplorePhase("locked-primary");
-      applyLockedFocusToMap(parentArea);
+      applyLockedFocusToMap(nextArea);
+
       di.setMode?.("select");
-      return;
+    } catch (error) {
+      console.error("Failed to save AOI/sub-area:", error);
+      setFocusError("Failed to save area. Please try again.");
     }
-
-    setPrimaryFocusArea(nextArea);
-    setActiveSubAreaIndex(null);
-    setSelectedSubAreaIndex(null);
-    setSubFocusAreas((prev) => prev.filter((sub) => bboxContains(nextArea.bbox, sub.bbox)));
-    setExplorePhase("locked-primary");
-    applyLockedFocusToMap(nextArea);
-
-    di.setMode?.("select");
   }, [
     activeSubAreaIndexRef,
     applyLockedFocusToMap,
-    clearTerradrawSelection,
     explorePhaseRef,
     primaryFocusAreaRef,
     reverseGeocodeAreaName,
+    savedAoiId,
+    savedSubAreaIds,
     subFocusAreasRef,
+    createSavedArea,
+    updateSavedArea,
   ]);
 
   const fitToFocusArea = useCallback((area: FocusArea) => {
@@ -868,24 +1166,53 @@ export default function MapView({
     );
   }, []);
 
-  const deleteSelectedSubArea = useCallback(() => {
+  const deleteSelectedSubArea = useCallback(async () => {
     const index = selectedSubAreaIndexRef.current;
     if (index == null) return;
 
-    setSubFocusAreas((prev) => prev.filter((_, i) => i !== index));
-    setSelectedSubAreaIndex(null);
-    setActiveSubAreaIndex(null);
-    setFocusError(null);
+    const savedSubAreaId = savedSubAreaIds[index];
 
-    const primary = primaryFocusAreaRef.current;
-    if (primary) {
-      setExplorePhase("locked-primary");
-      clearTerradrawSelection();
-      applyLockedFocusToMap(primary);
+    try {
+      if (savedSubAreaId) {
+        await deleteSavedArea(savedSubAreaId);
+      }
+
+      setSubFocusAreas((prev) => prev.filter((_, i) => i !== index));
+
+      setSavedSubAreaIds((prev) => {
+        const next: Record<number, number> = {};
+        Object.entries(prev).forEach(([key, value]) => {
+          const numericKey = Number(key);
+          if (numericKey < index) next[numericKey] = value;
+          if (numericKey > index) next[numericKey - 1] = value;
+        });
+        return next;
+      });
+
+      setSelectedSubAreaIndex(null);
+      setActiveSubAreaIndex(null);
+      setFocusError(null);
+
+      const primary = primaryFocusAreaRef.current;
+      if (primary) {
+        setExplorePhase("locked-primary");
+        clearTerradrawSelection();
+        applyLockedFocusToMap(primary);
+
+        const di = drawControlRef.current?.getTerraDrawInstance?.();
+        try {
+          di?.setMode?.("select");
+        } catch {
+          // ignore if TerraDraw is disabled/not ready
+        }
+      }
+    } catch (error) {
+      console.error("Failed to delete sub-area:", error);
+      setFocusError("Failed to delete sub-area.");
     }
-  }, [applyLockedFocusToMap, clearTerradrawSelection, primaryFocusAreaRef, selectedSubAreaIndexRef]);
+  }, [applyLockedFocusToMap, clearTerradrawSelection, deleteSavedArea, primaryFocusAreaRef, selectedSubAreaIndexRef, savedSubAreaIds]);
 
-  const deletePrimaryFocusArea = useCallback(() => {
+  const restartPrimaryAoiDrawing = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
 
@@ -893,11 +1220,48 @@ export default function MapView({
     setFocusError(null);
     setPrimaryFocusArea(null);
     setSubFocusAreas([]);
+    setSavedAoiId(null);
+    setSavedSubAreaIds({});
     setActiveSubAreaIndex(null);
     setSelectedSubAreaIndex(null);
-    setExplorePhase("idle");
+
     restoreDefaultExploreCamera(map);
+    setExplorePhase("drawing-primary");
+
+    const tryEnableRectangle = () => {
+      try {
+        const di = drawControlRef.current?.getTerraDrawInstance?.();
+        if (!di) return false;
+        di.setMode?.("rectangle");
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (tryEnableRectangle()) return;
+
+    requestAnimationFrame(() => {
+      if (tryEnableRectangle()) return;
+
+      setTimeout(() => {
+        tryEnableRectangle();
+      }, 0);
+    });
   }, [clearTerradrawSelection, restoreDefaultExploreCamera]);
+
+  const deletePrimaryFocusArea = useCallback(async () => {
+    try {
+      if (savedAoiId) {
+        await deleteSavedArea(savedAoiId);
+      }
+
+      restartPrimaryAoiDrawing();
+    } catch (error) {
+      console.error("Failed to delete AOI:", error);
+      setFocusError("Failed to delete AOI.");
+    }
+  }, [deleteSavedArea, restartPrimaryAoiDrawing, savedAoiId]);
 
   const renderPolygonLayers = useCallback(() => {
     const map = mapRef.current;
@@ -1125,6 +1489,18 @@ export default function MapView({
   );
 
   useEffect(() => {
+    if (mode !== "explore") {
+      hasLoadedExploreAreasRef.current = false;
+      return;
+    }
+
+    if (hasLoadedExploreAreasRef.current) return;
+    hasLoadedExploreAreasRef.current = true;
+
+    loadSavedExploreAreas();
+  }, [mode, loadSavedExploreAreas]);
+
+  useEffect(() => {
     if (toolMode !== "addPoint") clearGuideline();
   }, [clearGuideline, toolMode]);
 
@@ -1171,27 +1547,6 @@ export default function MapView({
     explorePhaseRef,
     restoreDefaultExploreCamera,
   ]);
-
-  const saveSubArea = useCallback(async (name: string, coords: [number, number][]) => {
-    const centroid = getPolygonCentroid(coords);
-    const bounds = getPolygonBounds(coords);
-
-    const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/saved-locations/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        lat: centroid.lat,
-        lng: centroid.lng,
-        geometry: coords,
-        bounds,
-        location_type: "sub_area",
-      }),
-    });
-
-    const data = await response.json();
-    return data.saved_location;
-  }, []);
 
   // CONFIGURATION MODE
 
@@ -1444,6 +1799,7 @@ export default function MapView({
       }
 
       if (mode === "explore") {
+        showMapillarySigns = false;
         if (!drawControlRef.current) {
           const drawControl = new MaplibreTerradrawControl({
             modes: ["select", "rectangle"],
@@ -1546,6 +1902,29 @@ export default function MapView({
     removeHeatmapLayers,
     restoreDefaultExploreCamera,
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (goToBounds) {
+      map.fitBounds(goToBounds, {
+        padding: 60,
+        duration: 1200,
+        essential: true,
+      });
+      return;
+    }
+
+    if (!goTo) return;
+
+    map.flyTo({
+      center: goTo,
+      zoom: 18,
+      duration: 1200,
+      essential: true,
+    });
+  }, [goTo, goToBounds]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1814,23 +2193,28 @@ export default function MapView({
   }, [isEditMode, toolMode]);
 
   useEffect(() => {
-    if (!goTo) return;
-    const map = mapRef.current;
-    if (!map) return;
-
-    map.flyTo({
-      center: goTo,
-      zoom: 18,
-      duration: 1200,
-      essential: true,
-    });
-  }, [goTo]);
-
-  useEffect(() => {
     if (mode !== "explore") return;
-    if (explorePhase === "idle" && !primaryFocusArea) {
-      beginPrimaryFocusDrawing();
-    }
+    if (primaryFocusArea) return;
+
+    if (explorePhase !== "idle" && explorePhase !== "drawing-primary") return;
+
+    const tryStart = () => {
+      try {
+        const di = drawControlRef.current?.getTerraDrawInstance?.();
+        if (!di) return false;
+
+        beginPrimaryFocusDrawing();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (tryStart()) return;
+
+    requestAnimationFrame(() => {
+      tryStart();
+    });
   }, [beginPrimaryFocusDrawing, explorePhase, mode, primaryFocusArea]);
 
   useEffect(() => {
@@ -2027,6 +2411,7 @@ export default function MapView({
       return;
     }
 
+    showMapillarySigns = false;
     const markers = dashboardMarkers ?? [];
     const incomingKeys = new Set(markers.map((m) => String(m.id)));
 

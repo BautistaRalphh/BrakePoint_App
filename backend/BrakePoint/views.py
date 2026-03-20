@@ -1,30 +1,35 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from django.contrib import messages
-from django.contrib.auth import authenticate, login
+
+from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.db.models.functions import TruncDate
-import json
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth.decorators import login_required
-from .models import SavedLocation, Camera, Video
-from .serializers import SavedLocationSerializer
-from .models import SavedLocation, Camera, Video
-from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer, VideoSerializer
-import requests
-import tempfile, os
+from django.utils import timezone
 
-import sys, os
+from rest_framework_simplejwt.tokens import RefreshToken
+
+import json
+import requests
+import tempfile
+import os
+import sys
+import traceback
+
+from .models import SavedLocation, Camera, Video
+from .serializers import (
+    SavedLocationSerializer,
+    SignupSerializer,
+    CameraSerializer,
+    VideoSerializer,
+)
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from yolo_processor import run_detection_on_video
 from mask_rcnn_detectron2_processor import run_traffic_sign_detection_on_video
-from django.utils import timezone
-
 api_view(['GET'])
 @permission_classes([AllowAny])
 def home(request):
@@ -52,6 +57,7 @@ def examine(request):
     })
 
 # ---- Log In and Sign Up ----
+
 api_view(['GET', 'POST'])
 permission_classes([AllowAny])
 def sign_up(request):
@@ -65,81 +71,238 @@ def sign_up(request):
     
 
 # ---- SavedLocations ----
-@csrf_exempt
-@login_required
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
 def saved_locations_list_create(request):
     if request.method == "GET":
-        location_type = request.GET.get("type")
-        qs = SavedLocation.objects.filter(user=request.user)
+        try:
+            location_type = request.query_params.get("type")
+            parent_id = request.query_params.get("parent_id")
 
-        if location_type:
-            qs = qs.filter(location_type=location_type)
+            qs = SavedLocation.objects.filter(user=request.user)
 
-        data = []
-        for loc in qs:
-            data.append({
-                "id": loc.id,
-                "name": loc.name,
-                "lat": loc.lat,
-                "lng": loc.lng,
-                "zoom": loc.zoom,
-                "bearing": loc.bearing,
-                "pitch": loc.pitch,
-                "geometry": loc.geometry,
-                "bounds": loc.bounds,
-                "location_type": loc.location_type,
-                "camera_count": loc.camera_count,
-                "vehicles": loc.total_vehicles,
-                "occurrences": loc.total_occurrences,
-                "speeding": loc.total_speeding,
-                "swerving": loc.total_swerving,
-                "abrupt_stopping": loc.total_abrupt_stopping,
-                "behaviors": loc.behavior_summary,
-            })
+            if location_type:
+                qs = qs.filter(location_type=location_type)
 
-        return JsonResponse({"success": True, "saved_locations": data})
+            if parent_id:
+                qs = qs.filter(parent_id=parent_id)
+
+            payload = []
+            for loc in qs:
+                payload.append({
+                    "id": loc.id,
+                    "name": loc.name,
+                    "lat": loc.lat,
+                    "lng": loc.lng,
+                    "zoom": loc.zoom,
+                    "bearing": loc.bearing,
+                    "pitch": loc.pitch,
+                    "geometry": loc.geometry,
+                    "bounds": loc.bounds,
+                    "location_type": loc.location_type,
+                    "parent_id": loc.parent_id,
+                    "camera_count": loc.camera_count,
+                    "vehicles": loc.total_vehicles,
+                    "occurrences": loc.total_occurrences,
+                    "speeding": loc.total_speeding,
+                    "swerving": loc.total_swerving,
+                    "abrupt_stopping": loc.total_abrupt_stopping,
+                    "behaviors": loc.behavior_summary,
+                })
+
+            return Response({"success": True, "saved_locations": payload})
+
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     if request.method == "POST":
-        body = json.loads(request.body)
+        try:
+            body = request.data
 
-        loc = SavedLocation.objects.create(
-            user=request.user,
-            name=body.get("name", "New Sub-Area"),
-            lat=body["lat"],
-            lng=body["lng"],
-            zoom=body.get("zoom", 17.0),
-            bearing=body.get("bearing", 0.0),
-            pitch=body.get("pitch", 0.0),
-            geometry=body.get("geometry"),
-            bounds=body.get("bounds"),
-            location_type=body.get("location_type", "sub_area"),
-        )
+            if "lat" not in body or "lng" not in body:
+                return Response(
+                    {"success": False, "error": "lat and lng are required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        return JsonResponse({
-            "success": True,
-            "saved_location": {
-                "id": loc.id,
-                "name": loc.name,
-                "lat": loc.lat,
-                "lng": loc.lng,
-                "geometry": loc.geometry,
-                "bounds": loc.bounds,
-                "location_type": loc.location_type,
-            }
-        }, status=201)
+            parent_id = body.get("parent_id")
+            if parent_id is not None:
+                exists = SavedLocation.objects.filter(
+                    id=parent_id,
+                    user=request.user,
+                ).exists()
+                if not exists:
+                    return Response(
+                        {"success": False, "error": "Parent saved location not found"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+            loc = SavedLocation.objects.create(
+                user=request.user,
+                name=body.get("name", "Untitled Area"),
+                lat=body["lat"],
+                lng=body["lng"],
+                zoom=body.get("zoom", 17.0),
+                bearing=body.get("bearing", 0.0),
+                pitch=body.get("pitch", 0.0),
+                geometry=body.get("geometry"),
+                bounds=body.get("bounds"),
+                location_type=body.get("location_type", "sub_area"),
+                parent_id=parent_id,
+            )
+
+            return Response(
+                {
+                    "success": True,
+                    "saved_location": {
+                        "id": loc.id,
+                        "name": loc.name,
+                        "lat": loc.lat,
+                        "lng": loc.lng,
+                        "zoom": loc.zoom,
+                        "bearing": loc.bearing,
+                        "pitch": loc.pitch,
+                        "geometry": loc.geometry,
+                        "bounds": loc.bounds,
+                        "location_type": loc.location_type,
+                        "parent_id": loc.parent_id,
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    if request.method == "GET":
+        try:
+            location_type = request.GET.get("type")
+            parent_id = request.GET.get("parent_id")
+
+            qs = SavedLocation.objects.filter(user=request.user)
+
+            if location_type:
+                qs = qs.filter(location_type=location_type)
+
+            if parent_id:
+                qs = qs.filter(parent_id=parent_id)
+
+            payload = []
+            for loc in qs:
+                payload.append({
+                    "id": loc.id,
+                    "name": loc.name,
+                    "lat": loc.lat,
+                    "lng": loc.lng,
+                    "zoom": loc.zoom,
+                    "bearing": loc.bearing,
+                    "pitch": loc.pitch,
+                    "geometry": loc.geometry,
+                    "bounds": loc.bounds,
+                    "location_type": loc.location_type,
+                    "parent_id": loc.parent_id,
+                    "camera_count": loc.camera_count,
+                    "vehicles": loc.total_vehicles,
+                    "occurrences": loc.total_occurrences,
+                    "speeding": loc.total_speeding,
+                    "swerving": loc.total_swerving,
+                    "abrupt_stopping": loc.total_abrupt_stopping,
+                    "behaviors": loc.behavior_summary,
+                })
+
+            return JsonResponse({"success": True, "saved_locations": payload})
+
+        except Exception as e:
+            print("GET /saved-locations/ failed:")
+            traceback.print_exc()
+            return JsonResponse(
+                {"success": False, "error": str(e)},
+                status=500,
+            )
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body or "{}")
+
+            print("POST /saved-locations/ body:", body)
+            print("Authenticated user:", request.user, request.user.is_authenticated)
+
+            if "lat" not in body or "lng" not in body:
+                return JsonResponse(
+                    {"success": False, "error": "lat and lng are required"},
+                    status=400,
+                )
+
+            parent_id = body.get("parent_id")
+            if parent_id is not None:
+                exists = SavedLocation.objects.filter(id=parent_id, user=request.user).exists()
+                if not exists:
+                    return JsonResponse(
+                        {"success": False, "error": "Parent saved location not found"},
+                        status=404,
+                    )
+
+            loc = SavedLocation.objects.create(
+                user=request.user,
+                name=body.get("name", "Untitled Area"),
+                lat=body["lat"],
+                lng=body["lng"],
+                zoom=body.get("zoom", 17.0),
+                bearing=body.get("bearing", 0.0),
+                pitch=body.get("pitch", 0.0),
+                geometry=body.get("geometry"),
+                bounds=body.get("bounds"),
+                location_type=body.get("location_type", "sub_area"),
+                parent_id=parent_id,
+            )
+
+            return JsonResponse({
+                "success": True,
+                "saved_location": {
+                    "id": loc.id,
+                    "name": loc.name,
+                    "lat": loc.lat,
+                    "lng": loc.lng,
+                    "zoom": loc.zoom,
+                    "bearing": loc.bearing,
+                    "pitch": loc.pitch,
+                    "geometry": loc.geometry,
+                    "bounds": loc.bounds,
+                    "location_type": loc.location_type,
+                    "parent_id": loc.parent_id,
+                }
+            }, status=201)
+
+        except Exception as e:
+            print("POST /saved-locations/ failed:")
+            traceback.print_exc()
+            return JsonResponse(
+                {"success": False, "error": str(e)},
+                status=500,
+            )
 
     return JsonResponse({"success": False, "error": "Method not allowed"}, status=405)
 
-@csrf_exempt
-@login_required
+@api_view(["GET", "PATCH", "PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
 def saved_location_detail(request, saved_location_id):
     try:
         loc = SavedLocation.objects.get(id=saved_location_id, user=request.user)
     except SavedLocation.DoesNotExist:
-        return JsonResponse({"success": False, "error": "Saved location not found"}, status=404)
+        return Response(
+            {"success": False, "error": "Saved location not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     if request.method == "GET":
-        return JsonResponse({
+        return Response({
             "success": True,
             "saved_location": {
                 "id": loc.id,
@@ -152,6 +315,7 @@ def saved_location_detail(request, saved_location_id):
                 "geometry": loc.geometry,
                 "bounds": loc.bounds,
                 "location_type": loc.location_type,
+                "parent_id": loc.parent_id,
                 "camera_count": loc.camera_count,
                 "vehicles": loc.total_vehicles,
                 "occurrences": loc.total_occurrences,
@@ -163,118 +327,96 @@ def saved_location_detail(request, saved_location_id):
         })
 
     if request.method in ["PATCH", "PUT"]:
-        body = json.loads(request.body)
+        try:
+            body = request.data
 
-        loc.name = body.get("name", loc.name)
-        loc.lat = body.get("lat", loc.lat)
-        loc.lng = body.get("lng", loc.lng)
-        loc.zoom = body.get("zoom", loc.zoom)
-        loc.bearing = body.get("bearing", loc.bearing)
-        loc.pitch = body.get("pitch", loc.pitch)
-        loc.geometry = body.get("geometry", loc.geometry)
-        loc.bounds = body.get("bounds", loc.bounds)
-        loc.location_type = body.get("location_type", loc.location_type)
-        loc.save()
+            loc.name = body.get("name", loc.name)
+            loc.lat = body.get("lat", loc.lat)
+            loc.lng = body.get("lng", loc.lng)
+            loc.zoom = body.get("zoom", loc.zoom)
+            loc.bearing = body.get("bearing", loc.bearing)
+            loc.pitch = body.get("pitch", loc.pitch)
+            loc.geometry = body.get("geometry", loc.geometry)
+            loc.bounds = body.get("bounds", loc.bounds)
+            loc.location_type = body.get("location_type", loc.location_type)
 
-        return JsonResponse({"success": True})
+            if "parent_id" in body:
+                new_parent_id = body.get("parent_id")
+                if new_parent_id is None:
+                    loc.parent_id = None
+                else:
+                    exists = SavedLocation.objects.filter(
+                        id=new_parent_id,
+                        user=request.user,
+                    ).exists()
+                    if not exists:
+                        return Response(
+                            {"success": False, "error": "Parent saved location not found"},
+                            status=status.HTTP_404_NOT_FOUND,
+                        )
+                    loc.parent_id = new_parent_id
 
-    return JsonResponse({"success": False, "error": "Method not allowed"}, status=405)
+            loc.save()
+            return Response({"success": True})
 
-@csrf_exempt
-@login_required
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    if request.method == "DELETE":
+        try:
+            SavedLocation.objects.filter(user=request.user, parent_id=loc.id).delete()
+            loc.delete()
+            return Response({"success": True})
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+            
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
 def assign_camera_to_saved_location(request, camera_id):
-    if request.method != "PATCH":
-        return JsonResponse({"success": False, "error": "Method not allowed"}, status=405)
-
     try:
         camera = Camera.objects.get(id=camera_id, user=request.user)
     except Camera.DoesNotExist:
-        return JsonResponse({"success": False, "error": "Camera not found"}, status=404)
+        return Response(
+            {"success": False, "error": "Camera not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
-    body = json.loads(request.body)
-    saved_location_id = body.get("saved_location_id")
+    try:
+        saved_location_id = request.data.get("saved_location_id")
 
-    if saved_location_id is None:
-        camera.saved_location = None
+        if saved_location_id is None:
+            camera.saved_location = None
+            camera.save()
+            return Response({"success": True})
+
+        try:
+            loc = SavedLocation.objects.get(id=saved_location_id, user=request.user)
+        except SavedLocation.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Saved location not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        camera.saved_location = loc
         camera.save()
-        return JsonResponse({"success": True})
 
-    try:
-        loc = SavedLocation.objects.get(id=saved_location_id, user=request.user)
-    except SavedLocation.DoesNotExist:
-        return JsonResponse({"success": False, "error": "Saved location not found"}, status=404)
+        return Response({"success": True})
 
-    camera.saved_location = loc
-    camera.save()
-
-    return JsonResponse({"success": True})
-
-@api_view(['GET', 'POST'])
-@permission_classes([AllowAny])   # tighten later if needed
-def saved_locations_api(request):
-    if request.method == 'GET':
-        qs = SavedLocation.objects.all().order_by('-id')
-        return Response({"SavedLocations": SavedLocationSerializer(qs, many=True).data})
-    # POST (create)
-    ser = SavedLocationSerializer(data=request.data)
-    if ser.is_valid():
-        ser.save()
-        return Response({"success": True, "SavedLocation": ser.data})
-    return Response({"success": False, "error": ser.errors}, status=400)
-
-@api_view(['PUT', 'DELETE'])
-@permission_classes([AllowAny])   # tighten later if needed
-def saved_location_detail_api(request, pk: int):
-    try:
-        loc = SavedLocation.objects.get(pk=pk)
-    except SavedLocation.DoesNotExist:
-        return Response({"success": False, "error": "Not found"}, status=404)
-
-    if request.method == 'PUT':
-        ser = SavedLocationSerializer(loc, data=request.data, partial=True)
-        if ser.is_valid():
-            ser.save()
-            return Response({"success": True, "SavedLocation": ser.data})
-        return Response({"success": False, "error": ser.errors}, status=400)
-
-    # DELETE
-    loc.delete()
-    return Response({"success": True})
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def saved_location_behaviors_api(request, pk: int):
-    """Get detailed aggressive behavior stats for a saved location"""
-    try:
-        loc = SavedLocation.objects.get(pk=pk)
-    except SavedLocation.DoesNotExist:
-        return Response({"success": False, "error": "Not found"}, status=404)
-
-    # Get all completed videos linked to this location's cameras
-    videos = Video.objects.filter(
-        camera__saved_location=loc,
-        processing_status='completed'
-    ).order_by('-uploaded_at')
-
-    video_data = VideoSerializer(videos, many=True).data
-    camera_data = CameraSerializer(loc.cameras.all(), many=True).data
-
-    return Response({
-        "success": True,
-        "location": SavedLocationSerializer(loc).data,
-        "cameras": camera_data,
-        "videos": video_data,
-        "summary": {
-            "total_vehicles": loc.total_vehicles,
-            "total_occurrences": loc.total_occurrences,
-            "speeding": loc.total_speeding,
-            "swerving": loc.total_swerving,
-            "abrupt_stopping": loc.total_abrupt_stopping,
-            "behaviors": loc.behavior_summary,
-            "camera_count": loc.camera_count,
-        }
-    })
-
+    except Exception as e:
+        traceback.print_exc()
+        return Response(
+            {"success": False, "error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+        
 # ---- Auth (session-based example) ----
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -966,10 +1108,141 @@ def behavior_timeline_api(request):
     return Response({"success": True, "timeline": data})
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@login_required
 def dashboard_summary(request):
+    try:
+        start = request.query_params.get("start")
+        end = request.query_params.get("end")
+
+        videos = Video.objects.filter(
+            camera__user=request.user,
+            processing_status="completed",
+        )
+
+        if start:
+            videos = videos.filter(uploaded_at__date__gte=start)
+        if end:
+            videos = videos.filter(uploaded_at__date__lte=end)
+
+        totals = {
+            "vehicles": sum(v.vehicles for v in videos),
+            "adb": sum(v.occurrences for v in videos),
+            "speeding": sum(v.speeding_count for v in videos),
+            "swerving": sum(v.swerving_count for v in videos),
+            "abrupt_stopping": sum(v.abrupt_stopping_count for v in videos),
+        }
+
+        vehicle_breakdown = {}
+        for video in videos:
+            for label, value in (video.vehicle_breakdown or {}).items():
+                vehicle_breakdown[label] = vehicle_breakdown.get(label, 0) + value
+
+        saved_locations = SavedLocation.objects.filter(
+            user=request.user,
+            location_type="sub_area",
+        )
+
+        sub_areas = []
+        for loc in saved_locations:
+            loc_videos = videos.filter(camera__saved_location=loc)
+
+            tags = set()
+            for cam in loc.cameras.all():
+                for tag in (cam.tags or []):
+                    tags.add(tag)
+
+            sub_areas.append({
+                "id": loc.id,
+                "name": loc.name,
+                "lat": loc.lat,
+                "lng": loc.lng,
+                "geometry": loc.geometry,
+                "bounds": loc.bounds,
+                "camera_count": loc.camera_count,
+                "vehicles": sum(v.vehicles for v in loc_videos),
+                "speeding": sum(v.speeding_count for v in loc_videos),
+                "swerving": sum(v.swerving_count for v in loc_videos),
+                "abrupt_stopping": sum(v.abrupt_stopping_count for v in loc_videos),
+                "adb": sum(v.occurrences for v in loc_videos),
+                "tags": sorted(tags),
+            })
+
+        return Response({
+            "success": True,
+            "totals": totals,
+            "vehicle_breakdown": vehicle_breakdown,
+            "sub_areas": sub_areas,
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return Response(
+            {"success": False, "error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    start = request.GET.get("start")
+    end = request.GET.get("end")
+
+    videos = Video.objects.filter(
+        camera__user=request.user,
+        processing_status="completed",
+    )
+
+    if start:
+        videos = videos.filter(uploaded_at__date__gte=start)
+    if end:
+        videos = videos.filter(uploaded_at__date__lte=end)
+
+    totals = {
+        "vehicles": sum(v.vehicles for v in videos),
+        "adb": sum(v.occurrences for v in videos),
+        "speeding": sum(v.speeding_count for v in videos),
+        "swerving": sum(v.swerving_count for v in videos),
+        "abrupt_stopping": sum(v.abrupt_stopping_count for v in videos),
+    }
+
+    vehicle_breakdown = {}
+    for video in videos:
+        for label, value in (video.vehicle_breakdown or {}).items():
+            vehicle_breakdown[label] = vehicle_breakdown.get(label, 0) + value
+
+    saved_locations = SavedLocation.objects.filter(
+        user=request.user,
+        location_type="sub_area",
+    )
+
+    sub_areas = []
+    for loc in saved_locations:
+        loc_videos = videos.filter(camera__saved_location=loc)
+
+        tags = set()
+        for cam in loc.cameras.all():
+            for tag in (cam.tags or []):
+                tags.add(tag)
+
+        sub_areas.append({
+            "id": loc.id,
+            "name": loc.name,
+            "lat": loc.lat,
+            "lng": loc.lng,
+            "geometry": loc.geometry,
+            "bounds": loc.bounds,
+            "camera_count": loc.camera_count,
+            "vehicles": sum(v.vehicles for v in loc_videos),
+            "speeding": sum(v.speeding_count for v in loc_videos),
+            "swerving": sum(v.swerving_count for v in loc_videos),
+            "abrupt_stopping": sum(v.abrupt_stopping_count for v in loc_videos),
+            "adb": sum(v.occurrences for v in loc_videos),
+            "tags": sorted(tags),
+        })
+
+    return JsonResponse({
+        "success": True,
+        "totals": totals,
+        "vehicle_breakdown": vehicle_breakdown,
+        "sub_areas": sub_areas,
+    })
     start = request.GET.get("start")
     end = request.GET.get("end")
 

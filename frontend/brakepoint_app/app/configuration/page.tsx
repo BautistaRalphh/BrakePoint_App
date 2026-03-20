@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import dynamic from "next/dynamic";
-import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton } from "@mui/material";
+import { Divider, Box, Typography, TextField, IconButton } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import CheckIcon from "@mui/icons-material/Check";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
@@ -13,32 +13,46 @@ import { authFetch } from "@/lib/authFetch";
 
 import SideTab from "@components/map/sideTab";
 import Table from "@components/ui/table";
+import ModeSegmentedControl from "@/components/ui/modeToggle";
 
 import "./style.css";
-
-import ModeSegmentedControl from "@/components/ui/modeToggle";
 
 const Map = dynamic(() => import("@components/map/map"), { ssr: false });
 
 type DrawMode = "none" | "drawPolygon" | "editPolygon" | "deletePolygon";
 
+type SavedLocation = {
+  id: number;
+  name: string;
+  lat: number;
+  lng: number;
+  bounds: [[number, number], [number, number]] | null;
+  geometry: [number, number][] | null;
+  location_type: "aoi" | "sub_area" | "bookmark";
+  parent_id: number | null;
+};
+
 export default function MapPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const selectedCameraIdFromUrl = searchParams.get("cameraId");
-
   const { trackVideoProcessing, showToast } = useNotifications();
+
+  const selectedCameraIdFromUrl = searchParams.get("cameraId");
+  const savedLocationIdFromUrl = searchParams.get("savedLocationId");
+
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
 
   const [allFeeds, setAllFeeds] = useState<any[]>([]);
-
   const [selectedFeedId, setSelectedFeedId] = useState<number | null>(null);
   const selectedFeedIdRef = useRef<number | null>(null);
 
   const [goTo, setGoTo] = useState<[number, number] | null>(null);
+  const [goToBounds, setGoToBounds] = useState<[[number, number], [number, number]] | null>(null);
+
+  const [savedLocation, setSavedLocation] = useState<SavedLocation | null>(null);
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [newFeedName, setNewFeedName] = useState("");
@@ -56,20 +70,10 @@ export default function MapPage() {
   const [draftPoly, setDraftPoly] = useState<[number, number][]>([]);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
 
-  useEffect(() => {
-    if (!camerasLoaded) return;
-
-    if (selectedCameraIdFromUrl) {
-      const cameraId = Number(selectedCameraIdFromUrl);
-
-      if (!Number.isNaN(cameraId)) {
-        setSelectedFeedId(cameraId);
-        return;
-      }
-    }
-
-    setSelectedFeedId(null);
-  }, [selectedCameraIdFromUrl, camerasLoaded]);
+  function getBoundsCenter(bounds: [[number, number], [number, number]]): [number, number] {
+    const [[minLng, minLat], [maxLng, maxLat]] = bounds;
+    return [(minLng + maxLng) / 2, (minLat + maxLat) / 2];
+  }
 
   const handleMapReady = useCallback((map: maplibregl.Map) => {
     mapInstanceRef.current = map;
@@ -79,6 +83,55 @@ export default function MapPage() {
   useEffect(() => {
     selectedFeedIdRef.current = selectedFeedId;
   }, [selectedFeedId]);
+
+  useEffect(() => {
+    if (!camerasLoaded) return;
+
+    if (selectedCameraIdFromUrl) {
+      const cameraId = Number(selectedCameraIdFromUrl);
+      if (!Number.isNaN(cameraId)) {
+        setSelectedFeedId(cameraId);
+        return;
+      }
+    }
+
+    setSelectedFeedId(null);
+  }, [selectedCameraIdFromUrl, camerasLoaded]);
+
+  useEffect(() => {
+    const loadSavedLocation = async () => {
+      if (!savedLocationIdFromUrl) {
+        setSavedLocation(null);
+        setGoToBounds(null);
+        setGoTo(null);
+        return;
+      }
+
+      try {
+        const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/saved-locations/${savedLocationIdFromUrl}/`);
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (!data.success || !data.saved_location) return;
+
+        const loc = data.saved_location as SavedLocation;
+        setSavedLocation(loc);
+
+        if (loc.bounds) {
+          setGoToBounds(loc.bounds);
+          setGoTo(getBoundsCenter(loc.bounds));
+        } else {
+          setGoToBounds(null);
+          setGoTo([loc.lng, loc.lat]);
+        }
+      } catch (error) {
+        console.error("Failed to load saved location:", error);
+      }
+    };
+
+    loadSavedLocation();
+  }, [savedLocationIdFromUrl]);
 
   const selectedFeed = useMemo(() => allFeeds.find((feed) => feed.id === selectedFeedId), [allFeeds, selectedFeedId]);
 
@@ -98,8 +151,8 @@ export default function MapPage() {
 
           if (data.success && data.cameras) {
             const cameraId = Number(selectedFeedId);
-
             const camera = data.cameras.find((cam: any) => cam.id === cameraId);
+
             if (camera) {
               setSelectedFeedData({
                 id: camera.id,
@@ -120,7 +173,6 @@ export default function MapPage() {
             }
           }
         } else {
-          console.error("Failed to fetch camera data:", response.statusText);
           setSelectedFeedData(null);
         }
       } catch (error) {
@@ -149,9 +201,10 @@ export default function MapPage() {
           if (data.success && data.videos && data.videos.length > 0) {
             const latestVideo = data.videos[0];
             const occurrences = (latestVideo.speeding_count || 0) + (latestVideo.swerving_count || 0) + (latestVideo.abrupt_stopping_count || 0);
+
             setSelectedVideoData({
               vehicles: latestVideo.vehicles || 0,
-              occurrences: occurrences,
+              occurrences,
               behaviors: latestVideo.behaviors || ["No Data"],
               signs: latestVideo.signs || 0,
               signClasses: latestVideo.sign_classes || [],
@@ -184,7 +237,6 @@ export default function MapPage() {
     fetchLatestVideo();
   }, [selectedFeedId, refreshTrigger]);
 
-  // Fetch and aggregate all videos from visible cameras
   useEffect(() => {
     const fetchAggregatedVideos = async () => {
       if (visibleCameraIds.length === 0) {
@@ -193,13 +245,11 @@ export default function MapPage() {
       }
 
       try {
-        // Fetch videos from all visible cameras in parallel
         const videoPromises = visibleCameraIds.map((cameraId) =>
           authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/videos/`).then((res) => res.json()),
         );
 
         const results = await Promise.all(videoPromises);
-
         const allVideos = results.flatMap((result) => (result.success && result.videos ? result.videos : []));
 
         if (allVideos.length > 0) {
@@ -249,10 +299,7 @@ export default function MapPage() {
   const visibleFeeds = useMemo(() => allFeeds.filter((feed) => visibleCameraIds.includes(feed.id)), [allFeeds, visibleCameraIds]);
 
   const aggregateData = useMemo(() => {
-    if (aggregatedVideoData) {
-      return aggregatedVideoData;
-    }
-
+    if (aggregatedVideoData) return aggregatedVideoData;
     if (visibleFeeds.length === 0) return null;
 
     return {
@@ -288,9 +335,7 @@ export default function MapPage() {
 
   const handleVideoFileSelect = useCallback(
     (url: string, thumbnail?: string) => {
-      if (videoSrc) {
-        URL.revokeObjectURL(videoSrc);
-      }
+      if (videoSrc) URL.revokeObjectURL(videoSrc);
       if (videoThumbnail && videoThumbnail.startsWith("blob:")) {
         URL.revokeObjectURL(videoThumbnail);
       }
@@ -328,10 +373,10 @@ export default function MapPage() {
 
   const handleNewCameraAdded = useCallback((id: number, lat: number, lng: number, cameraData: any) => {
     const newFeed = {
-      id: id,
+      id,
       name: cameraData.name || `Dynamic Camera ${id}`,
-      lat: lat,
-      lng: lng,
+      lat,
+      lng,
       location: cameraData.location || `New Location at ${lat.toFixed(4)}°, ${lng.toFixed(4)}°`,
       latestUpload: cameraData.latest_upload || new Date().toLocaleDateString(),
       vehicles: cameraData.vehicles || 0,
@@ -395,7 +440,7 @@ export default function MapPage() {
 
     setSelectedVideoData({
       vehicles: videoData.vehicles || 0,
-      occurrences: occurrences,
+      occurrences,
       behaviors: behaviors.length > 0 ? behaviors : ["No Data"],
       signs: videoData.signs || 0,
       signClasses: videoData.sign_classes || [],
@@ -458,23 +503,6 @@ export default function MapPage() {
     });
   }, []);
 
-  const displayData = useMemo(() => {
-    if (selectedVideoData) {
-      return selectedVideoData;
-    }
-    if (selectedFeedData) {
-      return {
-        vehicles: selectedFeedData.vehicles,
-        occurrences: selectedFeedData.occurrences,
-        behaviors: selectedFeedData.behaviors,
-        signs: selectedFeedData.signs,
-        signClasses: selectedFeedData.signClasses,
-        jeepneyHotspot: selectedFeedData.jeepneyHotspot,
-      };
-    }
-    return null;
-  }, [selectedVideoData, selectedFeedData]);
-
   const startEdit = useCallback(() => {
     if (!selectedFeedData) return;
     setNewFeedName(selectedFeedData.name);
@@ -490,7 +518,6 @@ export default function MapPage() {
     setAllFeeds((prevFeeds) => prevFeeds.map((feed) => (feed.id === selectedFeedId ? { ...feed, name: newFeedName.trim() } : feed)));
 
     setSelectedFeedData((prev: any) => (prev ? { ...prev, name: newFeedName.trim() } : null));
-
     setIsEditingName(false);
   }, [newFeedName, selectedFeedData, selectedFeedId]);
 
@@ -499,10 +526,7 @@ export default function MapPage() {
       <Box
         sx={{
           position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
+          inset: 0,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -521,8 +545,8 @@ export default function MapPage() {
               animation: "spin 1s linear infinite",
               margin: "0 auto 16px",
             }}
-          ></Box>
-          <Typography variant="h6" style={{ color: "#161b4cff" }}>
+          />
+          <Typography variant="h6" sx={{ color: "#161b4cff" }}>
             Loading...
           </Typography>
         </Box>
@@ -538,7 +562,6 @@ export default function MapPage() {
 
   return (
     <>
-      {/* Back to Dashboard button */}
       <IconButton
         onClick={() => router.push("/dashboard")}
         sx={{
@@ -566,11 +589,20 @@ export default function MapPage() {
           selectedCameraId={selectedFeedId}
           refreshTrigger={camerasRefreshTrigger}
           goTo={goTo}
+          goToBounds={goToBounds}
           onMapReady={handleMapReady}
           showMapillarySigns
         />
       </Box>
+
       <SideTab side="left" open={open} onToggle={() => setOpen(!open)}>
+        {savedLocation && (
+          <Box sx={{ mb: 2, mt: 6 }}>
+            <Typography variant="h3">{savedLocation.name}</Typography>
+
+          </Box>
+        )}
+
         {allFeeds.length === 0 ? (
           <Box
             sx={{
@@ -579,11 +611,11 @@ export default function MapPage() {
               alignItems: "center",
               justifyContent: "center",
               height: "100%",
-              padding: 4,
+              p: 4,
               textAlign: "center",
             }}
           >
-            <Typography variant="h5" sx={{ marginBottom: 2 }}>
+            <Typography variant="h5" sx={{ mb: 2 }}>
               No Cameras Available
             </Typography>
             <Typography variant="body1" color="text.secondary">
@@ -594,7 +626,7 @@ export default function MapPage() {
           <>
             {aggregateData ? (
               <>
-                <Box className="feed-details" sx={{ marginBottom: 2, marginTop: 6 }}>
+                <Box className="feed-details" sx={{ marginBottom: 2 }}>
                   <Typography variant="h4">Total Data</Typography>
                   <Typography variant="body1">
                     Showing data from {aggregateData.cameraCount} camera{aggregateData.cameraCount !== 1 ? "s" : ""} visible in map
@@ -613,11 +645,11 @@ export default function MapPage() {
                   alignItems: "center",
                   justifyContent: "center",
                   height: "100%",
-                  padding: 4,
+                  p: 4,
                   textAlign: "center",
                 }}
               >
-                <Typography variant="h5" sx={{ marginBottom: 2 }}>
+                <Typography variant="h5" sx={{ mb: 2 }}>
                   No Cameras in View
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
@@ -629,15 +661,7 @@ export default function MapPage() {
         ) : (
           <>
             {loadingFeedData ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  height: "100%",
-                  padding: 4,
-                }}
-              >
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", p: 4 }}>
                 <Typography variant="h6">Loading camera data...</Typography>
               </Box>
             ) : selectedFeedData ? (
@@ -678,58 +702,60 @@ export default function MapPage() {
                   )}
                 </Box>
 
-                {selectedFeedData && (
-                  <>
-                    <Box className="feed-details" sx={{ marginBottom: 2 }}>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                        {isEditingName ? (
-                          <TextField
-                            variant="standard"
-                            value={newFeedName}
-                            onChange={(e) => setNewFeedName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") saveName();
-                            }}
-                            sx={{ "& .MuiInputBase-input": { padding: 0, fontSize: "1.5rem", fontWeight: 700 } }}
-                          />
-                        ) : (
-                          <Typography variant="h4" onClick={startEdit} sx={{ cursor: "pointer" }}>
-                            Feed #{selectedFeedData.id} - {selectedFeedData.name}
-                          </Typography>
-                        )}
-
-                        <IconButton onClick={isEditingName ? saveName : startEdit} size="small" sx={{ p: 0 }}>
-                          {isEditingName ? <CheckIcon color="primary" /> : <EditIcon fontSize="small" />}
-                        </IconButton>
-                      </Box>
-
-                      <Typography variant="h5"> {selectedFeedData.location} </Typography>
-                      <Typography variant="h5">
-                        {" "}
-                        {selectedFeedData.lng}°E, {selectedFeedData.lat}°N{" "}
+                <Box className="feed-details" sx={{ marginBottom: 2 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    {isEditingName ? (
+                      <TextField
+                        variant="standard"
+                        value={newFeedName}
+                        onChange={(e) => setNewFeedName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveName();
+                        }}
+                        sx={{
+                          "& .MuiInputBase-input": {
+                            padding: 0,
+                            fontSize: "1.5rem",
+                            fontWeight: 700,
+                          },
+                        }}
+                      />
+                    ) : (
+                      <Typography variant="h4" onClick={startEdit} sx={{ cursor: "pointer" }}>
+                        Feed #{selectedFeedData.id} - {selectedFeedData.name}
                       </Typography>
-                      <Typography variant="body1"> Latest Video Uploaded: {selectedFeedData.latestUpload} </Typography>
-                      {selectedVideoData && (
-                        <Typography variant="body2" sx={{ color: "primary.main", fontStyle: "italic", mt: 1 }}>
-                          Viewing: {selectedVideoData.videoName}
-                        </Typography>
-                      )}
-                    </Box>
+                    )}
 
-                    <Divider sx={{ marginBottom: 2 }} />
+                    <IconButton onClick={isEditingName ? saveName : startEdit} size="small" sx={{ p: 0 }}>
+                      {isEditingName ? <CheckIcon color="primary" /> : <EditIcon fontSize="small" />}
+                    </IconButton>
+                  </Box>
 
-                    <Table
-                      onVideoFileSelect={handleVideoFileSelect}
-                      cameraId={selectedFeedId}
-                      onUploadComplete={handleVideoUploadComplete}
-                      onUploadStart={handleUploadStart}
-                      onProcessingStart={handleProcessingStart}
-                      onProcessingComplete={handleProcessingComplete}
-                      onVideoSelect={handleVideoSelect}
-                      onMultipleVideoSelect={handleMultipleVideoSelect}
-                    />
-                  </>
-                )}
+                  <Typography variant="h5">{selectedFeedData.location}</Typography>
+                  <Typography variant="h5">
+                    {selectedFeedData.lng}°E, {selectedFeedData.lat}°N
+                  </Typography>
+                  <Typography variant="body1">Latest Video Uploaded: {selectedFeedData.latestUpload}</Typography>
+
+                  {selectedVideoData && (
+                    <Typography variant="body2" sx={{ color: "primary.main", fontStyle: "italic", mt: 1 }}>
+                      Viewing: {selectedVideoData.videoName}
+                    </Typography>
+                  )}
+                </Box>
+
+                <Divider sx={{ marginBottom: 2 }} />
+
+                <Table
+                  onVideoFileSelect={handleVideoFileSelect}
+                  cameraId={selectedFeedId}
+                  onUploadComplete={handleVideoUploadComplete}
+                  onUploadStart={handleUploadStart}
+                  onProcessingStart={handleProcessingStart}
+                  onProcessingComplete={handleProcessingComplete}
+                  onVideoSelect={handleVideoSelect}
+                  onMultipleVideoSelect={handleMultipleVideoSelect}
+                />
               </>
             ) : null}
           </>
