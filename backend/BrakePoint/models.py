@@ -210,3 +210,4 @@ class Video(models.Model):
         if self.processing_started_at and self.processing_completed_at:
             return (self.processing_completed_at - self.processing_started_at).total_seconds()
         return None
+

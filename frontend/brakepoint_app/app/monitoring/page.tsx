@@ -13,6 +13,7 @@ import Notification from "@/components/ui/notifications";
 import "./style.css";
 
 import dynamic from "next/dynamic";
+import ModeSegmentedControl from "@/components/ui/modeToggle";
 const Map = dynamic(() => import("@components/map/map"), { ssr: false });
 
 export default function MonitoringPage() {
@@ -201,6 +202,8 @@ function MonitoringContent() {
         <ArrowBackIcon />
       </IconButton>
 
+      <ModeSegmentedControl />
+
       {/* ── Full-screen map ───────────────── */}
       <Box sx={{ position: "absolute", inset: 0, zIndex: 0 }}>
         <Map
@@ -289,7 +292,7 @@ function MonitoringContent() {
                 label={`${visibleCameraIds.length} camera${visibleCameraIds.length !== 1 ? "s" : ""} in view`}
                 size="small"
                 variant="outlined"
-                sx={{ fontWeight: 500, fontSize: "0.75rem" }}
+                sx={{ fontWeight: 500, fontSize: "0.75rem", marginLeft: "16px" }}
               />
             )}
           </Box>

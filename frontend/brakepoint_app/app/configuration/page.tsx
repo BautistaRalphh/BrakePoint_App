@@ -3,34 +3,20 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import dynamic from "next/dynamic";
-import {
-  Divider,
-  Box,
-  Typography,
-  List,
-  ListItem,
-  ListItemAvatar,
-  ListItemText,
-  TextField,
-  IconButton,
-} from "@mui/material";
+import { Divider, Box, Typography, List, ListItem, ListItemAvatar, ListItemText, TextField, IconButton } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import CheckIcon from "@mui/icons-material/Check";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { authFetch } from "@/lib/authFetch";
 
-import ToggleDrawer from "@components/map/toggleDrawer";
 import SideTab from "@components/map/sideTab";
 import Table from "@components/ui/table";
-import CameraTags from "@components/ui/cameraTags";
 
 import "./style.css";
 
-import DirectionsCarIcon from "@mui/icons-material/DirectionsCar";
-import CarCrashIcon from "@mui/icons-material/CarCrash";
-import LocalTaxiIcon from "@mui/icons-material/LocalTaxi";
+import ModeSegmentedControl from "@/components/ui/modeToggle";
 
 const Map = dynamic(() => import("@components/map/map"), { ssr: false });
 
@@ -38,6 +24,9 @@ type DrawMode = "none" | "drawPolygon" | "editPolygon" | "deletePolygon";
 
 export default function MapPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedCameraIdFromUrl = searchParams.get("cameraId");
+
   const { trackVideoProcessing, showToast } = useNotifications();
   const [open, setOpen] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -64,8 +53,23 @@ export default function MapPage() {
   const [camerasRefreshTrigger, setCamerasRefreshTrigger] = useState(0);
 
   const [drawMode, setDrawMode] = useState<DrawMode>("none");
-  const [draftPoly, setDraftPoly] = useState<[number, number][]>([]); 
+  const [draftPoly, setDraftPoly] = useState<[number, number][]>([]);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
+
+  useEffect(() => {
+    if (!camerasLoaded) return;
+
+    if (selectedCameraIdFromUrl) {
+      const cameraId = Number(selectedCameraIdFromUrl);
+
+      if (!Number.isNaN(cameraId)) {
+        setSelectedFeedId(cameraId);
+        return;
+      }
+    }
+
+    setSelectedFeedId(null);
+  }, [selectedCameraIdFromUrl, camerasLoaded]);
 
   const handleMapReady = useCallback((map: maplibregl.Map) => {
     mapInstanceRef.current = map;
@@ -91,10 +95,10 @@ export default function MapPage() {
 
         if (response.ok) {
           const data = await response.json();
-          
+
           if (data.success && data.cameras) {
             const cameraId = Number(selectedFeedId);
-            
+
             const camera = data.cameras.find((cam: any) => cam.id === cameraId);
             if (camera) {
               setSelectedFeedData({
@@ -280,9 +284,6 @@ export default function MapPage() {
 
     setAllFeeds(formattedCameras);
     setCamerasLoaded(true);
-    if (formattedCameras.length > 0) {
-      setSelectedFeedId(null);
-    }
   }, []);
 
   const handleVideoFileSelect = useCallback(
@@ -299,17 +300,27 @@ export default function MapPage() {
     [videoSrc, videoThumbnail],
   );
 
-  const handleCameraClick = useCallback((cameraId: number) => {
-    if (selectedFeedIdRef.current === cameraId) {
-      setSelectedFeedId(null);
-    } else {
-      setSelectedFeedId(cameraId);
-    }
-    setVideoSrc(null);
-    setVideoThumbnail(null);
-    setSelectedVideoData(null);
-    setIsEditingName(false);
-  }, []);
+  const handleCameraClick = useCallback(
+    (cameraId: number) => {
+      const params = new URLSearchParams(searchParams.toString());
+
+      if (selectedFeedIdRef.current === cameraId) {
+        setSelectedFeedId(null);
+        params.delete("cameraId");
+        router.replace(`/configuration${params.toString() ? `?${params.toString()}` : ""}`);
+      } else {
+        setSelectedFeedId(cameraId);
+        params.set("cameraId", String(cameraId));
+        router.replace(`/configuration?${params.toString()}`);
+      }
+
+      setVideoSrc(null);
+      setVideoThumbnail(null);
+      setSelectedVideoData(null);
+      setIsEditingName(false);
+    },
+    [router, searchParams],
+  );
 
   const handleVisibleCamerasChange = useCallback((visibleIds: number[]) => {
     setVisibleCameraIds(visibleIds);
@@ -341,7 +352,6 @@ export default function MapPage() {
     setCamerasRefreshTrigger((prev) => prev + 1);
   }, []);
 
-
   const handleUploadStart = useCallback(
     (videoName: string) => {
       showToast(`Uploading "${videoName}"…`, "info");
@@ -358,15 +368,15 @@ export default function MapPage() {
   );
 
   const handleProcessingComplete = useCallback(
-  (videoName: string, success: boolean, data?: any) => {
-    if (success) {
-      showToast(`"${videoName}" processed successfully`, "success");
-    } else {
-      showToast(`"${videoName}" — ${data?.error || "Processing failed"}`, "error");
-    }
-  },
-  [showToast],
-);
+    (videoName: string, success: boolean, data?: any) => {
+      if (success) {
+        showToast(`"${videoName}" processed successfully`, "success");
+      } else {
+        showToast(`"${videoName}" — ${data?.error || "Processing failed"}`, "error");
+      }
+    },
+    [showToast],
+  );
 
   const handleVideoSelect = useCallback((videoData: any) => {
     if (!videoData) {
@@ -399,7 +409,7 @@ export default function MapPage() {
 
     if (videoData.thumbnail) {
       setVideoThumbnail(videoData.thumbnail);
-      setVideoSrc("placeholder"); 
+      setVideoSrc("placeholder");
     } else {
       setVideoThumbnail(null);
       setVideoSrc(null);
@@ -543,6 +553,9 @@ export default function MapPage() {
       >
         <ArrowBackIcon />
       </IconButton>
+
+      <ModeSegmentedControl />
+
       <Box sx={{ height: "100vh", width: "100vw", position: "fixed", top: 0, left: 0, zIndex: 0 }}>
         <Map
           mode="map"
@@ -586,37 +599,6 @@ export default function MapPage() {
                   <Typography variant="body1">
                     Showing data from {aggregateData.cameraCount} camera{aggregateData.cameraCount !== 1 ? "s" : ""} visible in map
                   </Typography>
-                </Box>
-
-                <Divider />
-
-                <Box className="feed-data">
-                  <Box className="feed-aggregates">
-                    <List>
-                      <ListItem disableGutters>
-                        <ListItemAvatar>
-                          <DirectionsCarIcon />
-                        </ListItemAvatar>
-                        <ListItemText primary={`${aggregateData.totalVehicles} Vehicles`}></ListItemText>
-                      </ListItem>
-                      <ListItem disableGutters>
-                        <ListItemAvatar>
-                          <CarCrashIcon sx={{ color: "red" }} />
-                        </ListItemAvatar>
-                        <ListItemText primary={`${aggregateData.totalOccurrences} Occurrences`}></ListItemText>
-                      </ListItem>
-                    </List>
-                  </Box>
-
-                  {aggregateData.allBehaviors.length > 0 && (
-                    <Box className="feed-behavior-list">
-                      <List>
-                        {aggregateData.allBehaviors.map((value: string) => (
-                          <ListItemText key={value} primary={value}></ListItemText>
-                        ))}
-                      </List>
-                    </Box>
-                  )}
                 </Box>
 
                 <Divider sx={{ marginBottom: 2 }} />
@@ -734,54 +716,6 @@ export default function MapPage() {
                       )}
                     </Box>
 
-                    <Divider />
-
-                    <Box className="feed-data">
-                      {displayData && (
-                        <>
-                          <Box className="feed-aggregates">
-                            <List>
-                              <ListItem disableGutters>
-                                <ListItemAvatar>
-                                  <DirectionsCarIcon />
-                                </ListItemAvatar>
-                                <ListItemText primary={`${displayData.vehicles} Vehicles`}></ListItemText>
-                              </ListItem>
-                              <ListItem disableGutters>
-                                <ListItemAvatar>
-                                  <CarCrashIcon sx={{ color: "red" }} />
-                                </ListItemAvatar>
-                                <ListItemText primary={`${displayData.occurrences} Occurences`}></ListItemText>
-                              </ListItem>
-                              <ListItem disableGutters>
-                                <ListItemAvatar>
-                                  <LocalTaxiIcon sx={{ color: displayData.jeepneyHotspot ? "#4CAF50" : "#000000ff" }} />
-                                </ListItemAvatar>
-                                <ListItemText
-                                  primary={`Jeepney Hotspot: ${displayData.jeepneyHotspot ? "Yes" : "No"}`}
-                                  sx={{ color: displayData.jeepneyHotspot ? "#4CAF50" : "text.secondary" }}
-                                ></ListItemText>
-                              </ListItem>
-                            </List>
-                          </Box>
-
-                          {displayData.behaviors.filter((b: string) => b !== "No Data").length > 0 && (
-                            <Box className="feed-behavior-list">
-                              <List>
-                                {displayData.behaviors
-                                  .filter((b: string) => b !== "No Data")
-                                  .map((value: string, index: number) => (
-                                    <ListItemText key={`${value}-${index}`} primary={value}></ListItemText>
-                                  ))}
-                              </List>
-                            </Box>
-                          )}
-
-                          <CameraTags cameraId={selectedFeedId} />
-                        </>
-                      )}
-                    </Box>
-
                     <Divider sx={{ marginBottom: 2 }} />
 
                     <Table
@@ -801,7 +735,6 @@ export default function MapPage() {
           </>
         )}
       </SideTab>
-
     </>
   );
 }

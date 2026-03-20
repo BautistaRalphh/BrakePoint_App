@@ -72,12 +72,15 @@ export default function Analytics() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (startDate) params.set("start", startDate.format("YYYY-MM-DD"));
-      if (endDate) params.set("end", endDate.format("YYYY-MM-DD"));
+      if (startDate) {
+        params.set("start", startDate.format("YYYY-MM-DD"));
+      }
 
-      const res = await authFetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard-summary/?${params}`,
-      );
+      if (endDate) {
+        params.set("end", endDate.format("YYYY-MM-DD"));
+      }
+
+      const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard-summary/?${params}`);
       if (!res.ok) throw new Error("fetch failed");
       const json = await res.json();
 
@@ -86,9 +89,7 @@ export default function Analytics() {
         setCameras(json.cameras ?? []);
         setSelectedCam((prev) => prev ?? json.cameras?.[0] ?? null);
 
-        const bd: BreakdownEntry[] = Object.entries(json.vehicle_breakdown ?? {}).map(
-          ([label, value]) => ({ label, value: value as number }),
-        );
+        const bd: BreakdownEntry[] = Object.entries(json.vehicle_breakdown ?? {}).map(([label, value]) => ({ label, value: value as number }));
         setBreakdown(bd);
       }
     } catch {
@@ -98,8 +99,13 @@ export default function Analytics() {
     }
   }, [startDate, endDate]);
 
-  useEffect(() => { fetchSummary(); }, [fetchSummary]);
-  useEffect(() => { router.prefetch("/map"); router.prefetch("/monitoring"); }, [router]);
+  useEffect(() => {
+    fetchSummary();
+  }, [fetchSummary]);
+  useEffect(() => {
+    router.prefetch("/map");
+    router.prefetch("/monitoring");
+  }, [router]);
 
   // Collect all unique tags across cameras
   const allTags = useMemo(() => {
@@ -111,21 +117,14 @@ export default function Analytics() {
   // Filter cameras by selected tags
   const filteredCameras = useMemo(() => {
     if (selectedTags.length === 0) return cameras;
-    return cameras.filter((c) =>
-      selectedTags.every((tag) => (c.tags ?? []).includes(tag)),
-    );
+    return cameras.filter((c) => selectedTags.every((tag) => (c.tags ?? []).includes(tag)));
   }, [cameras, selectedTags]);
 
   const toggleTag = (tag: string) => {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
-    );
+    setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
-  const dashboardMarkers = useMemo(
-    () => cameras.map((c) => ({ id: c.id, lat: c.lat, lng: c.lng, label: c.name })),
-    [cameras],
-  );
+  const dashboardMarkers = useMemo(() => cameras.map((c) => ({ id: c.id, lat: c.lat, lng: c.lng, label: c.name })), [cameras]);
 
   const handleMarkerClick = (id: number | string) => {
     const cam = cameras.find((c) => String(c.id) === String(id));
@@ -140,39 +139,57 @@ export default function Analytics() {
         <Typography variant="h3">Analytics</Typography>
 
         <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <DatePicker
-            label="Start Date"
-            value={startDate}
-            onChange={(d) => { if (d && endDate && d.isAfter(endDate)) return; setStartDate(d); }}
-            slotProps={{ textField: { size: "small", sx: {
-              bgcolor: "transparent",
-              "& .MuiOutlinedInput-root": {
-                borderRadius: "12px",
-                "& fieldset": { borderColor: "#b0b3b0" },
-                "&:hover fieldset": { borderColor: "#1d1f3f" },
-                "&.Mui-focused fieldset": { borderColor: "#1d1f3f" },
-              },
-              "& .MuiInputLabel-root": { color: "#555" },
-            } } }}
-          />
-        </LocalizationProvider>
+          <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
+            <DatePicker
+              label="From"
+              value={startDate}
+              onChange={(v) => {
+                if (!v) {
+                  setStartDate(null);
+                  return;
+                }
+                if (endDate && v.isAfter(endDate)) return;
+                setStartDate(v);
+              }}
+              slotProps={{
+                textField: {
+                  size: "small",
+                  sx: {
+                    bgcolor: "#fff",
+                    minWidth: 140,
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: "12px",
+                    },
+                  },
+                },
+              }}
+            />
 
-        <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <DatePicker
-            label="End Date"
-            value={endDate}
-            onChange={(d) => { if (d && startDate && d.isBefore(startDate)) return; setEndDate(d); }}
-            slotProps={{ textField: { size: "small", sx: {
-              bgcolor: "transparent",
-              "& .MuiOutlinedInput-root": {
-                borderRadius: "12px",
-                "& fieldset": { borderColor: "#b0b3b0" },
-                "&:hover fieldset": { borderColor: "#1d1f3f" },
-                "&.Mui-focused fieldset": { borderColor: "#1d1f3f" },
-              },
-              "& .MuiInputLabel-root": { color: "#555" },
-            } } }}
-          />
+            <DatePicker
+              label="To"
+              value={endDate}
+              onChange={(v) => {
+                if (!v) {
+                  setEndDate(null);
+                  return;
+                }
+                if (startDate && v.isBefore(startDate)) return;
+                setEndDate(v);
+              }}
+              slotProps={{
+                textField: {
+                  size: "small",
+                  sx: {
+                    bgcolor: "#fff",
+                    minWidth: 140,
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: "12px",
+                    },
+                  },
+                },
+              }}
+            />
+          </Box>
         </LocalizationProvider>
       </Box>
 
@@ -190,9 +207,9 @@ export default function Analytics() {
                   <AnalyticsCard
                     headerText="Total vehicle count"
                     icon={<DirectionsCarFilledOutlinedIcon />}
-                    variant={breakdown.length > 0 ? "pie" : "text"}
+                    variant="pie"
                     valueText={v.toLocaleString()}
-                    data={breakdown.length > 0 ? breakdown : undefined}
+                    data={breakdown}
                   />
                   <AnalyticsCard
                     headerText="Total ADB count"
@@ -205,20 +222,8 @@ export default function Analytics() {
 
               <Grid size={{ xs: 12, md: 3 }} display="flex" sx={{ minWidth: 0 }}>
                 <Stack spacing={2} width="100%" height="100%">
-                  <AnalyticsCard
-                    compact
-                    headerText="Speeding"
-                    icon={<SpeedOutlinedIcon />}
-                    variant="text"
-                    valueText={fmtRate(totals.speeding, v)}
-                  />
-                  <AnalyticsCard
-                    compact
-                    headerText="Swerving"
-                    icon={<SwapCallsIcon />}
-                    variant="text"
-                    valueText={fmtRate(totals.swerving, v)}
-                  />
+                  <AnalyticsCard compact headerText="Speeding" icon={<SpeedOutlinedIcon />} variant="text" valueText={fmtRate(totals.speeding, v)} />
+                  <AnalyticsCard compact headerText="Swerving" icon={<SwapCallsIcon />} variant="text" valueText={fmtRate(totals.swerving, v)} />
                   <AnalyticsCard
                     compact
                     headerText="Abrupt stopping"
@@ -243,7 +248,12 @@ export default function Analytics() {
             </Grid>
           </Box>
 
-          <CardCarousel cameras={filteredCameras} onSelect={(c) => router.push(`/monitoring?cameraId=${c.id}`)} />
+          <CardCarousel
+            cameras={filteredCameras}
+            onSelect={(c) => router.push(`/monitoring?cameraId=${c.id}`)}
+            emptyTitle="No Sub-Areas Yet"
+            emptyDescription="Enter explore mode and draw a sub-area to begin."
+          />
 
           {/* Tag filter chips */}
           {allTags.length > 0 && (

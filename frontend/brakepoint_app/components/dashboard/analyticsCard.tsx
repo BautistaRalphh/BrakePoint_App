@@ -1,7 +1,7 @@
 import { Box, Typography } from "@mui/material";
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'; 
-import { PieChart } from '@mui/x-charts/PieChart';
-import { LineChart } from '@mui/x-charts/LineChart';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { PieChart } from "@mui/x-charts/PieChart";
+import { LineChart } from "@mui/x-charts/LineChart";
 import "./analyticsCard.css";
 
 type DataView = "pie" | "line" | "text";
@@ -20,26 +20,70 @@ export type ChartData = {
   value: number;
 };
 
-function DefaultPie({
-  data,
-  compact,
-  pieId = "pie-chart",
-}: {
-  data: ChartData[];
-  compact: boolean;
-  pieId?: string;
-}) {
+function EmptyPie({ compact, label = "", pieId = "empty-pie-chart" }: { compact: boolean; label?: string; pieId?: string }) {
+  const chartSize = compact
+    ? { width: 180, height: 160, innerRadius: 35, outerRadius: 70 }
+    : { width: 240, height: 220, innerRadius: 45, outerRadius: 90 };
 
+  return (
+    <Box sx={{ position: "relative", width: "100%", minHeight: chartSize.height, display: "grid", placeItems: "center" }}>
+      <PieChart
+        width={chartSize.width}
+        height={chartSize.height}
+        margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        series={[
+          {
+            id: pieId,
+            data: [
+              {
+                id: 0,
+                label: "No data found",
+                value: 1,
+                color: "#e5e7eb",
+              },
+            ],
+            innerRadius: compact ? 35 : 45,
+            outerRadius: compact ? 70 : 90,
+            paddingAngle: 0,
+            cornerRadius: 0,
+          },
+        ]}
+      />
+
+      {/* Center label */}
+      <Box
+        sx={{
+          position: "absolute",
+          inset: 0,
+          display: "grid",
+          placeItems: "center",
+          pointerEvents: "none",
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          variant="body2"
+          sx={{
+            color: "#9ca3af",
+            fontWeight: 500,
+          }}
+        >
+          {label}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+function DefaultPie({ data, compact, pieId = "pie-chart" }: { data: ChartData[]; compact: boolean; pieId?: string }) {
   const cleaned = useMemo(
-    () =>
-      data
-        .map((d) => ({ ...d, value: Number.isFinite(d.value) ? Math.max(0, d.value) : 0 }))
-        .filter((d) => d.value > 0),
-    [data]
+    () => data.map((d) => ({ ...d, value: Number.isFinite(d.value) ? Math.max(0, d.value) : 0 })).filter((d) => d.value > 0),
+    [data],
   );
 
-  if (!cleaned.length) return <Fallback label="No pie data" />;
-
+  if (!cleaned.length) {
+    return <EmptyPie compact={compact} pieId={`${pieId}-empty`} />;
+  }
   return (
     <PieChart
       height={compact ? 160 : 220}
@@ -56,13 +100,12 @@ function DefaultPie({
           outerRadius: compact ? 70 : 90,
           paddingAngle: 2,
           cornerRadius: 0,
-          valueFormatter: (v) => `${v}`,
+          valueFormatter: (item) => `${item.value}`,
         },
       ]}
     />
   );
 }
-
 
 function Fallback({ label }: { label: string }) {
   return (
@@ -105,11 +148,7 @@ export default function AnalyticsCard({ headerText, icon, variant = "text", valu
 
         {variant === "pie" && (
           <Box className="ac-pie">
-            {data?.length ? (
-              <DefaultPie data={data} compact={compact} pieId={`${headerText}-pie`} />
-            ) : (
-              <Fallback label="No pie chart data provided" />
-            )}
+            <DefaultPie data={data ?? []} compact={compact} pieId={`${headerText}-pie`} />
           </Box>
         )}
       </Box>

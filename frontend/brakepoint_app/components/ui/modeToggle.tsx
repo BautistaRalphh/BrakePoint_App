@@ -1,31 +1,70 @@
-import { Box, Switch, styled } from "@mui/material";
+"use client";
 
-const ModeSwitch = styled(Switch)(({ theme }) => ({
-  "& .MuiSwitch-root": {
-    width: 144,
-    height: 144,
-    padding: "4px",
-    zIndex: 1000,
-    position: "fixed",
-    top: 16,
-    right: 16,
-    backgroundColor: "blue",
-  },
+import { Box, ToggleButton, ToggleButtonGroup } from "@mui/material";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-  "& .MuiSwitch-track": {
-    "&::after": {
-      content: "'Monitoring'",
-    },
-    "&::before": {
-      content: "'Configuration'",
-    },
-  },
-}));
+export default function ModeSegmentedControl() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
-export default function ModeToggle() {
+  const currentMode = pathname.startsWith("/monitoring")
+    ? "monitoring"
+    : "configuration";
+
+  const handleChange = (
+    _event: React.MouseEvent<HTMLElement>,
+    nextMode: "configuration" | "monitoring" | null
+  ) => {
+    if (!nextMode || nextMode === currentMode) return;
+
+    const params = new URLSearchParams(searchParams.toString());
+    const nextPath =
+      nextMode === "monitoring" ? "/monitoring" : "/configuration";
+
+    const nextUrl = params.toString()
+      ? `${nextPath}?${params.toString()}`
+      : nextPath;
+
+    router.push(nextUrl);
+  };
+
   return (
-    <Box>
-      <ModeSwitch></ModeSwitch>
+    <Box
+      sx={{
+        position: "fixed",
+        top: 16,
+        right: 80 ,
+        zIndex: 2000,
+      }}
+    >
+      <ToggleButtonGroup
+        value={currentMode}
+        exclusive
+        onChange={handleChange}
+        sx={{
+          backgroundColor: "#fff",
+          borderRadius: "14px",
+          padding: "4px",
+          boxShadow: "0 4px 14px rgba(0,0,0,0.12)",
+          "& .MuiToggleButtonGroup-grouped": {
+            border: "none",
+            borderRadius: "10px !important",
+            textTransform: "none",
+            fontWeight: 700,
+            px: 2.5,
+            py: 1,
+            color: "#161b4c",
+          },
+          "& .Mui-selected": {
+            backgroundColor: "#161b4c !important",
+            color: "#fff !important",
+          },
+        }}
+      >
+        <ToggleButton value="configuration">Configuration</ToggleButton>
+        <ToggleButton value="monitoring">Monitoring</ToggleButton>
+      </ToggleButtonGroup>
     </Box>
   );
 }

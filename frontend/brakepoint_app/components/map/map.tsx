@@ -1204,6 +1204,9 @@ export default function MapView({
       el.style.color = "#999";
       el.style.filter = "drop-shadow(0 2px 4px rgba(0,0,0,0.3))";
 
+      const isSelected = selectedCameraId != null && String(id) === String(selectedCameraId);
+      el.style.color = isSelected ? "#161b4c" : "#999";
+
       const marker = new maplibregl.Marker({
         element: el,
         draggable: false,
@@ -1252,7 +1255,7 @@ export default function MapView({
       camerasRef.current = [...camerasRef.current, cameraObj];
       setCameras((prev) => [...prev, cameraObj]);
     },
-    [completedPolygonsRef, onCameraClick, removeCamera, savePolygonToCamera, selectedPolygonIndexRef, toolModeRef],
+    [completedPolygonsRef, onCameraClick, removeCamera, savePolygonToCamera, selectedPolygonIndexRef, toolModeRef, selectedCameraId],
   );
 
   const loadCamerasFromDatabase = useCallback(async () => {
@@ -1622,14 +1625,15 @@ export default function MapView({
     if (!map) return;
     if (!map.getLayer("polygon-fill")) return;
 
-    const selected = selectedCameraId != null ? selectedCameraId : null;
+    const selected = selectedCameraId != null ? String(selectedCameraId) : null;
 
     if (selected == null) {
       map.setPaintProperty("polygon-fill", "fill-opacity", 0.08);
       map.setPaintProperty("polygon-line", "line-opacity", 0.25);
     } else {
-      map.setPaintProperty("polygon-fill", "fill-opacity", ["case", ["==", ["get", "cameraId"], selected], 0.35, 0.05]);
-      map.setPaintProperty("polygon-line", "line-opacity", ["case", ["==", ["get", "cameraId"], selected], 1, 0.15]);
+      map.setPaintProperty("polygon-fill", "fill-opacity", ["case", ["==", ["to-string", ["get", "cameraId"]], selected], 0.35, 0.05]);
+
+      map.setPaintProperty("polygon-line", "line-opacity", ["case", ["==", ["to-string", ["get", "cameraId"]], selected], 1, 0.15]);
     }
   }, [completedPolygons, selectedCameraId]);
 
@@ -1737,7 +1741,7 @@ export default function MapView({
         svg.style.transition = "transform 0.15s ease";
       }
     }
-  }, [cameras, selectedCameraId]);
+  }, [selectedCameraId]);
 
   useEffect(() => {
     const map = mapRef.current;
