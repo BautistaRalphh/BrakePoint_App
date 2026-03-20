@@ -11,6 +11,10 @@ class SavedLocation(models.Model):
     pitch = models.FloatField(default=0.0)
     created_at = models.DateTimeField(auto_now_add=True)
     
+    geometry = models.JSONField(null=True, blank=True)
+    bounds = models.JSONField(null=True, blank=True)
+
+    
     class Meta:
         ordering = ['-created_at']
     
@@ -81,6 +85,7 @@ class Camera(models.Model):
     lng = models.FloatField()
     location = models.CharField(max_length=500, blank=True, default='')
     polygon = models.JSONField(default=list, blank=True, null=True)
+   
     
     # Saved calibration
     calibration_points = models.JSONField(default=list, blank=True)
@@ -110,8 +115,7 @@ class Camera(models.Model):
         return self.videos.order_by('-uploaded_at').first()
     
     @property
-    def latest_upload(self):
-        """Get the upload date of the most recent video in a clean format"""
+    def latest_upload_display(self):
         video = self.latest_video
         if video:
             return video.uploaded_at.strftime('%b %d, %Y at %I:%M %p')

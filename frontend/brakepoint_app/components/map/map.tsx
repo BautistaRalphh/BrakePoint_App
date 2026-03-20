@@ -574,6 +574,22 @@ export default function MapView({
 
   // EXPLORE MODE
 
+  function getPolygonCentroid(coords: [number, number][]) {
+    const lng = coords.reduce((sum, p) => sum + p[0], 0) / coords.length;
+    const lat = coords.reduce((sum, p) => sum + p[1], 0) / coords.length;
+    return { lng, lat };
+  }
+
+  function getPolygonBounds(coords: [number, number][]) {
+    const lngs = coords.map((p) => p[0]);
+    const lats = coords.map((p) => p[1]);
+
+    return [
+      [Math.min(...lngs), Math.min(...lats)],
+      [Math.max(...lngs), Math.max(...lats)],
+    ];
+  }
+
   const applyLockedFocusToMap = useCallback((area: FocusArea) => {
     const map = mapRef.current;
     if (!map) return;
@@ -1156,6 +1172,27 @@ export default function MapView({
     restoreDefaultExploreCamera,
   ]);
 
+  const saveSubArea = useCallback(async (name: string, coords: [number, number][]) => {
+    const centroid = getPolygonCentroid(coords);
+    const bounds = getPolygonBounds(coords);
+
+    const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/saved-locations/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        lat: centroid.lat,
+        lng: centroid.lng,
+        geometry: coords,
+        bounds,
+        location_type: "sub_area",
+      }),
+    });
+
+    const data = await response.json();
+    return data.saved_location;
+  }, []);
+
   // CONFIGURATION MODE
 
   const removeCamera = useCallback(async (cameraId: number | string) => {
@@ -1317,6 +1354,16 @@ export default function MapView({
     },
     [addCameraFromData, onCameraAdd],
   );
+
+  const assignCameraToSavedLocation = useCallback(async (cameraId: number, savedLocationId: number) => {
+    await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/assign-saved-location/`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        saved_location_id: savedLocationId,
+      }),
+    });
+  }, []);
 
   const updateVisibleCameras = useCallback(() => {
     const map = mapRef.current;

@@ -23,19 +23,19 @@ const Map = dynamic(() => import("../map/map"), { ssr: false });
 import "./analytics.css";
 import { authFetch } from "@/lib/authFetch";
 
-export type CameraSummary = {
+export type SubAreaSummary = {
   id: number;
   name: string;
   lat: number;
   lng: number;
-  location: string;
-  total_videos: number;
+  geometry: [number, number][];
+  bounds: [[number, number], [number, number]] | null;
+  camera_count: number;
   vehicles: number;
   speeding: number;
   swerving: number;
   abrupt_stopping: number;
   adb: number;
-  thumbnail: string | null;
   tags: string[];
 };
 
@@ -59,8 +59,8 @@ export default function Analytics() {
 
   const [totals, setTotals] = useState<Totals>({ vehicles: 0, adb: 0, speeding: 0, swerving: 0, abrupt_stopping: 0 });
   const [breakdown, setBreakdown] = useState<BreakdownEntry[]>([]);
-  const [cameras, setCameras] = useState<CameraSummary[]>([]);
-  const [selectedCam, setSelectedCam] = useState<CameraSummary | null>(null);
+  const [subAreas, setSubAreas] = useState<SubAreaSummary[]>([]);
+  const [selectedSubArea, setSelectedSubArea] = useState<SubAreaSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [startDate, setStartDate] = useState<Dayjs | null>(null);
@@ -86,8 +86,8 @@ export default function Analytics() {
 
       if (json.success) {
         setTotals(json.totals);
-        setCameras(json.cameras ?? []);
-        setSelectedCam((prev) => prev ?? json.cameras?.[0] ?? null);
+        setSubAreas(json.sub_areas ?? []);
+        setSelectedSubArea((prev) => prev ?? json.sub_areas?.[0] ?? null);
 
         const bd: BreakdownEntry[] = Object.entries(json.vehicle_breakdown ?? {}).map(([label, value]) => ({ label, value: value as number }));
         setBreakdown(bd);
@@ -110,25 +110,32 @@ export default function Analytics() {
   // Collect all unique tags across cameras
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
-    cameras.forEach((c) => (c.tags ?? []).forEach((t) => tagSet.add(t)));
+    subAreas.forEach((s) => (s.tags ?? []).forEach((t) => tagSet.add(t)));
     return Array.from(tagSet).sort();
-  }, [cameras]);
+  }, [subAreas]);
 
   // Filter cameras by selected tags
-  const filteredCameras = useMemo(() => {
-    if (selectedTags.length === 0) return cameras;
-    return cameras.filter((c) => selectedTags.every((tag) => (c.tags ?? []).includes(tag)));
-  }, [cameras, selectedTags]);
+  const filteredSubAreas = useMemo(() => {
+    if (selectedTags.length === 0) return subAreas;
+    return subAreas.filter((s) => selectedTags.every((tag) => (s.tags ?? []).includes(tag)));
+  }, [subAreas, selectedTags]);
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
-  const dashboardMarkers = useMemo(() => cameras.map((c) => ({ id: c.id, lat: c.lat, lng: c.lng, label: c.name })), [cameras]);
-
+  const dashboardMarkers = useMemo(
+    () =>
+      subAreas.map((s) => ({
+        id: s.id,
+        lat: s.lat,
+        lng: s.lng,
+        label: s.name,
+      })),
+    [subAreas],
+  );
   const handleMarkerClick = (id: number | string) => {
-    const cam = cameras.find((c) => String(c.id) === String(id));
-    if (cam) setSelectedCam(cam);
+    router.push(`/configuration?savedLocationId=${id}`);
   };
 
   const v = totals.vehicles;
@@ -241,7 +248,7 @@ export default function Analytics() {
                     refreshTrigger={0}
                     dashboardMarkers={dashboardMarkers}
                     onDashboardMarkerClick={handleMarkerClick}
-                    goTo={selectedCam ? [selectedCam.lng, selectedCam.lat] : null}
+                    goTo={selectedSubArea ? [selectedSubArea.lng, selectedSubArea.lat] : null}
                   />
                 </Box>
               </Grid>
@@ -249,8 +256,8 @@ export default function Analytics() {
           </Box>
 
           <CardCarousel
-            cameras={filteredCameras}
-            onSelect={(c) => router.push(`/monitoring?cameraId=${c.id}`)}
+            subareas={subAreas}
+            onSelect={(s) => router.push(`/configuration?savedLocationId=${s.id}`)}
             emptyTitle="No Sub-Areas Yet"
             emptyDescription="Enter explore mode and draw a sub-area to begin."
           />

@@ -3,6 +3,38 @@ from .models import SavedLocation, Camera, Video
 from django.contrib.auth.models import User
 
 class SavedLocationSerializer(serializers.ModelSerializer):
+    camera_count = serializers.IntegerField(read_only=True)
+    total_vehicles = serializers.IntegerField(read_only=True)
+    total_occurrences = serializers.IntegerField(read_only=True)
+    total_speeding = serializers.IntegerField(read_only=True)
+    total_swerving = serializers.IntegerField(read_only=True)
+    total_abrupt_stopping = serializers.IntegerField(read_only=True)
+    behavior_summary = serializers.ListField(read_only=True)
+
+    class Meta:
+        model = SavedLocation
+        fields = [
+            "id",
+            "user",
+            "name",
+            "lat",
+            "lng",
+            "zoom",
+            "bearing",
+            "pitch",
+            "geometry",
+            "bounds",
+            "location_type",
+            "created_at",
+            "camera_count",
+            "total_vehicles",
+            "total_occurrences",
+            "total_speeding",
+            "total_swerving",
+            "total_abrupt_stopping",
+            "behavior_summary",
+        ]
+        read_only_fields = ["user", "created_at"]
     total_vehicles = serializers.ReadOnlyField()
     total_occurrences = serializers.ReadOnlyField()
     total_speeding = serializers.ReadOnlyField()

@@ -4,27 +4,27 @@ import { Box, Typography } from "@mui/material";
 import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import LocationCard from "./locationCard";
-import type { CameraSummary } from "./analytics";
+import type { SubAreaSummary } from "./analytics";
 
 import "./cardCarousel.css";
 
 type CarouselProps = {
-  cameras: CameraSummary[];
-  onSelect?: (cam: CameraSummary) => void;
+  subareas: SubAreaSummary[];
+  onSelect?: (subarea: SubAreaSummary) => void;
   emptyTitle?: string;
   emptyDescription?: string;
   emptyRoute?: string;
 };
 
 export default function CardCarousel({
-  cameras,
+  subareas,
   onSelect,
   emptyTitle = "No Sub-Areas Yet",
   emptyDescription = "Switch to Configuration mode and draw a sub-area to begin.",
   emptyRoute = "/explore",
 }: CarouselProps) {
   const router = useRouter();
-  const isEmpty = cameras.length === 0;
+  const isEmpty = subareas.length === 0;
 
   const handleEmptyClick = useCallback(() => {
     router.push(emptyRoute);
@@ -61,9 +61,9 @@ export default function CardCarousel({
           </Box>
         </Box>
       ) : (
-        cameras.map((cam) => (
-          <Box className="carousel-card-container" key={cam.id}>
-            <LocationCard camera={cam} onClick={() => onSelect?.(cam)} />
+        subareas.map((subarea) => (
+          <Box className="carousel-card-container" key={subarea.id}>
+            <LocationCard camera={subarea} onClick={() => onSelect?.(subarea)} />
           </Box>
         ))
       )}
