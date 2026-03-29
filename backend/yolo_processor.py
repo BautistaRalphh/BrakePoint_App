@@ -1431,8 +1431,57 @@ def run_detection_on_video(video_path: str, calibration_points=None,
     swerving_count = sum(1 for d in speeds.values() if d.get('swerving'))
     abrupt_stop_count = sum(1 for d in speeds.values() if d.get('abrupt_stop'))
 
+    # ── Jeepney hotspot detection ────────────────────────────────────────────
+    # A location is a jeepney hotspot if:
+    #   1. The video is at least 5 minutes long (short clips are excluded).
+    #   2. At least one tracked jeepney remains completely and *continuously*
+    #      stationary for a full 5-minute interval.
+    # "Stationary" means the centroid (x, y) does not change between consecutive
+    # recorded position entries. Any positional change resets the counter.
+    HOTSPOT_THRESHOLD_SECONDS = 5 * 60  # 5 minutes
+    video_duration_seconds = total_frames / fps if fps > 0 else 0
+
+    is_jeepney_hotspot = False
+
+    if video_duration_seconds >= HOTSPOT_THRESHOLD_SECONDS:
+        # Frames required at the *processed* rate (raw_history uses logical frame_id
+        # which advances by FRAME_STRIDE each step, so compare in seconds via fps).
+        for tid, track in tracker.tracks.items():
+            cls = track.get_corrected_class()
+            if cls not in ('Jeepney', 'jeepney'):
+                continue
+
+            history = list(track.raw_history)  # [(frame_id, x, y), ...]
+            if len(history) < 2:
+                continue
+
+            max_stationary_seconds = 0.0
+            stationary_start_frame = history[0][0]
+            prev_x, prev_y = history[0][1], history[0][2]
+
+            for entry in history[1:]:
+                fid, x, y = entry
+                if x == prev_x and y == prev_y:
+                    # Still stationary — update running duration
+                    stationary_seconds = (fid - stationary_start_frame) / fps
+                    if stationary_seconds > max_stationary_seconds:
+                        max_stationary_seconds = stationary_seconds
+                else:
+                    # Any positional change resets the counter
+                    stationary_start_frame = fid
+                    prev_x, prev_y = x, y
+
+            if max_stationary_seconds >= HOTSPOT_THRESHOLD_SECONDS:
+                print(f"[Hotspot] Jeepney track {tid} stationary for "
+                      f"{max_stationary_seconds:.1f}s — hotspot confirmed", flush=True)
+                is_jeepney_hotspot = True
+                break
+    else:
+        print(f"[Hotspot] Video duration {video_duration_seconds:.1f}s < "
+              f"{HOTSPOT_THRESHOLD_SECONDS}s threshold — skipping hotspot classification",
+              flush=True)
+
     jeepney_count = unique_counts.get('Jeepney', 0) + unique_counts.get('jeepney', 0)
-    is_jeepney_hotspot = jeepney_count > 15
 
     results_summary["status"] = "success"
     results_summary["total_unique"] = sum(unique_counts.values())

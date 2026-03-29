@@ -21,6 +21,8 @@ urlpatterns = [
     path('api/cameras/<int:pk>/polygon/', views.camera_polygon_api, name='camera_polygon_api'),
     path('api/cameras/<int:pk>/calibration/', views.camera_calibration_api, name='camera_calibration_api'),
     path('api/cameras/<int:pk>/tags/', views.camera_tags_api, name='camera_tags_api'),
+    path('api/cameras/<int:pk>/detect-road-elements/', views.detect_road_elements, name='detect_road_elements'),
+    path('api/cameras/<int:pk>/detect-road-features/', views.detect_road_features_latest, name='detect_road_features_latest'),
     path('api/cameras/<int:pk>/videos/', views.camera_videos_api, name='camera_videos_api'),
     path('api/upload_and_process/', views.upload_and_process_video, name='upload_and_process'),
     

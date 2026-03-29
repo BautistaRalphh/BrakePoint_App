@@ -162,7 +162,7 @@ class Video(models.Model):
     swerving_count = models.IntegerField(default=0)
     abrupt_stopping_count = models.IntegerField(default=0)
     vehicle_breakdown = models.JSONField(default=dict, blank=True)  # e.g., {"car": 10, "truck": 3}
-    jeepney_hotspot = models.BooleanField(default=False)  # True if >15 jeepneys detected
+    jeepney_hotspot = models.BooleanField(default=False)  # True if a jeepney is stationary for ≥5 continuous minutes
     
     # Mask R-CNN traffic sign results
     signs = models.IntegerField(default=0)

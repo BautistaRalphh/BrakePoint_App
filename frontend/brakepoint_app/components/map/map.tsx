@@ -32,6 +32,7 @@ type Camera = {
   lat: number;
   lng: number;
   polygon?: [number, number][];
+  occurrences?: number;
 };
 
 type DashboardMarker = {
@@ -57,6 +58,7 @@ type SavedLocationRecord = {
 type CompletedPolygon = {
   points: [number, number][];
   cameraId: number | string | null;
+  occurrences?: number;
 };
 
 type TerraDrawFeature = {
@@ -1293,6 +1295,7 @@ export default function MapView({
       properties: {
         polygonIndex: idx,
         cameraId: p.cameraId ?? null,
+        occurrences: p.occurrences ?? 0,
       },
       geometry: {
         type: "Polygon" as const,
@@ -1313,8 +1316,17 @@ export default function MapView({
       type: "fill",
       source: "polygons",
       paint: {
-        "fill-color": "#1d1f3f",
-        "fill-opacity": 0.22,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "occurrences"],
+          0, "#1d1f3f",
+          1, "#2a6b4a",
+          5, "#f5c518",
+          15, "#e85d04",
+          30, "#9b1c1c",
+        ] as any,
+        "fill-opacity": 0.30,
       },
     });
 
@@ -1323,7 +1335,16 @@ export default function MapView({
       type: "line",
       source: "polygons",
       paint: {
-        "line-color": "#1d1f3f",
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "occurrences"],
+          0, "#1d1f3f",
+          1, "#2a6b4a",
+          5, "#f5c518",
+          15, "#e85d04",
+          30, "#9b1c1c",
+        ] as any,
         "line-width": 2,
       },
     });
@@ -1680,6 +1701,7 @@ export default function MapView({
         .map((cam: Camera) => ({
           points: cam.polygon as [number, number][],
           cameraId: cam.id,
+          occurrences: cam.occurrences ?? 0,
         }));
 
       setCompletedPolygons(polygons);

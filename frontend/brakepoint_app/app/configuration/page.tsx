@@ -13,6 +13,7 @@ import { authFetch } from "@/lib/authFetch";
 
 import SideTab from "@components/map/sideTab";
 import Table from "@components/ui/table";
+import CameraTags from "@/components/ui/cameraTags";
 import ModeSegmentedControl from "@/components/ui/modeToggle";
 
 import "./style.css";
@@ -742,6 +743,8 @@ export default function MapPage() {
                       Viewing: {selectedVideoData.videoName}
                     </Typography>
                   )}
+
+                  <CameraTags cameraId={selectedFeedId} />
                 </Box>
 
                 <Divider sx={{ marginBottom: 2 }} />

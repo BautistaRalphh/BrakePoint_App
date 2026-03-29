@@ -317,7 +317,7 @@ export default function Analytics() {
           {allTags.length > 0 && (
             <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.75, alignItems: "center" }}>
               <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5, fontWeight: 600 }}>
-                Filter by tag:
+                Filter by road elements:
               </Typography>
 
               {allTags.map((tag) => (

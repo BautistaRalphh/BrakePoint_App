@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Box,
   Typography,
@@ -17,9 +17,11 @@ import {
   Snackbar,
   Alert,
   Paper,
+  Tooltip,
 } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
 import AddIcon from "@mui/icons-material/Add";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import { authFetch } from "@/lib/authFetch";
 
 interface Camera {
@@ -52,13 +54,18 @@ export default function EditPanel() {
   const [videos, setVideos] = useState<VideoDraft[]>([]);
   const [loadingVids, setLoadingVids] = useState(false);
 
-  /* --- tags for selected camera ----------------------------------- */
+  /* --- road elements (tags) for selected camera ------------------- */
   const [tags, setTags] = useState<string[]>([]);
   const [tagsDirty, setTagsDirty] = useState(false);
   const [newTag, setNewTag] = useState("");
 
+  /* --- auto-detect road elements ---------------------------------- */
+  const [detecting, setDetecting] = useState(false);
+  const [suggestedElements, setSuggestedElements] = useState<string[]>([]);
+  const detectInputRef = useRef<HTMLInputElement>(null);
+
   /* --- feedback --------------------------------------------------- */
-  const [snack, setSnack] = useState<{ open: boolean; msg: string; severity: "success" | "error" }>({
+  const [snack, setSnack] = useState<{ open: boolean; msg: string; severity: "success" | "error" | "info" }>({
     open: false,
     msg: "",
     severity: "success",
@@ -181,9 +188,9 @@ export default function EditPanel() {
       setCameras((prev) =>
         prev.map((c) => (c.id === selectedCamId ? { ...c, tags: [...tags] } : c))
       );
-      setSnack({ open: true, msg: "Tags saved", severity: "success" });
+      setSnack({ open: true, msg: "Road elements saved", severity: "success" });
     } catch {
-      setSnack({ open: true, msg: "Failed to save tags", severity: "error" });
+      setSnack({ open: true, msg: "Failed to save road elements", severity: "error" });
     }
   };
 
@@ -198,6 +205,50 @@ export default function EditPanel() {
   const removeTag = (tag: string) => {
     setTags((prev) => prev.filter((t) => t !== tag));
     setTagsDirty(true);
+  };
+
+  /* --- auto-detect road elements from video first frame ----------- */
+  const handleDetectFromVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || selectedCamId === "") return;
+    setDetecting(true);
+    setSuggestedElements([]);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await authFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${selectedCamId}/detect-road-elements/`,
+        { method: "POST", body: formData }
+      );
+      if (!res.ok) throw new Error();
+      const json = await res.json();
+      const detected: string[] = (json.road_elements ?? []).filter((el: string) => !tags.includes(el));
+      if (detected.length === 0) {
+        setSnack({ open: true, msg: "No new road elements detected in this frame", severity: "info" });
+      } else {
+        setSuggestedElements(detected);
+      }
+    } catch {
+      setSnack({ open: true, msg: "Auto-detection failed", severity: "error" });
+    } finally {
+      setDetecting(false);
+      if (detectInputRef.current) detectInputRef.current.value = "";
+    }
+  };
+
+  const addSuggestedElement = (el: string) => {
+    if (tags.includes(el)) return;
+    setTags((prev) => [...prev, el]);
+    setTagsDirty(true);
+    setSuggestedElements((prev) => prev.filter((s) => s !== el));
+  };
+
+  const addAllSuggested = () => {
+    const newEls = suggestedElements.filter((el) => !tags.includes(el));
+    if (newEls.length === 0) return;
+    setTags((prev) => [...prev, ...newEls]);
+    setTagsDirty(true);
+    setSuggestedElements([]);
   };
 
   /* --- save everything -------------------------------------------- */
@@ -255,16 +306,39 @@ export default function EditPanel() {
 
       {selectedCamId !== "" && (
         <>
-          {/* -------- Tags section -------- */}
+          {/* -------- Road Elements section -------- */}
           <Paper variant="outlined" sx={{ p: 2.5, mb: 3, borderRadius: 3 }}>
-            <Typography variant="h6" sx={{ mb: 1.5, fontWeight: 600 }}>
-              Camera Tags
-            </Typography>
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1.5 }}>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                Road Elements
+              </Typography>
+              <Tooltip title="Auto-detect road elements from the first frame of a video using Mask R-CNN">
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={detecting ? <CircularProgress size={14} /> : <AutoFixHighIcon fontSize="small" />}
+                    disabled={detecting || typeof selectedCamId !== "number"}
+                    onClick={() => detectInputRef.current?.click()}
+                    sx={{ borderRadius: 2, textTransform: "none", borderColor: "#1d1f3f", color: "#1d1f3f" }}
+                  >
+                    {detecting ? "Detecting…" : "Auto-detect from Video"}
+                  </Button>
+                </span>
+              </Tooltip>
+              <input
+                ref={detectInputRef}
+                type="file"
+                accept="video/*"
+                style={{ display: "none" }}
+                onChange={handleDetectFromVideo}
+              />
+            </Box>
 
             <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mb: 1.5 }}>
               {tags.length === 0 && (
                 <Typography variant="body2" color="text.secondary">
-                  No tags yet
+                  No road elements yet
                 </Typography>
               )}
               {tags.map((tag) => (
@@ -282,10 +356,45 @@ export default function EditPanel() {
               ))}
             </Box>
 
+            {suggestedElements.length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontStyle: "italic" }}>
+                    Detected — click to add:
+                  </Typography>
+                  <Button
+                    size="small"
+                    onClick={addAllSuggested}
+                    sx={{ textTransform: "none", fontSize: 11, p: "2px 8px", minWidth: 0 }}
+                  >
+                    Add All
+                  </Button>
+                </Box>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+                  {suggestedElements.map((el) => (
+                    <Chip
+                      key={el}
+                      label={el}
+                      size="small"
+                      onClick={() => addSuggestedElement(el)}
+                      icon={<AddIcon sx={{ fontSize: "14px !important" }} />}
+                      sx={{
+                        bgcolor: "#e8f5e9",
+                        color: "#2a6b4a",
+                        border: "1px dashed #2a6b4a",
+                        cursor: "pointer",
+                        "&:hover": { bgcolor: "#c8e6c9" },
+                      }}
+                    />
+                  ))}
+                </Box>
+              </Box>
+            )}
+
             <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
               <TextField
                 size="small"
-                placeholder="New tag…"
+                placeholder="New road element…"
                 value={newTag}
                 onChange={(e) => setNewTag(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && addTag()}
@@ -301,7 +410,7 @@ export default function EditPanel() {
                   onClick={saveTags}
                   sx={{ borderRadius: 2, textTransform: "none", borderColor: "#1d1f3f", color: "#1d1f3f" }}
                 >
-                  Save Tags
+                  Save
                 </Button>
               )}
             </Box>

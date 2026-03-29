@@ -29,7 +29,7 @@ from .serializers import (
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from yolo_processor import run_detection_on_video
-from mask_rcnn_detectron2_processor import run_traffic_sign_detection_on_video
+from mask_rcnn_detectron2_processor import run_traffic_sign_detection_on_video, detect_signs_on_first_frame_of_video, detect_signs_on_image_bytes, DETECTRON2_AVAILABLE
 api_view(['GET'])
 @permission_classes([AllowAny])
 def home(request):
@@ -962,6 +962,83 @@ def camera_tags_api(request, pk: int):
     camera.save()
     
     return Response({"success": True, "tags": camera.tags})
+
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def detect_road_elements(request, pk: int):
+    """Run Mask R-CNN on the first frame of an uploaded video to auto-detect road elements (traffic signs)."""
+    user = request.user
+
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+
+    video_file = request.FILES.get('file')
+    if not video_file:
+        return Response({"success": False, "error": "No video file provided"}, status=400)
+
+    if not DETECTRON2_AVAILABLE:
+        return Response({"success": False, "error": "Detectron2 is not installed on this server"}, status=503)
+
+    project_tmp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tmp')
+    os.makedirs(project_tmp, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4", dir=project_tmp) as tmp_file:
+        for chunk in video_file.chunks():
+            tmp_file.write(chunk)
+        temp_path = tmp_file.name
+
+    try:
+        detected = detect_signs_on_first_frame_of_video(temp_path)
+        return Response({"success": True, "road_elements": detected})
+    except Exception as e:
+        traceback.print_exc()
+        return Response({"success": False, "error": str(e)}, status=500)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def detect_road_features_latest(request, pk: int):
+    """Run Mask R-CNN on the thumbnail of the camera's most recently uploaded video."""
+    try:
+        camera = Camera.objects.get(pk=pk, user=request.user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+
+    if not DETECTRON2_AVAILABLE:
+        return Response({"success": False, "error": "Detectron2 is not installed on this server"}, status=503)
+
+    latest_video = camera.latest_video
+    if not latest_video or not latest_video.thumbnail:
+        return Response({"success": False, "error": "No video with a thumbnail found for this camera"}, status=404)
+
+    import base64
+    thumbnail_b64 = latest_video.thumbnail
+    # Strip optional data-URL prefix (data:image/jpeg;base64,...)
+    if ',' in thumbnail_b64:
+        thumbnail_b64 = thumbnail_b64.split(',', 1)[1]
+
+    try:
+        image_bytes = base64.b64decode(thumbnail_b64)
+    except Exception:
+        return Response({"success": False, "error": "Could not decode thumbnail"}, status=400)
+
+    try:
+        detected = detect_signs_on_image_bytes(image_bytes)
+        return Response({"success": True, "road_features": detected, "video_id": latest_video.id, "video_name": latest_video.filename})
+    except Exception as e:
+        traceback.print_exc()
+        return Response({"success": False, "error": str(e)}, status=500)
+
 
 @api_view(['PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])
