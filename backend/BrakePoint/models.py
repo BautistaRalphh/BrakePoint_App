@@ -2,6 +2,12 @@ from django.db import models
 from django.contrib.auth.models import User
 
 class SavedLocation(models.Model):
+    LOCATION_TYPES = [
+
+        ("aoi", "Area of Interest"),
+        ("sub_area", "Sub Area"),
+    ]
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='saved_locations')
     name = models.CharField(max_length=255)
     lat = models.FloatField()
@@ -10,6 +16,16 @@ class SavedLocation(models.Model):
     bearing = models.FloatField(default=0.0)
     pitch = models.FloatField(default=0.0)
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    geometry = models.JSONField(null=True, blank=True)
+    bounds = models.JSONField(null=True, blank=True)
+    location_type = models.CharField(
+        max_length=20,
+        choices=LOCATION_TYPES,
+        default="sub_area",
+    )
+    parent_id = models.IntegerField(null=True, blank=True)
+   
     
     class Meta:
         ordering = ['-created_at']
@@ -81,6 +97,7 @@ class Camera(models.Model):
     lng = models.FloatField()
     location = models.CharField(max_length=500, blank=True, default='')
     polygon = models.JSONField(default=list, blank=True, null=True)
+   
     
     # Saved calibration
     calibration_points = models.JSONField(default=list, blank=True)
@@ -110,8 +127,7 @@ class Camera(models.Model):
         return self.videos.order_by('-uploaded_at').first()
     
     @property
-    def latest_upload(self):
-        """Get the upload date of the most recent video in a clean format"""
+    def latest_upload_display(self):
         video = self.latest_video
         if video:
             return video.uploaded_at.strftime('%b %d, %Y at %I:%M %p')
@@ -146,7 +162,7 @@ class Video(models.Model):
     swerving_count = models.IntegerField(default=0)
     abrupt_stopping_count = models.IntegerField(default=0)
     vehicle_breakdown = models.JSONField(default=dict, blank=True)  # e.g., {"car": 10, "truck": 3}
-    jeepney_hotspot = models.BooleanField(default=False)  # True if >15 jeepneys detected
+    jeepney_hotspot = models.BooleanField(default=False)  # True if a jeepney is stationary for ≥5 continuous minutes
     
     # Mask R-CNN traffic sign results
     signs = models.IntegerField(default=0)
@@ -210,3 +226,4 @@ class Video(models.Model):
         if self.processing_started_at and self.processing_completed_at:
             return (self.processing_completed_at - self.processing_started_at).total_seconds()
         return None
+

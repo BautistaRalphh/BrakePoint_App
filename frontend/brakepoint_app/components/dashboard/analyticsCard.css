@@ -27,15 +27,15 @@
 
 .ac-icon {
   flex: 0 0 auto;
-  width: clamp(32px, 6vw, 48px);
-  height: clamp(32px, 6vw, 48px);
+  width: clamp(24px, 6vw, 48px);
+  height: clamp(24px, 6vw, 48px);
   display: grid;
   place-items: center;
   overflow: hidden; 
 }
 
 .ac-icon .MuiSvgIcon-root {
-  font-size: clamp(24px, 5vw, 40px) !important;
+  font-size: clamp(24px, 5vw, 32px) !important;
   max-width: 100%;
   max-height: 100%;
 }

@@ -179,18 +179,7 @@ class SignTracker:
         return sum(self.unique_sign_counts.values())
 
 def run_traffic_sign_detection_on_video(video_path: str, model_path=MODEL_PATH, progress_callback=None, video_record=None):
-    """
-    Run Detectron2 Mask R-CNN traffic sign detection on video.
-    
-    Args:
-        video_path: Path to the video file
-        model_path: Path to custom trained Mask R-CNN weights (default: 'traffic_sign.pth')
-        progress_callback: Optional callback function(progress: int) for progress updates
-        video_record: Optional Video model instance for database progress updates
-    
-    Returns:
-        results_summary: Dictionary with detection results
-    """
+
     print(f"\n{'='*60}", flush=True)
     print(f"[Mask R-CNN] TRAFFIC SIGN DETECTION STARTED", flush=True)
     print(f"[Mask R-CNN] Video: {video_path}", flush=True)
@@ -339,6 +328,88 @@ def run_traffic_sign_detection_on_video(video_path: str, model_path=MODEL_PATH, 
     print("="*60 + "\n", flush=True)
     
     return results_summary
+
+def detect_signs_on_first_frame_of_video(video_path: str, model_path=MODEL_PATH) -> list:
+
+    if not DETECTRON2_AVAILABLE:
+        print("[Mask R-CNN] Detectron2 not available for first-frame detection", flush=True)
+        return []
+
+    if not os.path.exists(model_path):
+        print(f"[Mask R-CNN] Model not found: {model_path}", flush=True)
+        return []
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"[Mask R-CNN] Could not open video for first-frame detection: {video_path}", flush=True)
+        return []
+
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret or frame is None:
+        print("[Mask R-CNN] Could not read first frame", flush=True)
+        return []
+
+    try:
+        cfg = setup_detectron2_config(model_path)
+        predictor = DefaultPredictor(cfg)
+        outputs = predictor(frame)
+    except Exception as e:
+        print(f"[Mask R-CNN] First-frame detection failed: {e}", flush=True)
+        return []
+
+    instances = outputs["instances"].to("cpu")
+    classes = instances.pred_classes.numpy() if instances.has("pred_classes") else []
+
+    detected = set()
+    for cls in classes:
+        class_name = TRAFFIC_SIGN_CLASSES.get(int(cls) + 1)
+        if class_name and class_name != "Background":
+            detected.add(class_name)
+
+    print(f"[Mask R-CNN] First-frame detected: {sorted(detected)}", flush=True)
+    return sorted(detected)
+
+
+def detect_signs_on_image_bytes(image_bytes: bytes, model_path=MODEL_PATH) -> list:
+
+    if not DETECTRON2_AVAILABLE:
+        print("[Mask R-CNN] Detectron2 not available for image-bytes detection", flush=True)
+        return []
+
+    if not os.path.exists(model_path):
+        print(f"[Mask R-CNN] Model not found: {model_path}", flush=True)
+        return []
+
+    import numpy as np
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        print("[Mask R-CNN] Could not decode image bytes", flush=True)
+        return []
+
+    try:
+        cfg = setup_detectron2_config(model_path)
+        predictor = DefaultPredictor(cfg)
+        outputs = predictor(frame)
+    except Exception as e:
+        print(f"[Mask R-CNN] Image-bytes detection failed: {e}", flush=True)
+        return []
+
+    instances = outputs["instances"].to("cpu")
+    classes = instances.pred_classes.numpy() if instances.has("pred_classes") else []
+
+    detected = set()
+    for cls in classes:
+        class_name = TRAFFIC_SIGN_CLASSES.get(int(cls) + 1)
+        if class_name and class_name != "Background":
+            detected.add(class_name)
+
+    print(f"[Mask R-CNN] Image-bytes detected: {sorted(detected)}", flush=True)
+    return sorted(detected)
+
 
 if __name__ == "__main__":
     video_path = "test_video.mp4"

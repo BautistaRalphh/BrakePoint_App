@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
@@ -6,7 +7,7 @@ import { Box, Grid, Typography, Stack, CircularProgress, Chip } from "@mui/mater
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
-import dayjs, { Dayjs } from "dayjs";
+import { Dayjs } from "dayjs";
 
 import DirectionsCarFilledOutlinedIcon from "@mui/icons-material/DirectionsCarFilledOutlined";
 import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
@@ -23,19 +24,19 @@ const Map = dynamic(() => import("../map/map"), { ssr: false });
 import "./analytics.css";
 import { authFetch } from "@/lib/authFetch";
 
-export type CameraSummary = {
+export type SubAreaSummary = {
   id: number;
   name: string;
   lat: number;
   lng: number;
-  location: string;
-  total_videos: number;
+  geometry: [number, number][] | null;
+  bounds: [[number, number], [number, number]] | null;
+  camera_count: number;
   vehicles: number;
   speeding: number;
   swerving: number;
   abrupt_stopping: number;
   adb: number;
-  thumbnail: string | null;
   tags: string[];
 };
 
@@ -57,80 +58,125 @@ function fmtRate(count: number, total: number): string {
 export default function Analytics() {
   const router = useRouter();
 
-  const [totals, setTotals] = useState<Totals>({ vehicles: 0, adb: 0, speeding: 0, swerving: 0, abrupt_stopping: 0 });
+  const [totals, setTotals] = useState<Totals>({
+    vehicles: 0,
+    adb: 0,
+    speeding: 0,
+    swerving: 0,
+    abrupt_stopping: 0,
+  });
+
   const [breakdown, setBreakdown] = useState<BreakdownEntry[]>([]);
-  const [cameras, setCameras] = useState<CameraSummary[]>([]);
-  const [selectedCam, setSelectedCam] = useState<CameraSummary | null>(null);
+  const [subAreas, setSubAreas] = useState<SubAreaSummary[]>([]);
+  const [selectedSubArea, setSelectedSubArea] = useState<SubAreaSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [startDate, setStartDate] = useState<Dayjs | null>(null);
   const [endDate, setEndDate] = useState<Dayjs | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
-  // Fetch dashboard summary from real API
   const fetchSummary = useCallback(async () => {
     setLoading(true);
+
     try {
       const params = new URLSearchParams();
-      if (startDate) params.set("start", startDate.format("YYYY-MM-DD"));
-      if (endDate) params.set("end", endDate.format("YYYY-MM-DD"));
 
-      const res = await authFetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard-summary/?${params}`,
-      );
+      if (startDate) {
+        params.set("start", startDate.format("YYYY-MM-DD"));
+      }
+
+      if (endDate) {
+        params.set("end", endDate.format("YYYY-MM-DD"));
+      }
+
+      const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard-summary/?${params.toString()}`);
       if (!res.ok) throw new Error("fetch failed");
+
       const json = await res.json();
 
       if (json.success) {
-        setTotals(json.totals);
-        setCameras(json.cameras ?? []);
-        setSelectedCam((prev) => prev ?? json.cameras?.[0] ?? null);
+        const nextTotals: Totals = json.totals ?? {
+          vehicles: 0,
+          adb: 0,
+          speeding: 0,
+          swerving: 0,
+          abrupt_stopping: 0,
+        };
 
-        const bd: BreakdownEntry[] = Object.entries(json.vehicle_breakdown ?? {}).map(
-          ([label, value]) => ({ label, value: value as number }),
-        );
+        const nextSubAreas: SubAreaSummary[] = json.sub_areas ?? [];
+
+        setTotals(nextTotals);
+        setSubAreas(nextSubAreas);
+        setSelectedSubArea((prev) => {
+          if (!nextSubAreas.length) return null;
+          if (!prev) return nextSubAreas[0];
+
+          const matched = nextSubAreas.find((s) => s.id === prev.id);
+          return matched ?? nextSubAreas[0];
+        });
+
+        const bd: BreakdownEntry[] = Object.entries(json.vehicle_breakdown ?? {}).map(([label, value]) => ({
+          label,
+          value: value as number,
+        }));
+
         setBreakdown(bd);
       }
-    } catch {
-      /* keep previous state */
+    } catch (error) {
+      console.error("Failed to fetch dashboard summary:", error);
     } finally {
       setLoading(false);
     }
   }, [startDate, endDate]);
 
-  useEffect(() => { fetchSummary(); }, [fetchSummary]);
-  useEffect(() => { router.prefetch("/map"); }, [router]);
+  useEffect(() => {
+    fetchSummary();
+  }, [fetchSummary]);
 
-  // Collect all unique tags across cameras
+  useEffect(() => {
+    router.prefetch("/configuration");
+    router.prefetch("/monitoring");
+  }, [router]);
+
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
-    cameras.forEach((c) => (c.tags ?? []).forEach((t) => tagSet.add(t)));
+    subAreas.forEach((s) => (s.tags ?? []).forEach((t) => tagSet.add(t)));
     return Array.from(tagSet).sort();
-  }, [cameras]);
+  }, [subAreas]);
 
-  // Filter cameras by selected tags
-  const filteredCameras = useMemo(() => {
-    if (selectedTags.length === 0) return cameras;
-    return cameras.filter((c) =>
-      selectedTags.every((tag) => (c.tags ?? []).includes(tag)),
-    );
-  }, [cameras, selectedTags]);
+  const filteredSubAreas = useMemo(() => {
+    if (selectedTags.length === 0) return subAreas;
+    return subAreas.filter((s) => selectedTags.every((tag) => (s.tags ?? []).includes(tag)));
+  }, [subAreas, selectedTags]);
 
-  const toggleTag = (tag: string) => {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
-    );
-  };
+  const toggleTag = useCallback((tag: string) => {
+    setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  }, []);
 
   const dashboardMarkers = useMemo(
-    () => cameras.map((c) => ({ id: c.id, lat: c.lat, lng: c.lng, label: c.name })),
-    [cameras],
+    () =>
+      filteredSubAreas.map((s) => ({
+        id: s.id,
+        lat: s.lat,
+        lng: s.lng,
+        label: s.name,
+        popupTitle: s.name,
+        popupBody: `${s.camera_count} camera${s.camera_count !== 1 ? "s" : ""} • ${s.vehicles.toLocaleString()} vehicles`,
+      })),
+    [filteredSubAreas],
   );
 
-  const handleMarkerClick = (id: number | string) => {
-    const cam = cameras.find((c) => String(c.id) === String(id));
-    if (cam) setSelectedCam(cam);
-  };
+  const handleMarkerClick = useCallback(
+    (id: number | string) => {
+      const matched = filteredSubAreas.find((s) => String(s.id) === String(id));
+      if (matched) {
+        setSelectedSubArea(matched);
+      }
+
+      router.push(`/configuration?savedLocationId=${id}`);
+    },
+    [filteredSubAreas, router],
+  );
 
   const v = totals.vehicles;
 
@@ -140,39 +186,57 @@ export default function Analytics() {
         <Typography variant="h3">Analytics</Typography>
 
         <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <DatePicker
-            label="Start Date"
-            value={startDate}
-            onChange={(d) => { if (d && endDate && d.isAfter(endDate)) return; setStartDate(d); }}
-            slotProps={{ textField: { size: "small", sx: {
-              bgcolor: "transparent",
-              "& .MuiOutlinedInput-root": {
-                borderRadius: "12px",
-                "& fieldset": { borderColor: "#b0b3b0" },
-                "&:hover fieldset": { borderColor: "#1d1f3f" },
-                "&.Mui-focused fieldset": { borderColor: "#1d1f3f" },
-              },
-              "& .MuiInputLabel-root": { color: "#555" },
-            } } }}
-          />
-        </LocalizationProvider>
+          <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
+            <DatePicker
+              label="From"
+              value={startDate}
+              onChange={(v) => {
+                if (!v) {
+                  setStartDate(null);
+                  return;
+                }
+                if (endDate && v.isAfter(endDate)) return;
+                setStartDate(v);
+              }}
+              slotProps={{
+                textField: {
+                  size: "small",
+                  sx: {
+                    bgcolor: "#fff",
+                    minWidth: 140,
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: "12px",
+                    },
+                  },
+                },
+              }}
+            />
 
-        <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <DatePicker
-            label="End Date"
-            value={endDate}
-            onChange={(d) => { if (d && startDate && d.isBefore(startDate)) return; setEndDate(d); }}
-            slotProps={{ textField: { size: "small", sx: {
-              bgcolor: "transparent",
-              "& .MuiOutlinedInput-root": {
-                borderRadius: "12px",
-                "& fieldset": { borderColor: "#b0b3b0" },
-                "&:hover fieldset": { borderColor: "#1d1f3f" },
-                "&.Mui-focused fieldset": { borderColor: "#1d1f3f" },
-              },
-              "& .MuiInputLabel-root": { color: "#555" },
-            } } }}
-          />
+            <DatePicker
+              label="To"
+              value={endDate}
+              onChange={(v) => {
+                if (!v) {
+                  setEndDate(null);
+                  return;
+                }
+                if (startDate && v.isBefore(startDate)) return;
+                setEndDate(v);
+              }}
+              slotProps={{
+                textField: {
+                  size: "small",
+                  sx: {
+                    bgcolor: "#fff",
+                    minWidth: 140,
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: "12px",
+                    },
+                  },
+                },
+              }}
+            />
+          </Box>
         </LocalizationProvider>
       </Box>
 
@@ -190,9 +254,9 @@ export default function Analytics() {
                   <AnalyticsCard
                     headerText="Total vehicle count"
                     icon={<DirectionsCarFilledOutlinedIcon />}
-                    variant={breakdown.length > 0 ? "pie" : "text"}
+                    variant="pie"
                     valueText={v.toLocaleString()}
-                    data={breakdown.length > 0 ? breakdown : undefined}
+                    data={breakdown}
                   />
                   <AnalyticsCard
                     headerText="Total ADB count"
@@ -236,21 +300,26 @@ export default function Analytics() {
                     refreshTrigger={0}
                     dashboardMarkers={dashboardMarkers}
                     onDashboardMarkerClick={handleMarkerClick}
-                    goTo={selectedCam ? [selectedCam.lng, selectedCam.lat] : null}
+                    goTo={selectedSubArea ? [selectedSubArea.lng, selectedSubArea.lat] : null}
                   />
                 </Box>
               </Grid>
             </Grid>
           </Box>
 
-          <CardCarousel cameras={filteredCameras} onSelect={(c) => router.push(`/monitoring?cameraId=${c.id}`)} />
+          <CardCarousel
+            subareas={filteredSubAreas}
+            onSelect={(s) => router.push(`/configuration?savedLocationId=${s.id}`)}
+            emptyTitle="No Sub-Areas Yet"
+            emptyDescription="Enter explore mode and draw a sub-area to begin."
+          />
 
-          {/* Tag filter chips */}
           {allTags.length > 0 && (
             <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.75, alignItems: "center" }}>
               <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5, fontWeight: 600 }}>
-                Filter by tag:
+                Filter by road elements:
               </Typography>
+
               {allTags.map((tag) => (
                 <Chip
                   key={tag}
@@ -263,11 +332,20 @@ export default function Analytics() {
                     height: 26,
                     cursor: "pointer",
                     ...(selectedTags.includes(tag)
-                      ? { bgcolor: "#1d1f3f", color: "#fff", "&:hover": { bgcolor: "#2a2d5a" } }
-                      : { borderColor: "#999", color: "#555", "&:hover": { bgcolor: "#eee" } }),
+                      ? {
+                          bgcolor: "#1d1f3f",
+                          color: "#fff",
+                          "&:hover": { bgcolor: "#2a2d5a" },
+                        }
+                      : {
+                          borderColor: "#999",
+                          color: "#555",
+                          "&:hover": { bgcolor: "#eee" },
+                        }),
                   }}
                 />
               ))}
+
               {selectedTags.length > 0 && (
                 <Chip
                   label="Clear"

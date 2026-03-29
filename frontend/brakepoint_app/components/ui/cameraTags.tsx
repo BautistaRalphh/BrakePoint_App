@@ -3,12 +3,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Chip, Typography, TextField, IconButton, Autocomplete,
-  Collapse, Tooltip
+  Collapse, Tooltip, Button, CircularProgress
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { authFetch } from '@/lib/authFetch';
 
 // Pre-coded choices based on the traffic sign model classes
@@ -56,6 +57,9 @@ export default function CameraTags({ cameraId, compact = false }: CameraTagsProp
   const [expanded, setExpanded] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [suggestedFeatures, setSuggestedFeatures] = useState<string[]>([]);
+  const [detectError, setDetectError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!cameraId) {
@@ -111,6 +115,51 @@ export default function CameraTags({ cameraId, compact = false }: CameraTagsProp
     saveTags(updated);
   }, [tags, saveTags]);
 
+  const detectFromLatestVideo = useCallback(async () => {
+    if (!cameraId) return;
+    setDetecting(true);
+    setDetectError(null);
+    setSuggestedFeatures([]);
+    try {
+      const res = await authFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/cameras/${cameraId}/detect-road-features/`,
+        { method: 'POST' }
+      );
+      const data = await res.json();
+      if (!data.success) {
+        setDetectError(data.error ?? 'Detection failed');
+        return;
+      }
+      const newSuggestions = (data.road_features as string[]).filter(f => !tags.includes(f));
+      if (newSuggestions.length === 0) {
+        setDetectError('No new road features detected in this frame');
+      } else {
+        setSuggestedFeatures(newSuggestions);
+      }
+    } catch {
+      setDetectError('Detection request failed');
+    } finally {
+      setDetecting(false);
+    }
+  }, [cameraId, tags]);
+
+  const addSuggested = useCallback((feature: string) => {
+    addTag(feature);
+    setSuggestedFeatures(prev => prev.filter(f => f !== feature));
+  }, [addTag]);
+
+  const addAllSuggested = useCallback(() => {
+    const toAdd = suggestedFeatures.filter(f => !tags.includes(f));
+    if (!toAdd.length) return;
+    let base = tags;
+    const newSpeedTag = toAdd.find(f => isSpeedTag(f));
+    if (newSpeedTag) base = base.filter(t => !isSpeedTag(t));
+    const updated = [...base, ...toAdd];
+    setTags(updated);
+    saveTags(updated);
+    setSuggestedFeatures([]);
+  }, [suggestedFeatures, tags, saveTags]);
+
   const availablePresets = SIGN_TAG_PRESETS.filter(p => !tags.includes(p));
 
   if (!cameraId) return null;
@@ -154,7 +203,7 @@ export default function CameraTags({ cameraId, compact = false }: CameraTagsProp
       >
         <LocalOfferIcon sx={{ fontSize: 18, color: '#455a64' }} />
         <Typography variant="subtitle2" sx={{ flex: 1, fontWeight: 600, fontSize: '0.85rem' }}>
-          Tags
+          Road Features
           {tags.length > 0 && (
             <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
               ({tags.length})
@@ -168,7 +217,7 @@ export default function CameraTags({ cameraId, compact = false }: CameraTagsProp
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: expanded ? 1 : 0 }}>
         {tags.length === 0 && !expanded && (
           <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
-            Click to add investigation tags
+            Click to add road features
           </Typography>
         )}
         {tags.map(tag => (
@@ -260,7 +309,7 @@ export default function CameraTags({ cameraId, compact = false }: CameraTagsProp
           {availablePresets.length > 0 && (
             <Box sx={{ mt: 1 }}>
               <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
-                Traffic sign presets:
+                Road feature presets:
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                 {availablePresets.slice(0, 8).map(preset => (
@@ -291,6 +340,76 @@ export default function CameraTags({ cameraId, compact = false }: CameraTagsProp
               </Box>
             </Box>
           )}
+
+          {/* Auto-detect from latest video */}
+          <Box sx={{ mt: 1.5, borderTop: '1px solid #eee', pt: 1.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+              <Tooltip title="Run Mask R-CNN on the first frame of the most recently uploaded video to auto-detect road features">
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={detecting ? <CircularProgress size={13} /> : <AutoFixHighIcon sx={{ fontSize: 15 }} />}
+                    disabled={detecting}
+                    onClick={detectFromLatestVideo}
+                    sx={{
+                      textTransform: 'none',
+                      fontSize: '0.75rem',
+                      borderRadius: '8px',
+                      borderColor: '#455a64',
+                      color: '#455a64',
+                      '&:hover': { borderColor: '#1d1f3f', color: '#1d1f3f' },
+                    }}
+                  >
+                    {detecting ? 'Detecting…' : 'Auto-detect from latest video'}
+                  </Button>
+                </span>
+              </Tooltip>
+            </Box>
+
+            {detectError && (
+              <Typography variant="caption" sx={{ color: '#b71c1c', fontStyle: 'italic', display: 'block', mt: 0.25 }}>
+                {detectError}
+              </Typography>
+            )}
+
+            {suggestedFeatures.length > 0 && (
+              <Box sx={{ mt: 0.75 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                    Detected — click to add:
+                  </Typography>
+                  <Button
+                    size="small"
+                    onClick={addAllSuggested}
+                    sx={{ textTransform: 'none', fontSize: '0.7rem', p: '1px 6px', minWidth: 0 }}
+                  >
+                    Add All
+                  </Button>
+                </Box>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {suggestedFeatures.map(feat => (
+                    <Chip
+                      key={feat}
+                      label={feat}
+                      size="small"
+                      onClick={() => addSuggested(feat)}
+                      icon={<AddIcon sx={{ fontSize: '13px !important' }} />}
+                      sx={{
+                        fontSize: '0.7rem',
+                        height: 24,
+                        bgcolor: '#e8f5e9',
+                        color: '#2e7d32',
+                        border: '1px dashed #2e7d32',
+                        cursor: 'pointer',
+                        '&:hover': { bgcolor: '#c8e6c9' },
+                      }}
+                    />
+                  ))}
+                </Box>
+              </Box>
+            )}
+          </Box>
 
           {/* Speed tag hint */}
           <Typography variant="caption" sx={{ mt: 1, display: 'block', color: '#1565c0', fontStyle: 'italic' }}>

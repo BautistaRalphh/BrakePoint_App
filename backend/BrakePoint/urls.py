@@ -10,9 +10,10 @@ urlpatterns = [
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
     # API endpoints
-    path('api/saved-locations/', views.saved_locations_api, name='saved_locations_api'),
-    path('api/saved-locations/<int:location_id>/', views.saved_location_detail_api, name='saved_location_detail_api'),
-    path('api/saved-locations/<int:pk>/behaviors/', views.saved_location_behaviors_api, name='saved_location_behaviors_api'),
+    path("api/saved-locations/", views.saved_locations_list_create, name="saved_locations_list_create"),
+    path("api/saved-locations/<int:saved_location_id>/", views.saved_location_detail, name="saved_location_detail"),
+    path("api/cameras/<int:camera_id>/assign-saved-location/", views.assign_camera_to_saved_location, name="assign_camera_to_saved_location"),
+    path("api/dashboard-summary/", views.dashboard_summary, name="dashboard_summary"),
     
     # Camera endpoints
     path('api/cameras/', views.cameras_api, name='cameras_api'),
@@ -20,12 +21,13 @@ urlpatterns = [
     path('api/cameras/<int:pk>/polygon/', views.camera_polygon_api, name='camera_polygon_api'),
     path('api/cameras/<int:pk>/calibration/', views.camera_calibration_api, name='camera_calibration_api'),
     path('api/cameras/<int:pk>/tags/', views.camera_tags_api, name='camera_tags_api'),
+    path('api/cameras/<int:pk>/detect-road-elements/', views.detect_road_elements, name='detect_road_elements'),
+    path('api/cameras/<int:pk>/detect-road-features/', views.detect_road_features_latest, name='detect_road_features_latest'),
     path('api/cameras/<int:pk>/videos/', views.camera_videos_api, name='camera_videos_api'),
     path('api/upload_and_process/', views.upload_and_process_video, name='upload_and_process'),
     
     # Aggregation endpoints
     path('api/behavior-timeline/', views.behavior_timeline_api, name='behavior_timeline_api'),
-    path('api/dashboard-summary/', views.dashboard_summary_api, name='dashboard_summary_api'),
 
     # Video endpoints
     path('api/videos/<int:pk>/', views.video_detail_api, name='video_detail_api'),

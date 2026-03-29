@@ -1,8 +1,9 @@
 import * as React from "react";
 import { AppRouterCacheProvider } from "@mui/material-nextjs/v13-appRouter";
 import Theme from "./component_tempo/theme";
-import {montserrat} from "./component_tempo/theme";
+import { montserrat } from "./component_tempo/theme";
 import { NotificationProvider } from "@/contexts/NotificationContext";
+import Notification from "@/components/ui/notifications";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AppRouterCacheProvider options={{ key: "mui", enableCssLayer: true }}>
           <NotificationProvider>
             <Theme>{children}</Theme>
+            <Notification />
           </NotificationProvider>
         </AppRouterCacheProvider>
       </body>

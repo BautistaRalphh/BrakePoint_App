@@ -1,6 +1,8 @@
+// NotificationContext.tsx
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { authFetch } from "@/lib/authFetch";
 
 interface Notification {
   id: string;
@@ -9,11 +11,19 @@ interface Notification {
   data?: any;
   read: boolean;
   timestamp: number;
+
   processing?: boolean;
   videoId?: number;
   processingStage?: string;
-  /** 0-100 overall progress */
   progress?: number;
+}
+
+type ToastSeverity = "success" | "info" | "error";
+
+interface ToastState {
+  open: boolean;
+  message: string;
+  severity: ToastSeverity;
 }
 
 interface NotificationContextType {
@@ -21,13 +31,23 @@ interface NotificationContextType {
 
   notifications: Notification[];
   addNotification: (videoName: string, success: boolean, data?: any) => void;
+
   addProcessingNotification: (videoName: string, videoId?: number) => string;
   completeProcessing: (id: string, success: boolean, data?: any) => void;
   updateProgress: (id: string, stage: string, progress: number) => void;
+
+  trackVideoProcessing: (videoName: string, videoId: number) => string;
+
   removeNotification: (id: string) => void;
   markAsRead: (id: string) => void;
   clearAll: () => void;
+
   unreadCount: number;
+
+  /** Global toast */
+  toast: ToastState;
+  showToast: (message: string, severity?: ToastSeverity) => void;
+  hideToast: () => void;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -60,6 +80,16 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
+  const [toast, setToast] = useState<ToastState>({ open: false, message: "", severity: "info" });
+
+  const pollersRef = useRef<Map<number, number>>(new Map());
+
+  const stopPolling = useCallback((videoId: number) => {
+    const intervalId = pollersRef.current.get(videoId);
+    if (intervalId) window.clearInterval(intervalId);
+    pollersRef.current.delete(videoId);
+  }, []);
+
   useEffect(() => {
     const stored = localStorage.getItem("brakepoint_notifications");
     const loaded = safeParseNotifications(stored);
@@ -71,6 +101,21 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     if (!hydrated) return;
     localStorage.setItem("brakepoint_notifications", JSON.stringify(notifications));
   }, [notifications, hydrated]);
+
+  useEffect(() => {
+    return () => {
+      pollersRef.current.forEach((intervalId) => window.clearInterval(intervalId));
+      pollersRef.current.clear();
+    };
+  }, []);
+
+  const showToast = useCallback((message: string, severity: ToastSeverity = "info") => {
+    setToast({ open: true, message, severity });
+  }, []);
+
+  const hideToast = useCallback(() => {
+    setToast((prev) => ({ ...prev, open: false }));
+  }, []);
 
   const addNotification = useCallback((videoName: string, success: boolean, data?: any) => {
     const now = Date.now();
@@ -99,6 +144,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       timestamp: now,
       processing: true,
       videoId,
+      processingStage: "",
+      progress: 0,
     };
 
     setNotifications((prev) => [newNotification, ...prev]);
@@ -106,25 +153,114 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const completeProcessing = useCallback((id: string, success: boolean, data?: any) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, processing: false, success, data, progress: 100 } : n)));
+    setNotifications((prev) =>
+      prev.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              processing: false,
+              success,
+              data,
+              processingStage: "complete",
+              progress: 100,
+            }
+          : n,
+      ),
+    );
   }, []);
 
   const updateProgress = useCallback((id: string, stage: string, progress: number) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, processingStage: stage, progress } : n)));
   }, []);
 
-  const removeNotification = useCallback((id: string) => {
-    setNotifications((prev) => {
-      const filtered = prev.filter((n) => n.id !== id);
-      return filtered;
-    });
-  }, []);
+  const startPollingForVideo = useCallback(
+    (notifId: string, videoId: number) => {
+      if (pollersRef.current.has(videoId)) return;
+
+      const intervalId = window.setInterval(async () => {
+        try {
+          const response = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/progress/`);
+          if (!response.ok) return;
+
+          const data = await response.json();
+          if (!data?.success) return;
+
+          const { processing_status, processing_stage, yolo_progress } = data;
+
+          let overallProgress = 0;
+          if (processing_stage === "yolo") overallProgress = Math.min(yolo_progress ?? 0, 99);
+          else if (processing_stage === "complete") overallProgress = 100;
+
+          updateProgress(notifId, processing_stage ?? "", overallProgress);
+
+          if (processing_status === "completed") {
+            stopPolling(videoId);
+
+            let videoData = data;
+            const videoResponse = await authFetch(`${process.env.NEXT_PUBLIC_API_URL}/api/videos/${videoId}/`);
+
+            if (videoResponse.ok) {
+              const fullData = await videoResponse.json();
+              if (fullData.success && fullData.video) {
+                videoData = {
+                  yolo_results: { total_unique: fullData.video.vehicles || 0 },
+                  sign_results: { unique_signs: fullData.video.signs || 0 },
+                };
+              }
+            }
+
+            completeProcessing(notifId, true, videoData);
+          }
+
+          if (processing_status === "failed") {
+            stopPolling(videoId);
+            completeProcessing(notifId, false, data);
+          }
+        } catch {
+          // silent
+        }
+      }, 2000);
+
+      pollersRef.current.set(videoId, intervalId);
+    },
+    [completeProcessing, stopPolling, updateProgress],
+  );
+
+  const trackVideoProcessing = useCallback(
+    (videoName: string, videoId: number) => {
+      const notifId = addProcessingNotification(videoName, videoId);
+      startPollingForVideo(notifId, videoId);
+      return notifId;
+    },
+    [addProcessingNotification, startPollingForVideo],
+  );
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const processingNotifs = notifications.filter((n) => n.processing && typeof n.videoId === "number");
+    processingNotifs.forEach((n) => startPollingForVideo(n.id, n.videoId!));
+  }, [hydrated, notifications, startPollingForVideo]);
+
+  const removeNotification = useCallback(
+    (id: string) => {
+      setNotifications((prev) => {
+        const toRemove = prev.find((n) => n.id === id);
+        if (toRemove?.processing && typeof toRemove.videoId === "number") {
+          stopPolling(toRemove.videoId);
+        }
+        return prev.filter((n) => n.id !== id);
+      });
+    },
+    [stopPolling],
+  );
 
   const markAsRead = useCallback((id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   }, []);
 
   const clearAll = useCallback(() => {
+    pollersRef.current.forEach((intervalId) => window.clearInterval(intervalId));
+    pollersRef.current.clear();
     setNotifications([]);
   }, []);
 
@@ -133,24 +269,42 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const value = useMemo<NotificationContextType>(
     () => ({
       hydrated,
+
       notifications,
       addNotification,
       addProcessingNotification,
       completeProcessing,
       updateProgress,
+      trackVideoProcessing,
+
       removeNotification,
       markAsRead,
       clearAll,
       unreadCount,
+
+      toast,
+      showToast,
+      hideToast,
     }),
-    [hydrated, notifications, addNotification, addProcessingNotification, completeProcessing, updateProgress, removeNotification, markAsRead, clearAll, unreadCount],
+    [
+      hydrated,
+      notifications,
+      addNotification,
+      addProcessingNotification,
+      completeProcessing,
+      updateProgress,
+      trackVideoProcessing,
+      removeNotification,
+      markAsRead,
+      clearAll,
+      unreadCount,
+      toast,
+      showToast,
+      hideToast,
+    ],
   );
 
-  return (
-    <NotificationContext.Provider value={value}>
-      {children}
-    </NotificationContext.Provider>
-  );
+  return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>;
 }
 
 export function useNotifications() {

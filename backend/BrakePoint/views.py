@@ -1,24 +1,35 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from django.contrib import messages
-from django.contrib.auth import authenticate, login
+
+from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.db.models.functions import TruncDate
-from .models import SavedLocation, Camera, Video
-from .serializers import SavedLocationSerializer, SignupSerializer, CameraSerializer, VideoSerializer
-import requests
-import tempfile, os
-
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from yolo_processor import run_detection_on_video
-from mask_rcnn_detectron2_processor import run_traffic_sign_detection_on_video
+from django.http import JsonResponse
 from django.utils import timezone
 
+from rest_framework_simplejwt.tokens import RefreshToken
+
+import json
+import requests
+import tempfile
+import os
+import sys
+import traceback
+
+from .models import SavedLocation, Camera, Video
+from .serializers import (
+    SavedLocationSerializer,
+    SignupSerializer,
+    CameraSerializer,
+    VideoSerializer,
+)
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from yolo_processor import run_detection_on_video
+from mask_rcnn_detectron2_processor import run_traffic_sign_detection_on_video, detect_signs_on_first_frame_of_video, detect_signs_on_image_bytes, DETECTRON2_AVAILABLE
 api_view(['GET'])
 @permission_classes([AllowAny])
 def home(request):
@@ -46,6 +57,7 @@ def examine(request):
     })
 
 # ---- Log In and Sign Up ----
+
 api_view(['GET', 'POST'])
 permission_classes([AllowAny])
 def sign_up(request):
@@ -59,72 +71,352 @@ def sign_up(request):
     
 
 # ---- SavedLocations ----
-@api_view(['GET', 'POST'])
-@permission_classes([AllowAny])   # tighten later if needed
-def saved_locations_api(request):
-    if request.method == 'GET':
-        qs = SavedLocation.objects.all().order_by('-id')
-        return Response({"SavedLocations": SavedLocationSerializer(qs, many=True).data})
-    # POST (create)
-    ser = SavedLocationSerializer(data=request.data)
-    if ser.is_valid():
-        ser.save()
-        return Response({"success": True, "SavedLocation": ser.data})
-    return Response({"success": False, "error": ser.errors}, status=400)
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def saved_locations_list_create(request):
+    if request.method == "GET":
+        try:
+            location_type = request.query_params.get("type")
+            parent_id = request.query_params.get("parent_id")
 
-@api_view(['PUT', 'DELETE'])
-@permission_classes([AllowAny])   # tighten later if needed
-def saved_location_detail_api(request, pk: int):
+            qs = SavedLocation.objects.filter(user=request.user)
+
+            if location_type:
+                qs = qs.filter(location_type=location_type)
+
+            if parent_id:
+                qs = qs.filter(parent_id=parent_id)
+
+            payload = []
+            for loc in qs:
+                payload.append({
+                    "id": loc.id,
+                    "name": loc.name,
+                    "lat": loc.lat,
+                    "lng": loc.lng,
+                    "zoom": loc.zoom,
+                    "bearing": loc.bearing,
+                    "pitch": loc.pitch,
+                    "geometry": loc.geometry,
+                    "bounds": loc.bounds,
+                    "location_type": loc.location_type,
+                    "parent_id": loc.parent_id,
+                    "camera_count": loc.camera_count,
+                    "vehicles": loc.total_vehicles,
+                    "occurrences": loc.total_occurrences,
+                    "speeding": loc.total_speeding,
+                    "swerving": loc.total_swerving,
+                    "abrupt_stopping": loc.total_abrupt_stopping,
+                    "behaviors": loc.behavior_summary,
+                })
+
+            return Response({"success": True, "saved_locations": payload})
+
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    if request.method == "POST":
+        try:
+            body = request.data
+
+            if "lat" not in body or "lng" not in body:
+                return Response(
+                    {"success": False, "error": "lat and lng are required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            parent_id = body.get("parent_id")
+            if parent_id is not None:
+                exists = SavedLocation.objects.filter(
+                    id=parent_id,
+                    user=request.user,
+                ).exists()
+                if not exists:
+                    return Response(
+                        {"success": False, "error": "Parent saved location not found"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+            loc = SavedLocation.objects.create(
+                user=request.user,
+                name=body.get("name", "Untitled Area"),
+                lat=body["lat"],
+                lng=body["lng"],
+                zoom=body.get("zoom", 17.0),
+                bearing=body.get("bearing", 0.0),
+                pitch=body.get("pitch", 0.0),
+                geometry=body.get("geometry"),
+                bounds=body.get("bounds"),
+                location_type=body.get("location_type", "sub_area"),
+                parent_id=parent_id,
+            )
+
+            return Response(
+                {
+                    "success": True,
+                    "saved_location": {
+                        "id": loc.id,
+                        "name": loc.name,
+                        "lat": loc.lat,
+                        "lng": loc.lng,
+                        "zoom": loc.zoom,
+                        "bearing": loc.bearing,
+                        "pitch": loc.pitch,
+                        "geometry": loc.geometry,
+                        "bounds": loc.bounds,
+                        "location_type": loc.location_type,
+                        "parent_id": loc.parent_id,
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    if request.method == "GET":
+        try:
+            location_type = request.GET.get("type")
+            parent_id = request.GET.get("parent_id")
+
+            qs = SavedLocation.objects.filter(user=request.user)
+
+            if location_type:
+                qs = qs.filter(location_type=location_type)
+
+            if parent_id:
+                qs = qs.filter(parent_id=parent_id)
+
+            payload = []
+            for loc in qs:
+                payload.append({
+                    "id": loc.id,
+                    "name": loc.name,
+                    "lat": loc.lat,
+                    "lng": loc.lng,
+                    "zoom": loc.zoom,
+                    "bearing": loc.bearing,
+                    "pitch": loc.pitch,
+                    "geometry": loc.geometry,
+                    "bounds": loc.bounds,
+                    "location_type": loc.location_type,
+                    "parent_id": loc.parent_id,
+                    "camera_count": loc.camera_count,
+                    "vehicles": loc.total_vehicles,
+                    "occurrences": loc.total_occurrences,
+                    "speeding": loc.total_speeding,
+                    "swerving": loc.total_swerving,
+                    "abrupt_stopping": loc.total_abrupt_stopping,
+                    "behaviors": loc.behavior_summary,
+                })
+
+            return JsonResponse({"success": True, "saved_locations": payload})
+
+        except Exception as e:
+            print("GET /saved-locations/ failed:")
+            traceback.print_exc()
+            return JsonResponse(
+                {"success": False, "error": str(e)},
+                status=500,
+            )
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body or "{}")
+
+            print("POST /saved-locations/ body:", body)
+            print("Authenticated user:", request.user, request.user.is_authenticated)
+
+            if "lat" not in body or "lng" not in body:
+                return JsonResponse(
+                    {"success": False, "error": "lat and lng are required"},
+                    status=400,
+                )
+
+            parent_id = body.get("parent_id")
+            if parent_id is not None:
+                exists = SavedLocation.objects.filter(id=parent_id, user=request.user).exists()
+                if not exists:
+                    return JsonResponse(
+                        {"success": False, "error": "Parent saved location not found"},
+                        status=404,
+                    )
+
+            loc = SavedLocation.objects.create(
+                user=request.user,
+                name=body.get("name", "Untitled Area"),
+                lat=body["lat"],
+                lng=body["lng"],
+                zoom=body.get("zoom", 17.0),
+                bearing=body.get("bearing", 0.0),
+                pitch=body.get("pitch", 0.0),
+                geometry=body.get("geometry"),
+                bounds=body.get("bounds"),
+                location_type=body.get("location_type", "sub_area"),
+                parent_id=parent_id,
+            )
+
+            return JsonResponse({
+                "success": True,
+                "saved_location": {
+                    "id": loc.id,
+                    "name": loc.name,
+                    "lat": loc.lat,
+                    "lng": loc.lng,
+                    "zoom": loc.zoom,
+                    "bearing": loc.bearing,
+                    "pitch": loc.pitch,
+                    "geometry": loc.geometry,
+                    "bounds": loc.bounds,
+                    "location_type": loc.location_type,
+                    "parent_id": loc.parent_id,
+                }
+            }, status=201)
+
+        except Exception as e:
+            print("POST /saved-locations/ failed:")
+            traceback.print_exc()
+            return JsonResponse(
+                {"success": False, "error": str(e)},
+                status=500,
+            )
+
+    return JsonResponse({"success": False, "error": "Method not allowed"}, status=405)
+
+@api_view(["GET", "PATCH", "PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
+def saved_location_detail(request, saved_location_id):
     try:
-        loc = SavedLocation.objects.get(pk=pk)
+        loc = SavedLocation.objects.get(id=saved_location_id, user=request.user)
     except SavedLocation.DoesNotExist:
-        return Response({"success": False, "error": "Not found"}, status=404)
+        return Response(
+            {"success": False, "error": "Saved location not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
-    if request.method == 'PUT':
-        ser = SavedLocationSerializer(loc, data=request.data, partial=True)
-        if ser.is_valid():
-            ser.save()
-            return Response({"success": True, "SavedLocation": ser.data})
-        return Response({"success": False, "error": ser.errors}, status=400)
+    if request.method == "GET":
+        return Response({
+            "success": True,
+            "saved_location": {
+                "id": loc.id,
+                "name": loc.name,
+                "lat": loc.lat,
+                "lng": loc.lng,
+                "zoom": loc.zoom,
+                "bearing": loc.bearing,
+                "pitch": loc.pitch,
+                "geometry": loc.geometry,
+                "bounds": loc.bounds,
+                "location_type": loc.location_type,
+                "parent_id": loc.parent_id,
+                "camera_count": loc.camera_count,
+                "vehicles": loc.total_vehicles,
+                "occurrences": loc.total_occurrences,
+                "speeding": loc.total_speeding,
+                "swerving": loc.total_swerving,
+                "abrupt_stopping": loc.total_abrupt_stopping,
+                "behaviors": loc.behavior_summary,
+            }
+        })
 
-    # DELETE
-    loc.delete()
-    return Response({"success": True})
+    if request.method in ["PATCH", "PUT"]:
+        try:
+            body = request.data
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def saved_location_behaviors_api(request, pk: int):
-    """Get detailed aggressive behavior stats for a saved location"""
+            loc.name = body.get("name", loc.name)
+            loc.lat = body.get("lat", loc.lat)
+            loc.lng = body.get("lng", loc.lng)
+            loc.zoom = body.get("zoom", loc.zoom)
+            loc.bearing = body.get("bearing", loc.bearing)
+            loc.pitch = body.get("pitch", loc.pitch)
+            loc.geometry = body.get("geometry", loc.geometry)
+            loc.bounds = body.get("bounds", loc.bounds)
+            loc.location_type = body.get("location_type", loc.location_type)
+
+            if "parent_id" in body:
+                new_parent_id = body.get("parent_id")
+                if new_parent_id is None:
+                    loc.parent_id = None
+                else:
+                    exists = SavedLocation.objects.filter(
+                        id=new_parent_id,
+                        user=request.user,
+                    ).exists()
+                    if not exists:
+                        return Response(
+                            {"success": False, "error": "Parent saved location not found"},
+                            status=status.HTTP_404_NOT_FOUND,
+                        )
+                    loc.parent_id = new_parent_id
+
+            loc.save()
+            return Response({"success": True})
+
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    if request.method == "DELETE":
+        try:
+            SavedLocation.objects.filter(user=request.user, parent_id=loc.id).delete()
+            loc.delete()
+            return Response({"success": True})
+        except Exception as e:
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+            
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def assign_camera_to_saved_location(request, camera_id):
     try:
-        loc = SavedLocation.objects.get(pk=pk)
-    except SavedLocation.DoesNotExist:
-        return Response({"success": False, "error": "Not found"}, status=404)
+        camera = Camera.objects.get(id=camera_id, user=request.user)
+    except Camera.DoesNotExist:
+        return Response(
+            {"success": False, "error": "Camera not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
-    # Get all completed videos linked to this location's cameras
-    videos = Video.objects.filter(
-        camera__saved_location=loc,
-        processing_status='completed'
-    ).order_by('-uploaded_at')
+    try:
+        saved_location_id = request.data.get("saved_location_id")
 
-    video_data = VideoSerializer(videos, many=True).data
-    camera_data = CameraSerializer(loc.cameras.all(), many=True).data
+        if saved_location_id is None:
+            camera.saved_location = None
+            camera.save()
+            return Response({"success": True})
 
-    return Response({
-        "success": True,
-        "location": SavedLocationSerializer(loc).data,
-        "cameras": camera_data,
-        "videos": video_data,
-        "summary": {
-            "total_vehicles": loc.total_vehicles,
-            "total_occurrences": loc.total_occurrences,
-            "speeding": loc.total_speeding,
-            "swerving": loc.total_swerving,
-            "abrupt_stopping": loc.total_abrupt_stopping,
-            "behaviors": loc.behavior_summary,
-            "camera_count": loc.camera_count,
-        }
-    })
+        try:
+            loc = SavedLocation.objects.get(id=saved_location_id, user=request.user)
+        except SavedLocation.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Saved location not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
+        camera.saved_location = loc
+        camera.save()
+
+        return Response({"success": True})
+
+    except Exception as e:
+        traceback.print_exc()
+        return Response(
+            {"success": False, "error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+        
 # ---- Auth (session-based example) ----
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -671,6 +963,83 @@ def camera_tags_api(request, pk: int):
     
     return Response({"success": True, "tags": camera.tags})
 
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def detect_road_elements(request, pk: int):
+    """Run Mask R-CNN on the first frame of an uploaded video to auto-detect road elements (traffic signs)."""
+    user = request.user
+
+    try:
+        camera = Camera.objects.get(pk=pk, user=user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+
+    video_file = request.FILES.get('file')
+    if not video_file:
+        return Response({"success": False, "error": "No video file provided"}, status=400)
+
+    if not DETECTRON2_AVAILABLE:
+        return Response({"success": False, "error": "Detectron2 is not installed on this server"}, status=503)
+
+    project_tmp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tmp')
+    os.makedirs(project_tmp, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4", dir=project_tmp) as tmp_file:
+        for chunk in video_file.chunks():
+            tmp_file.write(chunk)
+        temp_path = tmp_file.name
+
+    try:
+        detected = detect_signs_on_first_frame_of_video(temp_path)
+        return Response({"success": True, "road_elements": detected})
+    except Exception as e:
+        traceback.print_exc()
+        return Response({"success": False, "error": str(e)}, status=500)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def detect_road_features_latest(request, pk: int):
+    """Run Mask R-CNN on the thumbnail of the camera's most recently uploaded video."""
+    try:
+        camera = Camera.objects.get(pk=pk, user=request.user)
+    except Camera.DoesNotExist:
+        return Response({"success": False, "error": "Camera not found"}, status=404)
+
+    if not DETECTRON2_AVAILABLE:
+        return Response({"success": False, "error": "Detectron2 is not installed on this server"}, status=503)
+
+    latest_video = camera.latest_video
+    if not latest_video or not latest_video.thumbnail:
+        return Response({"success": False, "error": "No video with a thumbnail found for this camera"}, status=404)
+
+    import base64
+    thumbnail_b64 = latest_video.thumbnail
+    # Strip optional data-URL prefix (data:image/jpeg;base64,...)
+    if ',' in thumbnail_b64:
+        thumbnail_b64 = thumbnail_b64.split(',', 1)[1]
+
+    try:
+        image_bytes = base64.b64decode(thumbnail_b64)
+    except Exception:
+        return Response({"success": False, "error": "Could not decode thumbnail"}, status=400)
+
+    try:
+        detected = detect_signs_on_image_bytes(image_bytes)
+        return Response({"success": True, "road_features": detected, "video_id": latest_video.id, "video_name": latest_video.filename})
+    except Exception as e:
+        traceback.print_exc()
+        return Response({"success": False, "error": str(e)}, status=500)
+
+
 @api_view(['PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def video_detail_api(request, pk: int):
@@ -790,6 +1159,17 @@ def behavior_timeline_api(request):
         .order_by('date')
     )
 
+    # Build per-date vehicle breakdown from the JSONField
+    date_breakdowns: dict[str, dict[str, int]] = {}
+    for vid in qs.annotate(date=TruncDate('uploaded_at')).values('date', 'vehicle_breakdown'):
+        d_iso = vid['date'].isoformat()
+        vb = vid['vehicle_breakdown']
+        if not isinstance(vb, dict):
+            continue
+        entry = date_breakdowns.setdefault(d_iso, {})
+        for k, v in vb.items():
+            entry[k] = entry.get(k, 0) + (v if isinstance(v, int) else 0)
+
     data = [
         {
             'date': row['date'].isoformat(),
@@ -797,6 +1177,7 @@ def behavior_timeline_api(request):
             'swerving': row['swerving'] or 0,
             'abrupt_stopping': row['abrupt_stopping'] or 0,
             'vehicles': row['vehicles'] or 0,
+            'breakdown': date_breakdowns.get(row['date'].isoformat(), {}),
         }
         for row in rows
     ]
@@ -804,81 +1185,200 @@ def behavior_timeline_api(request):
     return Response({"success": True, "timeline": data})
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([IsAuthenticated])
-def dashboard_summary_api(request):
-    user = request.user
-    cameras = Camera.objects.filter(user=user)
+def dashboard_summary(request):
+    try:
+        start = request.query_params.get("start")
+        end = request.query_params.get("end")
 
-    qs = Video.objects.filter(camera__in=cameras, processing_status='completed')
-
-    start = request.query_params.get('start')
-    end = request.query_params.get('end')
-    if start:
-        qs = qs.filter(uploaded_at__date__gte=start)
-    if end:
-        qs = qs.filter(uploaded_at__date__lte=end)
-
-    totals = qs.aggregate(
-        vehicles=Sum('vehicles'),
-        speeding=Sum('speeding_count'),
-        swerving=Sum('swerving_count'),
-        abrupt_stopping=Sum('abrupt_stopping_count'),
-    )
-
-    total_vehicles = totals['vehicles'] or 0
-    total_speeding = totals['speeding'] or 0
-    total_swerving = totals['swerving'] or 0
-    total_abrupt = totals['abrupt_stopping'] or 0
-    total_adb = total_speeding + total_swerving + total_abrupt
-
-    # Vehicle breakdown (merge dicts from all videos)
-    breakdown: dict[str, int] = {}
-    for vb in qs.values_list('vehicle_breakdown', flat=True):
-        if isinstance(vb, dict):
-            for k, v in vb.items():
-                breakdown[k] = breakdown.get(k, 0) + (v if isinstance(v, int) else 0)
-
-    # Per-camera aggregates
-    per_camera = []
-    for cam in cameras:
-        cam_qs = qs.filter(camera=cam)
-        cam_totals = cam_qs.aggregate(
-            vehicles=Sum('vehicles'),
-            speeding=Sum('speeding_count'),
-            swerving=Sum('swerving_count'),
-            abrupt_stopping=Sum('abrupt_stopping_count'),
+        videos = Video.objects.filter(
+            camera__user=request.user,
+            processing_status="completed",
         )
-        # Get thumbnail from most recent completed video
-        latest_vid = cam_qs.order_by('-uploaded_at').values_list('thumbnail', flat=True).first()
 
-        per_camera.append({
-            'id': cam.id,
-            'name': cam.name,
-            'lat': cam.lat,
-            'lng': cam.lng,
-            'location': cam.location,
-            'total_videos': cam_qs.count(),
-            'vehicles': cam_totals['vehicles'] or 0,
-            'speeding': cam_totals['speeding'] or 0,
-            'swerving': cam_totals['swerving'] or 0,
-            'abrupt_stopping': cam_totals['abrupt_stopping'] or 0,
-            'adb': (cam_totals['speeding'] or 0)
-                 + (cam_totals['swerving'] or 0)
-                 + (cam_totals['abrupt_stopping'] or 0),
-            'thumbnail': latest_vid if latest_vid else None,
-            'tags': cam.tags if isinstance(cam.tags, list) else [],
+        if start:
+            videos = videos.filter(uploaded_at__date__gte=start)
+        if end:
+            videos = videos.filter(uploaded_at__date__lte=end)
+
+        totals = {
+            "vehicles": sum(v.vehicles for v in videos),
+            "adb": sum(v.occurrences for v in videos),
+            "speeding": sum(v.speeding_count for v in videos),
+            "swerving": sum(v.swerving_count for v in videos),
+            "abrupt_stopping": sum(v.abrupt_stopping_count for v in videos),
+        }
+
+        vehicle_breakdown = {}
+        for video in videos:
+            for label, value in (video.vehicle_breakdown or {}).items():
+                vehicle_breakdown[label] = vehicle_breakdown.get(label, 0) + value
+
+        saved_locations = SavedLocation.objects.filter(
+            user=request.user,
+            location_type="sub_area",
+        )
+
+        sub_areas = []
+        for loc in saved_locations:
+            loc_videos = videos.filter(camera__saved_location=loc)
+
+            tags = set()
+            for cam in loc.cameras.all():
+                for tag in (cam.tags or []):
+                    tags.add(tag)
+
+            sub_areas.append({
+                "id": loc.id,
+                "name": loc.name,
+                "lat": loc.lat,
+                "lng": loc.lng,
+                "geometry": loc.geometry,
+                "bounds": loc.bounds,
+                "camera_count": loc.camera_count,
+                "vehicles": sum(v.vehicles for v in loc_videos),
+                "speeding": sum(v.speeding_count for v in loc_videos),
+                "swerving": sum(v.swerving_count for v in loc_videos),
+                "abrupt_stopping": sum(v.abrupt_stopping_count for v in loc_videos),
+                "adb": sum(v.occurrences for v in loc_videos),
+                "tags": sorted(tags),
+            })
+
+        return Response({
+            "success": True,
+            "totals": totals,
+            "vehicle_breakdown": vehicle_breakdown,
+            "sub_areas": sub_areas,
         })
 
-    return Response({
+    except Exception as e:
+        traceback.print_exc()
+        return Response(
+            {"success": False, "error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    start = request.GET.get("start")
+    end = request.GET.get("end")
+
+    videos = Video.objects.filter(
+        camera__user=request.user,
+        processing_status="completed",
+    )
+
+    if start:
+        videos = videos.filter(uploaded_at__date__gte=start)
+    if end:
+        videos = videos.filter(uploaded_at__date__lte=end)
+
+    totals = {
+        "vehicles": sum(v.vehicles for v in videos),
+        "adb": sum(v.occurrences for v in videos),
+        "speeding": sum(v.speeding_count for v in videos),
+        "swerving": sum(v.swerving_count for v in videos),
+        "abrupt_stopping": sum(v.abrupt_stopping_count for v in videos),
+    }
+
+    vehicle_breakdown = {}
+    for video in videos:
+        for label, value in (video.vehicle_breakdown or {}).items():
+            vehicle_breakdown[label] = vehicle_breakdown.get(label, 0) + value
+
+    saved_locations = SavedLocation.objects.filter(
+        user=request.user,
+        location_type="sub_area",
+    )
+
+    sub_areas = []
+    for loc in saved_locations:
+        loc_videos = videos.filter(camera__saved_location=loc)
+
+        tags = set()
+        for cam in loc.cameras.all():
+            for tag in (cam.tags or []):
+                tags.add(tag)
+
+        sub_areas.append({
+            "id": loc.id,
+            "name": loc.name,
+            "lat": loc.lat,
+            "lng": loc.lng,
+            "geometry": loc.geometry,
+            "bounds": loc.bounds,
+            "camera_count": loc.camera_count,
+            "vehicles": sum(v.vehicles for v in loc_videos),
+            "speeding": sum(v.speeding_count for v in loc_videos),
+            "swerving": sum(v.swerving_count for v in loc_videos),
+            "abrupt_stopping": sum(v.abrupt_stopping_count for v in loc_videos),
+            "adb": sum(v.occurrences for v in loc_videos),
+            "tags": sorted(tags),
+        })
+
+    return JsonResponse({
         "success": True,
-        "totals": {
-            "vehicles": total_vehicles,
-            "adb": total_adb,
-            "speeding": total_speeding,
-            "swerving": total_swerving,
-            "abrupt_stopping": total_abrupt,
-        },
-        "vehicle_breakdown": breakdown,
-        "cameras": per_camera,
+        "totals": totals,
+        "vehicle_breakdown": vehicle_breakdown,
+        "sub_areas": sub_areas,
+    })
+    start = request.GET.get("start")
+    end = request.GET.get("end")
+
+    videos = Video.objects.filter(
+        camera__user=request.user,
+        processing_status="completed",
+    )
+
+    if start:
+        videos = videos.filter(uploaded_at__date__gte=start)
+    if end:
+        videos = videos.filter(uploaded_at__date__lte=end)
+
+    totals = {
+        "vehicles": sum(v.vehicles for v in videos),
+        "adb": sum(v.occurrences for v in videos),
+        "speeding": sum(v.speeding_count for v in videos),
+        "swerving": sum(v.swerving_count for v in videos),
+        "abrupt_stopping": sum(v.abrupt_stopping_count for v in videos),
+    }
+
+    vehicle_breakdown = {}
+    for video in videos:
+        for label, value in (video.vehicle_breakdown or {}).items():
+            vehicle_breakdown[label] = vehicle_breakdown.get(label, 0) + value
+
+    saved_locations = SavedLocation.objects.filter(
+        user=request.user,
+        location_type="sub_area",
+    )
+
+    sub_areas = []
+    for loc in saved_locations:
+        loc_videos = videos.filter(camera__saved_location=loc)
+
+        tags = set()
+        for cam in loc.cameras.all():
+            for tag in (cam.tags or []):
+                tags.add(tag)
+
+        sub_areas.append({
+            "id": loc.id,
+            "name": loc.name,
+            "lat": loc.lat,
+            "lng": loc.lng,
+            "geometry": loc.geometry,
+            "bounds": loc.bounds,
+            "camera_count": loc.camera_count,
+            "vehicles": sum(v.vehicles for v in loc_videos),
+            "speeding": sum(v.speeding_count for v in loc_videos),
+            "swerving": sum(v.swerving_count for v in loc_videos),
+            "abrupt_stopping": sum(v.abrupt_stopping_count for v in loc_videos),
+            "adb": sum(v.occurrences for v in loc_videos),
+            "tags": sorted(tags),
+        })
+
+    return JsonResponse({
+        "success": True,
+        "totals": totals,
+        "vehicle_breakdown": vehicle_breakdown,
+        "sub_areas": sub_areas,
     })

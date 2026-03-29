@@ -1,16 +1,16 @@
 "use client";
 
-import { Box, Typography, List, ListItem, ListItemIcon, ListItemText } from "@mui/material";
+import { Box, Typography, List, ListItem, ListItemIcon, ListItemText, Chip } from "@mui/material";
 import DirectionsCarFilledOutlinedIcon from "@mui/icons-material/DirectionsCarFilledOutlined";
 import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
 import SpeedOutlinedIcon from "@mui/icons-material/SpeedOutlined";
 import SwapCallsIcon from "@mui/icons-material/SwapCalls";
 import PanToolOutlinedIcon from "@mui/icons-material/PanToolOutlined";
-import type { CameraSummary } from "./analytics";
+import type { SubAreaSummary } from "./analytics";
 import "./locationCard.css";
 
 type LCProps = {
-  camera: CameraSummary;
+  camera: SubAreaSummary;
   onClick?: () => void;
 };
 
@@ -102,6 +102,24 @@ export default function LocationCard({ camera, onClick }: LCProps) {
             </ListItem>
           </List>
         </Box>
+
+        {camera.tags && camera.tags.length > 0 && (
+          <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+            {camera.tags.map((tag) => (
+              <Chip
+                key={tag}
+                label={tag}
+                size="small"
+                sx={{
+                  fontSize: "0.68rem",
+                  height: 20,
+                  bgcolor: "#1d1f3f",
+                  color: "#fff",
+                }}
+              />
+            ))}
+          </Box>
+        )}
       </Box>
     </Box>
   );
