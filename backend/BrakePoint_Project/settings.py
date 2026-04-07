@@ -29,7 +29,11 @@ SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-fallback-key")
 
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "103.231.240.148",
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -57,13 +61,15 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000", 
+    "http://localhost:3000",
+    "http://103.231.240.148:32010",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
+    "http://103.231.240.148:32010",
 ]
 
 SESSION_COOKIE_SAMESITE = None 
