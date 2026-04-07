@@ -29,7 +29,11 @@ SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-fallback-key")
 
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "103.231.240.148",
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -57,13 +61,15 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000", 
+    "http://localhost:3000",
+    "http://103.231.240.148:32010",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
+    "http://103.231.240.148:32010",
 ]
 
 SESSION_COOKIE_SAMESITE = None 
@@ -142,6 +148,25 @@ elif sys.platform == 'win32':
             _ca_cert_path = certifi.where()
         except ImportError:
             _ca_cert_path = None
+else:
+    # Linux — use system CA bundle
+    _linux_cert_candidates = [
+        '/etc/ssl/certs/ca-certificates.crt',
+        '/etc/pki/tls/certs/ca-bundle.crt',
+        '/etc/ssl/ca-bundle.pem',
+    ]
+    if not os.path.exists(_ca_cert_path):
+        _ca_cert_path = None
+        for _candidate in _linux_cert_candidates:
+            if os.path.exists(_candidate):
+                _ca_cert_path = _candidate
+                break
+    if _ca_cert_path is None:
+        try:
+            import certifi
+            _ca_cert_path = certifi.where()
+        except ImportError:
+            _ca_cert_path = None
 
 if _ca_cert_path and os.path.exists(_ca_cert_path):
     _ssl_options = {'ssl': {'ca': _ca_cert_path}}
@@ -170,9 +195,7 @@ DATABASES = {
         "PORT": os.getenv("DB_PORT", "4000"),
         "OPTIONS": {
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            "ssl": {
-                "ca": os.path.join(os.path.dirname(__file__), "..", "certs", "isrg-root-x1.pem"),
-            },
+            **_ssl_options,
         },
     }
 }
