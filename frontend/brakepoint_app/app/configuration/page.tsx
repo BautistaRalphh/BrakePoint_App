@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from "react";
 import maplibregl from "maplibre-gl";
 import dynamic from "next/dynamic";
 import { Divider, Box, Typography, TextField, IconButton } from "@mui/material";
@@ -34,6 +34,14 @@ type SavedLocation = {
 };
 
 export default function MapPage() {
+  return (
+    <Suspense>
+      <MapPageInner />
+    </Suspense>
+  );
+}
+
+function MapPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { trackVideoProcessing, showToast } = useNotifications();

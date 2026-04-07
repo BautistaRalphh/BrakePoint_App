@@ -38,6 +38,8 @@ export type SubAreaSummary = {
   abrupt_stopping: number;
   adb: number;
   tags: string[];
+  thumbnail?: string | null;
+  location?: string;
 };
 
 type Totals = {
